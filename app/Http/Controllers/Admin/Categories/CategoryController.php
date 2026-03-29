@@ -11,7 +11,13 @@ class CategoryController extends Controller
 {
     public function index()
     {
-        $categories = Category::with('children')->get();
+        // Root categories with their children recursively
+        $categories = Category::whereNull('parent_id')
+            ->with(['children' => function($query) {
+                $query->with('children'); // Get sub-sub-categories
+            }])
+            ->get();
+            
         return response()->json(['status' => 'success', 'data' => $categories]);
     }
 
@@ -35,10 +41,23 @@ class CategoryController extends Controller
         return response()->json(['status' => 'success', 'data' => $category]);
     }
 
-    public function show($id)
+    public function show($slug)
     {
-        $category = Category::with('children')->findOrFail($id);
+        // Find by slug instead of ID to support Next.js dynamic routes better
+        $category = Category::where('slug', $slug)
+            ->with(['children' => function($query) {
+                $query->with('children'); // Nested sub-sub items
+            }])
+            ->firstOrFail();
+            
         return response()->json(['status' => 'success', 'data' => $category]);
+    }
+
+    public function tree()
+    {
+        // For parent dropdowns - returns a simple representation or flat tree
+        $categories = Category::all();
+        return response()->json(['status' => 'success', 'data' => $categories]);
     }
 
     public function update(Request $request, $id)
