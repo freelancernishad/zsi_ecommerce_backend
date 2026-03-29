@@ -123,9 +123,39 @@ if (file_exists($StripeRoutes = __DIR__.'/Gateways/stripe.php')) {
     });
 }
 
-// Load EmailTemplateApiRoutes
-if (file_exists($EmailTemplateApiRoutes = __DIR__.'/Admins/EmailTemplates/EmailTemplateApiRoutes.php')) {
-    require $EmailTemplateApiRoutes;
+// Load EcommerceCommonRoutes
+if (file_exists($EcommerceCommonRoutes = __DIR__.'/Common/EcommerceCommonRoutes.php')) {
+    require $EcommerceCommonRoutes;
+}
+
+// Load AdminCategoryRoutes
+if (file_exists($AdminCategoryRoutes = __DIR__.'/Admins/Categories/CategoryRoutes.php')) {
+    require $AdminCategoryRoutes;
+}
+
+// Load AdminProductRoutes
+if (file_exists($AdminProductRoutes = __DIR__.'/Admins/Products/ProductRoutes.php')) {
+    require $AdminProductRoutes;
+}
+
+// Load AdminOrderRoutes
+if (file_exists($AdminOrderRoutes = __DIR__.'/Admins/Orders/OrderRoutes.php')) {
+    require $AdminOrderRoutes;
+}
+
+// Load UserOrderRoutes
+if (file_exists($UserOrderRoutes = __DIR__.'/Users/Orders/OrderRoutes.php')) {
+    require $UserOrderRoutes;
+}
+
+// Load UserAddressRoutes
+if (file_exists($UserAddressRoutes = __DIR__.'/Users/Address/AddressRoutes.php')) {
+    require $UserAddressRoutes;
+}
+
+// Load UserCartRoutes
+if (file_exists($UserCartRoutes = __DIR__.'/Users/Cart/CartRoutes.php')) {
+    require $UserCartRoutes;
 }
 
 
