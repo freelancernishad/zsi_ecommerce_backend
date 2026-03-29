@@ -9,14 +9,14 @@ use Illuminate\Support\Str;
 
 class CategoryController extends Controller
 {
-    public function index()
+    public function index(Request $request)
     {
-        // Root categories with their children recursively
-        $categories = Category::whereNull('parent_id')
-            ->with(['children' => function($query) {
-                $query->with('children'); // Get sub-sub-categories
-            }])
-            ->get();
+        $perPage = $request->get('per_page', 10);
+        
+        // Paginated list with parent info for table view
+        $categories = Category::with('parent')
+            ->orderBy('created_at', 'desc')
+            ->paginate($perPage);
             
         return response()->json(['status' => 'success', 'data' => $categories]);
     }
