@@ -12,9 +12,22 @@ class CategoryController extends Controller
     public function index(Request $request)
     {
         $perPage = $request->get('per_page', 8);
+        $parentId = $request->get('parent_id');
         
-        $categories = Category::select('id', 'name', 'slug', 'image', 'status', 'created_at')
-            ->whereNull('parent_id')
+        $query = Category::select('id', 'name', 'slug', 'image', 'status', 'created_at');
+        
+        if ($parentId) {
+            $query->where('parent_id', $parentId);
+            $categories = $query->get(); // No pagination for dependent dropdowns
+            
+            return response()->json([
+                'status' => 'success', 
+                'Message' => 'Success',
+                'data' => $categories
+            ]);
+        }
+        
+        $categories = $query->whereNull('parent_id')
             ->with(['children' => function($query) {
                 $query->select('id', 'parent_id')->with(['children' => function($q) {
                     $q->select('id', 'parent_id');
@@ -97,8 +110,13 @@ class CategoryController extends Controller
 
     public function tree()
     {
-        // For parent dropdowns - returns a simple representation or flat tree
-        $categories = Category::all();
+        // Fetch top-level categories with recursive children
+        $categories = Category::whereNull('parent_id')
+            ->with(['children' => function($query) {
+                $query->with(['children']);
+            }])
+            ->get();
+
         return response()->json(['status' => 'success', 'data' => $categories]);
     }
 

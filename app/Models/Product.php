@@ -14,18 +14,32 @@ class Product extends Model
         'slug',
         'description',
         'short_description',
-        'price',           // Regular Price
-        'sale_price',      // Sale Price (discounted)
-        'original_price',  // Original/MRP price
+        'price',
+        'sale_price',
+        'original_price',
+        'cost_per_item',
         'stock_quantity',
         'sku',
+        'barcode',
         'category_id',
+        'sub_category_id',
+        'sub_sub_category_id',
         'brand',
+        'status',
+        'weight',
+        'weight_unit',
+        'height',
+        'height_unit',
+        'width',
+        'width_unit',
+        'seo_title',
+        'seo_description',
+        'url_handle',
+        'continue_selling',
+        'is_physical',
+        'charge_tax',
         'rating',
         'review_count',
-        'status',          // 'draft', 'published', 'archived'
-        'meta_title',
-        'meta_description',
     ];
 
     public function category()

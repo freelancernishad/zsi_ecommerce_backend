@@ -38,6 +38,7 @@ class ProductController extends Controller
             'status'         => 'status',
             'created_at'     => 'created_at',
             'total_sale'     => 'order_items_sum_quantity', // withSum alias
+            'revenue'        => 'revenue',                  // Select alias
         ];
 
         $sortColumn = $allowedSorts[$sortBy] ?? 'created_at';
@@ -45,18 +46,27 @@ class ProductController extends Controller
 
         $query = Product::with(['category:id,name', 'images'])
             ->withSum('orderItems', 'quantity')
-            ->select(
-                'id', 'name', 'slug',
-                'price',
-                'sale_price',
-                'original_price',
-                'stock_quantity',
-                'sku',
-                'category_id',
-                'status',
-                'created_at'
-            )
-            ->orderBy($sortColumn, $sortDir);
+            ->addSelect([
+                'revenue' => DB::table('order_items')
+                    ->selectRaw('COALESCE(SUM(quantity * price), 0)')
+                    ->whereColumn('product_id', 'products.id')
+            ]);
+        // NOTE: No explicit ->select() here!
+        // withSum() appends its subquery to SELECT *. Calling ->select() after withSum
+        // overwrites and removes the aggregate subquery, causing total_sale to always be 0.
+
+        // Sorting — aggregate values need correlated subqueries
+        if ($sortBy === 'total_sale') {
+            $query->orderByRaw(
+                "(SELECT COALESCE(SUM(oi.quantity), 0) FROM order_items oi WHERE oi.product_id = products.id) $sortDir"
+            );
+        } elseif ($sortBy === 'revenue') {
+            $query->orderByRaw(
+                "(SELECT COALESCE(SUM(oi.quantity * oi.price), 0) FROM order_items oi WHERE oi.product_id = products.id) $sortDir"
+            );
+        } else {
+            $query->orderBy($sortColumn, $sortDir);
+        }
 
         if ($status && $status !== 'all') {
             $query->where('status', $status);
@@ -73,6 +83,7 @@ class ProductController extends Controller
 
         $products->getCollection()->transform(function ($product) {
             $product->total_sale = (int) ($product->order_items_sum_quantity ?? 0);
+            $product->revenue    = (float) ($product->revenue ?? 0);
             unset($product->order_items_sum_quantity);
             return $product;
         });
@@ -90,22 +101,40 @@ class ProductController extends Controller
             'price' => 'required|numeric',
             'category_id' => 'required|exists:categories,id',
             'images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+            'sub_category_id' => 'nullable|exists:categories,id',
+            'sub_sub_category_id' => 'nullable|exists:categories,id',
         ]);
 
         return DB::transaction(function () use ($request) {
             $product = Product::create([
-                'name'           => $request->name,
-                'slug'           => Str::slug($request->name) . '-' . time(),
-                'description'    => $request->description,
-                'short_description' => $request->short_description,
-                'price'          => $request->price,
-                'sale_price'     => $request->sale_price,      // Sale Price
-                'original_price' => $request->original_price,  // MRP
-                'stock_quantity' => $request->stock_quantity ?? 0,
-                'sku'            => $request->sku,
-                'category_id'    => $request->category_id,
-                'brand'          => $request->brand,
-                'status'         => $request->status ?? 'published',
+                'name'                  => $request->name,
+                'slug'                  => Str::slug($request->name) . '-' . time(),
+                'description'           => $request->description,
+                'short_description'      => $request->short_description,
+                'price'                 => $request->price,
+                'sale_price'            => $request->sale_price,
+                'original_price'        => $request->original_price,
+                'cost_per_item'         => $request->cost_per_item,
+                'stock_quantity'        => $request->stock_quantity ?? 0,
+                'sku'                   => $request->sku,
+                'barcode'               => $request->barcode,
+                'category_id'           => $request->category_id,
+                'sub_category_id'       => $request->sub_category_id,
+                'sub_sub_category_id'   => $request->sub_sub_category_id,
+                'brand'                 => $request->brand,
+                'status'                => $request->status ?? 'published',
+                'weight'                => $request->weight,
+                'weight_unit'           => $request->weight_unit ?? 'kg',
+                'height'                => $request->height,
+                'height_unit'           => $request->height_unit ?? 'ft',
+                'width'                 => $request->width,
+                'width_unit'            => $request->width_unit ?? 'ft',
+                'seo_title'             => $request->seo_title,
+                'seo_description'       => $request->seo_description,
+                'url_handle'            => $request->url_handle,
+                'continue_selling'      => $request->continue_selling ?? false,
+                'is_physical'           => $request->is_physical ?? true,
+                'charge_tax'            => $request->charge_tax ?? true,
             ]);
 
             // Handle Images
@@ -120,15 +149,16 @@ class ProductController extends Controller
                 }
             }
 
-            // Handle Variants if provided
-            if ($request->has('variants')) {
-                foreach ($request->variants as $variant) {
+            // Handle Dynamic Variant Combinations
+            if ($request->has('variant_combinations')) {
+                foreach ($request->variant_combinations as $variant) {
                     ProductVariant::create([
-                        'product_id' => $product->id,
-                        'color' => $variant['color'] ?? null,
-                        'size' => $variant['size'] ?? null,
-                        'stock' => $variant['stock'] ?? 0,
-                        'price_adjustment' => $variant['price_adjustment'] ?? 0,
+                        'product_id'         => $product->id,
+                        'combination_label'  => $variant['label'] ?? null,
+                        'price'              => $variant['price'] ?? $product->price,
+                        'discount_price'     => $variant['discount_price'] ?? null,
+                        'sku'                => $variant['sku'] ?? null,
+                        'available_quantity' => $variant['qty'] ?? 0,
                     ]);
                 }
             }
@@ -163,5 +193,36 @@ class ProductController extends Controller
         $product = Product::findOrFail($id);
         $product->delete(); // Cascades will handle images/variants if defined in migration
         return response()->json(['status' => 'success', 'message' => 'Product deleted successfully']);
+    }
+
+    public function bulkUpdateStatus(Request $request)
+    {
+        $request->validate([
+            'product_ids' => 'required|array',
+            'product_ids.*' => 'integer|exists:products,id',
+            'status' => 'required|in:published,draft,archived',
+        ]);
+
+        Product::whereIn('id', $request->product_ids)->update(['status' => $request->status]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => count($request->product_ids) . ' products moved to ' . $request->status
+        ]);
+    }
+
+    public function bulkDestroy(Request $request)
+    {
+        $request->validate([
+            'product_ids' => 'required|array',
+            'product_ids.*' => 'integer|exists:products,id',
+        ]);
+
+        Product::destroy($request->product_ids);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => count($request->product_ids) . ' products deleted successfully'
+        ]);
     }
 }
