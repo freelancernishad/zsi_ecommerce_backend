@@ -9,6 +9,10 @@ class Product extends Model
 {
     use HasFactory;
 
+    protected $casts = [
+        'tags' => 'json',
+    ];
+
     protected $fillable = [
         'name',
         'slug',
@@ -40,6 +44,7 @@ class Product extends Model
         'charge_tax',
         'rating',
         'review_count',
+        'tags',
     ];
 
     public function category()

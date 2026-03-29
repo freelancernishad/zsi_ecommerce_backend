@@ -115,7 +115,7 @@ class ProductController extends Controller
                 'sale_price'            => $request->sale_price,
                 'original_price'        => $request->original_price,
                 'cost_per_item'         => $request->cost_per_item,
-                'stock_quantity'        => $request->stock_quantity ?? 0,
+                'stock_quantity'        => $request->has('quantity') ? $request->quantity : ($request->stock_quantity ?? 0),
                 'sku'                   => $request->sku,
                 'barcode'               => $request->barcode,
                 'category_id'           => $request->category_id,
@@ -135,6 +135,7 @@ class ProductController extends Controller
                 'continue_selling'      => $request->continue_selling ?? false,
                 'is_physical'           => $request->is_physical ?? true,
                 'charge_tax'            => $request->charge_tax ?? true,
+                'tags'                  => $request->has('tags') ? array_values($request->tags) : [],
             ]);
 
             // Handle Images
@@ -177,15 +178,80 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
 
-        // Similar to store but for updating
-        $product->update($request->all());
+        return DB::transaction(function () use ($request, $product) {
+            $data = $request->except(['images', 'variant_combinations']);
 
-        if ($request->has('name')) {
-            $product->slug = Str::slug($request->name) . '-' . time();
-            $product->save();
-        }
+            // Map frontend 'quantity' to 'stock_quantity' for mass assignment
+            if ($request->has('quantity')) {
+                $data['stock_quantity'] = $request->quantity;
+                unset($data['quantity']);
+            }
+            
+            // Handle tags explicitly to allow clearing all tags
+            if (!$request->has('tags')) {
+                $data['tags'] = [];
+            } else {
+                $data['tags'] = array_values($request->tags);
+            }
 
-        return response()->json(['status' => 'success', 'data' => $product]);
+            // Ensure booleans fallbacks if not sent in the payload
+            if ($request->has('continue_selling')) $data['continue_selling'] = $request->continue_selling;
+            if ($request->has('is_physical')) $data['is_physical'] = $request->is_physical;
+            if ($request->has('charge_tax')) $data['charge_tax'] = $request->charge_tax;
+
+            $product->update($data);
+
+            if ($request->has('name')) {
+                // Only update slug if name actually changed significantly
+                if (Str::slug($request->name) !== Str::slug($product->name)) {
+                    $product->slug = Str::slug($request->name) . '-' . time();
+                    $product->save();
+                }
+            }
+
+            // Handle Images (Append new ones)
+            // If the user wants to delete images, we need a separate API endpoint or a deleted_images array
+            if ($request->hasFile('images')) {
+                // If appending, we just add them. If replacing, we'd delete old ones first. 
+                // Let's assume we are appending for now. Unsetting primary if new primary is uploaded.
+                foreach ($request->file('images') as $index => $image) {
+                    $path = $this->fileUploadService->uploadFileToS3($image, 'products/images');
+                    ProductImage::create([
+                        'product_id' => $product->id,
+                        'image_path' => $path,
+                        'is_primary' => $product->images()->count() === 0 && $index === 0,
+                    ]);
+                }
+            }
+
+            // Handle Dynamic Variant Combinations
+            if ($request->has('variant_combinations')) {
+                // Delete missing variants, or purely re-sync.
+                // Safest way for a simple edit: delete and recreate, or update existing by SKU or ID.
+                $incomingIds = collect($request->variant_combinations)->pluck('id')->filter()->toArray();
+                
+                // Delete variants that were removed from the UI
+                $product->variants()->whereNotIn('id', $incomingIds)->delete();
+
+                foreach ($request->variant_combinations as $variant) {
+                    ProductVariant::updateOrCreate(
+                        [
+                            'product_id' => $product->id,
+                            'id' => $variant['id'] ?? null // Match by ID if it exists
+                        ],
+                        [
+                            'combination_label'  => $variant['label'] ?? null,
+                            'price'              => $variant['price'] ?? $product->price,
+                            'discount_price'     => $variant['discount_price'] ?? null,
+                            'sku'                => $variant['sku'] ?? null,
+                            'available_quantity' => $variant['qty'] ?? 0,
+                        ]
+                    );
+                }
+            }
+
+            return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants'])]);
+        });
     }
 
     public function destroy($id)
