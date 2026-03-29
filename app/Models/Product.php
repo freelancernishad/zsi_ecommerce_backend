@@ -14,15 +14,16 @@ class Product extends Model
         'slug',
         'description',
         'short_description',
-        'price',
-        'original_price',
+        'price',           // Regular Price
+        'sale_price',      // Sale Price (discounted)
+        'original_price',  // Original/MRP price
         'stock_quantity',
         'sku',
         'category_id',
         'brand',
         'rating',
         'review_count',
-        'status',
+        'status',          // 'draft', 'published', 'archived'
         'meta_title',
         'meta_description',
     ];
@@ -45,5 +46,10 @@ class Product extends Model
     public function reviews()
     {
         return $this->hasMany(Review::class);
+    }
+
+    public function orderItems()
+    {
+        return $this->hasMany(\App\Models\OrderItem::class);
     }
 }

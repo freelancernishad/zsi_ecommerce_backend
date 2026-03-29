@@ -20,10 +20,67 @@ class ProductController extends Controller
         $this->fileUploadService = $fileUploadService;
     }
 
-    public function index()
+    public function index(Request $request)
     {
-        $products = Product::with(['category', 'images'])->get();
-        return response()->json(['status' => 'success', 'data' => $products]);
+        $perPage   = $request->get('per_page', 8);
+        $status    = $request->get('status');
+        $search    = $request->get('search');
+        $sortBy    = $request->get('sort_by', 'created_at');
+        $sortOrder = $request->get('sort_order', 'desc');
+
+        // Whitelist of sortable columns (maps frontend key → DB column)
+        $allowedSorts = [
+            'name'           => 'name',
+            'price'          => 'price',
+            'sale_price'     => 'sale_price',
+            'stock_quantity' => 'stock_quantity',
+            'sku'            => 'sku',
+            'status'         => 'status',
+            'created_at'     => 'created_at',
+            'total_sale'     => 'order_items_sum_quantity', // withSum alias
+        ];
+
+        $sortColumn = $allowedSorts[$sortBy] ?? 'created_at';
+        $sortDir    = in_array(strtolower($sortOrder), ['asc', 'desc']) ? $sortOrder : 'desc';
+
+        $query = Product::with(['category:id,name', 'images'])
+            ->withSum('orderItems', 'quantity')
+            ->select(
+                'id', 'name', 'slug',
+                'price',
+                'sale_price',
+                'original_price',
+                'stock_quantity',
+                'sku',
+                'category_id',
+                'status',
+                'created_at'
+            )
+            ->orderBy($sortColumn, $sortDir);
+
+        if ($status && $status !== 'all') {
+            $query->where('status', $status);
+        }
+
+        if ($search) {
+            $query->where(function ($q) use ($search) {
+                $q->where('name', 'like', "%{$search}%")
+                    ->orWhere('sku', 'like', "%{$search}%");
+            });
+        }
+
+        $products = $query->paginate($perPage);
+
+        $products->getCollection()->transform(function ($product) {
+            $product->total_sale = (int) ($product->order_items_sum_quantity ?? 0);
+            unset($product->order_items_sum_quantity);
+            return $product;
+        });
+
+        return response()->json([
+            'Message' => 'Success',
+            'data'    => $products,
+        ]);
     }
 
     public function store(Request $request)
@@ -37,17 +94,18 @@ class ProductController extends Controller
 
         return DB::transaction(function () use ($request) {
             $product = Product::create([
-                'name' => $request->name,
-                'slug' => Str::slug($request->name) . '-' . time(),
-                'description' => $request->description,
+                'name'           => $request->name,
+                'slug'           => Str::slug($request->name) . '-' . time(),
+                'description'    => $request->description,
                 'short_description' => $request->short_description,
-                'price' => $request->price,
-                'original_price' => $request->original_price,
+                'price'          => $request->price,
+                'sale_price'     => $request->sale_price,      // Sale Price
+                'original_price' => $request->original_price,  // MRP
                 'stock_quantity' => $request->stock_quantity ?? 0,
-                'sku' => $request->sku,
-                'category_id' => $request->category_id,
-                'brand' => $request->brand,
-                'status' => $request->status ?? 'published',
+                'sku'            => $request->sku,
+                'category_id'    => $request->category_id,
+                'brand'          => $request->brand,
+                'status'         => $request->status ?? 'published',
             ]);
 
             // Handle Images
@@ -88,7 +146,7 @@ class ProductController extends Controller
     public function update(Request $request, $id)
     {
         $product = Product::findOrFail($id);
-        
+
         // Similar to store but for updating
         $product->update($request->all());
 
