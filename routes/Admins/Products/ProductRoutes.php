@@ -6,6 +6,11 @@ use App\Http\Controllers\Admin\Products\ProductController;
 Route::prefix('admin/products')->middleware(AuthenticateAdmin::class)->group(function () {
     Route::get('/', [ProductController::class, 'index']);
     Route::post('/', [ProductController::class, 'store']);
+
+    // Inventory Management
+    Route::get('/inventory', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'index']);
+    Route::put('/inventory/{id}/quantity', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'updateQuantity']);
+
     // Individual actions
     Route::get('/{id}', [ProductController::class, 'show']);
     Route::put('/{id}', [ProductController::class, 'update']);
