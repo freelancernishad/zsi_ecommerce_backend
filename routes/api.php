@@ -2,6 +2,11 @@
 
 use Illuminate\Support\Facades\Route;
 
+Route::get('/test-cors', function() {
+    return response()->json(['message' => 'CORS Test Successful', 'origin' => request()->header('Origin')])
+        ->header('X-Debug-Source', 'Manual-Test-Route');
+});
+
 // Load SystemSettingsRoutes
 if (file_exists($SystemSettingsRoutes = __DIR__.'/Common/SystemSettingsRoutes.php')) {
     require $SystemSettingsRoutes;

@@ -11,14 +11,51 @@ class CategoryController extends Controller
 {
     public function index(Request $request)
     {
-        $perPage = $request->get('per_page', 10);
+        $perPage = $request->get('per_page', 8);
         
-        // Paginated list with parent info for table view
-        $categories = Category::with('parent')
+        $categories = Category::select('id', 'name', 'slug', 'image', 'status', 'created_at')
+            ->whereNull('parent_id')
+            ->with(['children' => function($query) {
+                $query->select('id', 'parent_id')->with(['children' => function($q) {
+                    $q->select('id', 'parent_id');
+                }]);
+            }])
+            ->withCount('children')
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
+
+        // Map categories to include recursive products_count and total_sales
+        $categories->getCollection()->transform(function($category) {
+            // Collect all descendant IDs
+            $allCategoryIds = [$category->id];
+            foreach ($category->children as $child) {
+                $allCategoryIds[] = $child->id;
+                foreach ($child->children as $grandchild) {
+                    $allCategoryIds[] = $grandchild->id;
+                }
+            }
+
+            // Recursive Product Count
+            $category->products_count = \App\Models\Product::whereIn('category_id', $allCategoryIds)->count();
+
+            // Recursive Total Sales
+            $totalSale = \Illuminate\Support\Facades\DB::table('order_items')
+                ->join('products', 'order_items.product_id', '=', 'products.id')
+                ->whereIn('products.category_id', $allCategoryIds)
+                ->sum(\Illuminate\Support\Facades\DB::raw('order_items.quantity * order_items.price'));
             
-        return response()->json(['status' => 'success', 'data' => $categories]);
+            $category->total_sales = $totalSale ?: 0;
+            
+            // Clean up children from the collection to keep response light
+            unset($category->children);
+            return $category;
+        });
+            
+        return response()->json([
+            'status' => 'success', 
+            'Message' => 'Success',
+            'data' => $categories
+        ]);
     }
 
     public function store(Request $request)
@@ -41,14 +78,19 @@ class CategoryController extends Controller
         return response()->json(['status' => 'success', 'data' => $category]);
     }
 
-    public function show($slug)
+    public function show($idOrSlug)
     {
-        // Find by slug instead of ID to support Next.js dynamic routes better
-        $category = Category::where('slug', $slug)
-            ->with(['children' => function($query) {
-                $query->with('children'); // Nested sub-sub items
-            }])
-            ->firstOrFail();
+        $query = Category::with(['children' => function($query) {
+            $query->withCount('products')->with(['children' => function($q) {
+                $q->withCount('products');
+            }]);
+        }]);
+
+        if (is_numeric($idOrSlug)) {
+            $category = $query->where('id', $idOrSlug)->firstOrFail();
+        } else {
+            $category = $query->where('slug', $idOrSlug)->firstOrFail();
+        }
             
         return response()->json(['status' => 'success', 'data' => $category]);
     }
