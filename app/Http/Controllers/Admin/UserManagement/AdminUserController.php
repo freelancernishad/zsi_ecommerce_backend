@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin\UserManagement;
 
 use App\Models\User;
+use App\Models\Address;
 use Illuminate\Support\Str;
 use App\Exports\UsersExport;
 use App\Imports\UsersImport;
@@ -18,13 +19,15 @@ use App\Http\Requests\Admin\UserManagement\AdminUserUpdateRequest;
 use App\Http\Requests\Admin\UserManagement\AdminUserResetPasswordRequest;
 use App\Http\Requests\Admin\UserManagement\AdminUserBulkActionRequest;
 use App\Http\Requests\Admin\UserManagement\AdminUserImportRequest;
+use App\Utils\LogAction;
+use App\Models\UserLog;
 
 class AdminUserController extends Controller
 {
     // List users with filters & pagination
 public function index(Request $request)
 {
-    $query = User::query();
+    $query = User::with('addresses')->withCount('orders');
 
     // Global search across multiple fields
     if ($request->filled('search')) {
@@ -89,7 +92,14 @@ public function index(Request $request)
             'name', 'email', 'role', 'is_active', 'is_blocked', 'notes', 'phone'
         ]));
 
+        // Capture changes for logging
+        $changes = array_intersect_key($request->only(['name', 'email', 'role', 'is_active', 'is_blocked', 'phone']), $user->getDirty());
+        
         $user->save();
+
+        if (!empty($changes)) {
+            LogAction::record($id, 'profile_updated', "Admin updated customer profile", ['changes' => $changes]);
+        }
 
         return response()->json([
             'data' => new AdminUserResource($user),
@@ -108,6 +118,8 @@ public function index(Request $request)
         $user->is_active = !$user->is_active;
         $user->save();
 
+        LogAction::record($id, 'status_toggled', "Admin " . ($user->is_active ? 'activated' : 'deactivated') . " the user account");
+
         return response()->json([
             'message' => $user->is_active ? 'User activated' : 'User deactivated'
         ]);
@@ -119,6 +131,8 @@ public function index(Request $request)
         $user = User::findOrFail($id);
         $user->is_blocked = !$user->is_blocked;
         $user->save();
+
+        LogAction::record($id, 'block_toggled', "Admin " . ($user->is_blocked ? 'blocked' : 'unblocked') . " the user account");
 
         return response()->json([
             'message' => $user->is_blocked ? 'User blocked' : 'User unblocked'
@@ -214,10 +228,134 @@ public function index(Request $request)
         // We use fromUser to get a token for a specific user model
         $token = JWTAuth::fromUser($user);
         
+        LogAction::record($id, 'impersonation_started', "Admin started impersonating this user");
+        
         return response()->json([
             'message' => 'Impersonation token generated',
             'token' => $token,
             'user' => $user
+        ]);
+    }
+
+    // Store new address for user
+    public function storeAddress(Request $request, $id)
+    {
+        $user = User::findOrFail($id);
+
+        $validated = $request->validate([
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'nullable|email',
+            'phone' => 'required|string|max:20',
+            'street_address' => 'required|string',
+            'city' => 'required|string',
+            'state' => 'nullable|string',
+            'zip_code' => 'nullable|string',
+            'country' => 'required|string',
+            'type' => 'nullable|string|in:shipping,billing,other',
+            'is_default' => 'nullable|boolean'
+        ]);
+
+        // Fallback to user email if not provided for address
+        if (empty($validated['email'])) {
+            $validated['email'] = $user->email;
+        }
+
+        $address = $user->addresses()->create($validated);
+
+        LogAction::record($id, 'address_created', "Admin added a new {$address->type} address", ['address' => $address]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Address added successfully',
+            'data' => $address
+        ]);
+    }
+
+    // Update a specific address
+    public function updateAddress(Request $request, $id)
+    {
+        $address = Address::findOrFail($id);
+
+        $validated = $request->validate([
+            'first_name' => 'required|string|max:255',
+            'last_name' => 'required|string|max:255',
+            'email' => 'nullable|email',
+            'phone' => 'required|string|max:20',
+            'street_address' => 'required|string',
+            'city' => 'required|string',
+            'state' => 'nullable|string',
+            'zip_code' => 'nullable|string',
+            'country' => 'required|string',
+            'type' => 'nullable|string|in:shipping,billing,other',
+            'is_default' => 'nullable|boolean'
+        ]);
+
+        $address->update($validated);
+
+        // Handle default logic if updated to default
+        if (!empty($validated['is_default'])) {
+            Address::where('user_id', $address->user_id)
+                ->update(['is_default' => false]);
+            
+            LogAction::record($address->user_id, 'address_set_default', "Admin set a new default address");
+        }
+
+        LogAction::record($address->user_id, 'address_updated', "Admin updated an existing {$address->type} address", ['address' => $address]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Address updated successfully',
+            'data' => $address
+        ], 200);
+    }
+
+    // Set a specific address as default
+    public function setDefaultAddress($id)
+    {
+        $address = Address::findOrFail($id);
+
+        Address::where('user_id', $address->user_id)
+            ->update(['is_default' => false]);
+
+        $address->is_default = true;
+        $address->save();
+
+        LogAction::record($address->user_id, 'address_set_default', "Admin set an address as default");
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Address set as default successfully'
+        ], 200);
+    }
+
+    // Delete a specific address
+    public function destroyAddress($id)
+    {
+        $address = Address::findOrFail($id);
+        $userId = $address->user_id;
+        $type = $address->type;
+        $address->delete();
+
+        LogAction::record($userId, 'address_deleted', "Admin deleted a {$type} address");
+
+        return response()->json([
+            'status' => 'success',
+            'message' => 'Address deleted successfully'
+        ], 200);
+    }
+
+    public function getLogs($id)
+    {
+        $logs = UserLog::where('user_id', $id)
+            ->orderBy('created_at', 'desc')
+            ->paginate(15);
+
+        return response()->json([
+            'data' => $logs->items(),
+            'current_page' => $logs->currentPage(),
+            'last_page' => $logs->lastPage(),
+            'total' => $logs->total()
         ]);
     }
 }

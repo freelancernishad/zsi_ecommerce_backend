@@ -130,8 +130,25 @@ class User extends Authenticatable implements JWTSubject, MustVerifyEmail
         return $this->hasMany(Payment::class)->where('status', 'paid');
     }
 
+    public function addresses()
+    {
+        return $this->hasMany(Address::class);
+    }
 
+    public function orders()
+    {
+        return $this->hasMany(Order::class);
+    }
 
+    // Accessor for total spent (LTV)
+    public function getTotalSpentAttribute()
+    {
+        return $this->orders()->sum('total');
+    }
 
-
+    // Accessor for last order date
+    public function getLastOrderAtAttribute()
+    {
+        return $this->orders()->latest()->first()?->created_at;
+    }
 }

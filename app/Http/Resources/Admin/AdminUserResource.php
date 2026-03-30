@@ -20,7 +20,12 @@ class AdminUserResource extends JsonResource
             'created_at' => $this->created_at,
             'updated_at' => $this->updated_at,
             'notes' => $this->notes,
-            'profile_picture' => $this->profile_picture, // optional if photo relation exists
+            'profile_picture' => $this->profile_picture,
+            'phone' => $this->phone,
+            'addresses' => $this->addresses,
+            'orders_count' => $this->orders_count ?? $this->orders()->count(),
+            'total_spent' => $this->total_spent,
+            'last_order_at' => $this->last_order_at,
         ];
     }
 }

@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Str;
 
 class LocationController extends Controller
 {
@@ -32,25 +33,70 @@ class LocationController extends Controller
      */
     public function getStates(Request $request)
     {
-        $country = $request->query('country');
-        if (!$country) {
-            return response()->json(['status' => 'error', 'message' => 'Country is required'], 400);
+        $countryInput = $request->query('country');
+        if (!$countryInput) {
+            return response()->json([
+                'status' => 'error', 
+                'message' => 'Country is required',
+                'isError' => true
+            ], 400);
         }
 
-        return Cache::remember("states_list_{$country}", 86400, function () use ($country) {
+        // Map common ISO codes to full names for external API compatibility
+        $mapping = [
+            'USA' => 'United States',
+            'US'  => 'United States',
+            'UK'  => 'United Kingdom',
+            'BD'  => 'Bangladesh',
+            'UAE' => 'United Arab Emirates',
+            'KSA' => 'Saudi Arabia',
+        ];
+
+        $country = $mapping[strtoupper($countryInput)] ?? $countryInput;
+        $cacheKey = "states_list_" . Str::slug($country);
+
+        // Check if cached
+        if (Cache::has($cacheKey)) {
+            return response()->json([
+                'status' => 'success',
+                'data' => Cache::get($cacheKey)
+            ]);
+        }
+
+        try {
             $response = Http::post('https://countriesnow.space/api/v0.1/countries/states', [
                 'country' => $country
             ]);
             
             if ($response->successful()) {
                 $data = $response->json();
+                $states = $data['data']['states'] ?? [];
+                
+                // Only cache successful responses
+                Cache::put($cacheKey, $states, 86400);
+
                 return response()->json([
                     'status' => 'success',
-                    'data' => $data['data']['states'] ?? []
+                    'data' => $states
                 ]);
             }
-            return response()->json(['status' => 'error', 'data' => []], 500);
-        });
+
+            $errorData = $response->json();
+            return response()->json([
+                'status' => 'error', 
+                'message' => $errorData['msg'] ?? 'Country not found or provider error',
+                'isError' => true,
+                'data' => []
+            ], $response->status() >= 400 && $response->status() < 600 ? $response->status() : 500);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => 'error', 
+                'message' => 'Failed to connect to location provider',
+                'isError' => true,
+                'error' => $e->getMessage()
+            ], 500);
+        }
     }
 
     /**

@@ -7,6 +7,7 @@ use App\Models\Order;
 use App\Models\OrderStatusHistory;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\DB;
+use App\Utils\LogAction;
 
 class OrderController extends Controller
 {
@@ -14,6 +15,11 @@ class OrderController extends Controller
     {
         $query = Order::with(['user', 'items.product', 'shippingAddress'])
             ->withCount('items');
+
+        // Filter by user_id
+        if ($request->has('user_id')) {
+            $query->where('user_id', $request->user_id);
+        }
 
         // Filter by Status (Combined mapping for delivery_status or general status)
         if ($request->has('status') && $request->status !== 'all') {
@@ -180,6 +186,11 @@ class OrderController extends Controller
 
         $order->update($updateData);
 
+        if ($request->has('delivery_status') || $request->has('status')) {
+            $newStatus = $request->delivery_status ?? $request->status;
+            LogAction::record($order->user_id, 'order_status_updated', "Order #{$order->order_number} status updated to {$newStatus}", ['order_id' => $order->id, 'new_status' => $newStatus]);
+        }
+
         return response()->json([
             'status' => 'success', 
             'message' => "Order status/tracking updated successfully",
@@ -202,6 +213,8 @@ class OrderController extends Controller
             'location' => $request->location,
             'description' => $request->description,
         ]);
+
+        LogAction::record($order->user_id, 'order_history_added', "New tracking log added for Order #{$order->order_number}: {$request->status}", ['order_id' => $order->id, 'status' => $request->status]);
 
         return response()->json([
             'status' => 'success',
@@ -292,6 +305,8 @@ class OrderController extends Controller
                     'discount_price'=> 0,
                 ]);
             }
+
+            LogAction::record($order->user_id, 'order_placed', "A new order #{$order->order_number} has been placed", ['order_id' => $order->id, 'total' => $order->total]);
 
             DB::commit();
             return response()->json([
