@@ -173,5 +173,8 @@ if (file_exists($AdminSettingsRoutes = __DIR__.'/Admins/Settings/SettingsRoutes.
     require $AdminSettingsRoutes;
 }
 
+// Ecommerce Dashboard Stats API
+Route::get('/admin/dashboard/stats', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'index']);
+
 
 

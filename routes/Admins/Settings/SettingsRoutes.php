@@ -16,4 +16,8 @@ Route::prefix('admin/settings')->group(function () {
     Route::post('/shipping-methods', [ShippingMethodController::class, 'store']);
     Route::get('/shipping-methods/{id}', [ShippingMethodController::class, 'show']);
     Route::delete('/shipping-methods/{id}', [ShippingMethodController::class, 'destroy']);
+
+    // Site Wide Settings Routes (Universal & Scalable)
+    Route::get('/site-settings/{group}', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'index']);
+    Route::post('/site-settings/update', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'update']);
 });

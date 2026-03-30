@@ -32,3 +32,17 @@ if (!function_exists('send_notification')) {
         }
     }
 }
+
+if (!function_exists('setting')) {
+    /**
+     * Get a site setting value by key.
+     *
+     * @param string $key
+     * @param mixed $default
+     * @return mixed
+     */
+    function setting($key, $default = null)
+    {
+        return \App\Models\Admin\Settings\SiteSetting::get($key, $default);
+    }
+}
