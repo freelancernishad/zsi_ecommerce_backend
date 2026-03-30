@@ -3,8 +3,10 @@
 use Illuminate\Support\Facades\Route;
 use App\Http\Middleware\AuthenticateAdmin;
 use App\Http\Controllers\Admin\UserManagement\AdminUserController;
+use App\Http\Controllers\Admin\UserManagement\CustomerSegmentController;
 
 Route::prefix('admin')->middleware(AuthenticateAdmin::class)->group(function () {
+    Route::get('customer-segments', [CustomerSegmentController::class, 'index']);
     Route::get('users/', [AdminUserController::class, 'index']);
     Route::get('user/{id}', [AdminUserController::class, 'show']);
     Route::get('user/{id}/logs', [AdminUserController::class, 'getLogs']);

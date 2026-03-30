@@ -8,6 +8,7 @@ use Illuminate\Http\Request;
 
 use App\Mail\OtpNotification;
 use Tymon\JWTAuth\Facades\JWTAuth;
+use App\Utils\LogAction;
 
 
 use Illuminate\Support\Facades\Log;
@@ -46,26 +47,26 @@ public function register(RegisterRequest $request)
         'role' => 'user',
     ]);
     // Log user registration
-    logUserActivity(
-        activity: 'User Registration',
-        category: 'Authentication',
+    LogAction::record(
         userId: $user->id,
-        request: $request,
-        isSuccess: true,
-        extraDetails: ['method' => 'register endpoint']
+        action: 'registration',
+        description: 'User Registration',
+        metadata: ['method' => 'register endpoint'],
+        category: 'Authentication',
+        isSuccess: true
     );
 
     // Generate a JWT token
     try {
         $token = JWTAuth::fromUser($user, ['guard' => 'user']);
     } catch (JWTException $e) {
-        logUserActivity(
-            activity: 'JWT Token Generation Failed',
-            category: 'Authentication',
+        LogAction::record(
             userId: $user->id,
-            request: $request,
-            isSuccess: false,
-            extraDetails: ['error' => $e->getMessage()]
+            action: 'jwt_token_failed',
+            description: 'JWT Token Generation Failed',
+            metadata: ['error' => $e->getMessage()],
+            category: 'Authentication',
+            isSuccess: false
         );
         return response()->json(['error' => 'Could not create token'], 500);
     }
@@ -83,13 +84,13 @@ public function register(RegisterRequest $request)
             $emailSent = false;
             $emailMessage = 'Registration successful, but we could not send the verification email. Please try again later.';
             Log::error('User verification email failed: ' . $e->getMessage());
-            logUserActivity(
-                activity: 'Email Verification Failed',
-                category: 'Email',
+            LogAction::record(
                 userId: $user->id,
-                request: $request,
-                isSuccess: false,
-                extraDetails: ['error' => $e->getMessage()]
+                action: 'email_verification_failed',
+                description: 'Email Verification Failed',
+                metadata: ['error' => $e->getMessage()],
+                category: 'Email',
+                isSuccess: false
             );
         }
     } else {
@@ -133,18 +134,28 @@ public function login(LoginRequest $request)
 
     // Check if user is blocked
     if ($user->is_blocked) {
-        logUserActivity('Login Blocked', 'Authentication', $user->id, $request, false, [
-            'reason' => 'User is blocked'
-        ]);
+        LogAction::record(
+            userId: $user->id,
+            action: 'login_blocked',
+            description: 'Login Blocked',
+            metadata: ['reason' => 'User is blocked'],
+            category: 'Authentication',
+            isSuccess: false
+        );
 
         return response()->json(['message' => 'Your account is blocked. Contact support.'], 403);
     }
 
     // Check if user is active
     if (!$user->is_active) {
-        logUserActivity('Login Inactive', 'Authentication', $user->id, $request, false, [
-            'reason' => 'User account is inactive'
-        ]);
+        LogAction::record(
+            userId: $user->id,
+            action: 'login_inactive',
+            description: 'Login Inactive',
+            metadata: ['reason' => 'User account is inactive'],
+            category: 'Authentication',
+            isSuccess: false
+        );
 
         return response()->json(['message' => 'Your account is not active.'], 403);
     }
@@ -157,9 +168,14 @@ public function login(LoginRequest $request)
         if (!$user->hasVerifiedEmail()) {
             $otpResult = $this->sendOtp($user, $request, 'Login');
 
-            logUserActivity('Login Failed - Unverified', 'Authentication', $user->id, $request, false, [
-                'reason' => 'Email not verified, OTP sent'
-            ]);
+            LogAction::record(
+                userId: $user->id,
+                action: 'login_failed_unverified',
+                description: 'Login Failed - Unverified',
+                metadata: ['reason' => 'Email not verified, OTP sent'],
+                category: 'Authentication',
+                isSuccess: false
+            );
 
             return response()->json([
                 'message' => 'Email is not verified. ' . $otpResult['emailMessage'],
@@ -173,15 +189,26 @@ public function login(LoginRequest $request)
         try {
             $token = JWTAuth::fromUser($user, ['guard' => 'user']);
         } catch (JWTException $e) {
-            logUserActivity('Login Token Failed', 'Authentication', $user->id, $request, false, [
-                'reason' => 'JWT token generation failed',
-            ]);
+            LogAction::record(
+                userId: $user->id,
+                action: 'login_token_failed',
+                description: 'Login Token Failed',
+                metadata: ['reason' => 'JWT token generation failed'],
+                category: 'Authentication',
+                isSuccess: false
+            );
 
             return response()->json(['error' => 'Could not create token'], 500);
         }
 
         // Log successful login
-        logUserActivity('Login Successful', 'Authentication', $user->id, $request, true);
+        LogAction::record(
+            userId: $user->id,
+            action: 'login_success',
+            description: 'Login Successful',
+            category: 'Authentication',
+            isSuccess: true
+        );
 
 
 
@@ -189,9 +216,14 @@ public function login(LoginRequest $request)
     }
 
     // Log failed login
-    logUserActivity('Login Failed', 'Authentication', $user->id, $request, false, [
-        'reason' => 'Invalid credentials'
-    ]);
+    LogAction::record(
+        userId: $user->id,
+        action: 'login_failed',
+        description: 'Login Failed',
+        metadata: ['reason' => 'Invalid credentials'],
+        category: 'Authentication',
+        isSuccess: false
+    );
 
     return response()->json(['message' => 'Invalid credentials'], 401);
 }
@@ -226,13 +258,13 @@ public function login(LoginRequest $request)
         try {
             $token = JWTAuth::getToken();
             if (!$token) {
-                logUserActivity(
-                    'Logout Attempt Without Token',
-                    'Authentication',
-                Auth::id() ?? null,
-                    $request,
-                    false,
-                    ['reason' => 'Token not provided']
+                LogAction::record(
+                    userId: Auth::id() ?? null,
+                    action: 'logout_no_token',
+                    description: 'Logout Attempt Without Token',
+                    metadata: ['reason' => 'Token not provided'],
+                    category: 'Authentication',
+                    isSuccess: false
                 );
 
                 return response()->json([
@@ -243,13 +275,13 @@ public function login(LoginRequest $request)
 
 
 
-            logUserActivity(
-            'User Logout',
-                'Authentication',
-                Auth::id(),
-                $request,
-                true,
-                ['token' => $token]
+            LogAction::record(
+                userId: Auth::id(),
+                action: 'logout',
+                description: 'User Logout',
+                metadata: ['token' => (string)$token],
+                category: 'Authentication',
+                isSuccess: true
             );
             JWTAuth::invalidate($token);
             return response()->json([
@@ -257,13 +289,13 @@ public function login(LoginRequest $request)
                 'message' => 'Logged out successfully.'
             ], 200);
         } catch (JWTException $e) {
-            logUserActivity(
-                activity: 'Logout Failed',
-                category: 'Authentication',
+            LogAction::record(
                 userId: Auth::id() ?? null,
-                request: $request,
-                isSuccess: false,
-                extraDetails: ['error' => $e->getMessage()]
+                action: 'logout_failed',
+                description: 'Logout Failed',
+                metadata: ['error' => $e->getMessage()],
+                category: 'Authentication',
+                isSuccess: false
             );
 
             return response()->json([
@@ -285,13 +317,13 @@ public function login(LoginRequest $request)
 
     // Check if the current password matches
     if (!Hash::check($request->current_password, $user->password)) {
-        logUserActivity(
-            activity: 'Password Change Failed (Wrong Current Password)',
-            category: 'Account',
+        LogAction::record(
             userId: $user->id,
-            request: $request,
-            isSuccess: false,
-            extraDetails: ['reason' => 'Current password mismatch']
+            action: 'password_change_failed',
+            description: 'Password Change Failed (Wrong Current Password)',
+            metadata: ['reason' => 'Current password mismatch'],
+            category: 'Account',
+            isSuccess: false
         );
 
         return response()->json(['message' => 'Current password is incorrect.'], 400);
@@ -301,11 +333,11 @@ public function login(LoginRequest $request)
     $user->password = Hash::make($request->new_password);
     $user->save();
 
-    logUserActivity(
-        activity: 'Password Changed Successfully',
-        category: 'Account',
+    LogAction::record(
         userId: $user->id,
-        request: $request,
+        action: 'password_changed',
+        description: 'Password Changed Successfully',
+        category: 'Account',
         isSuccess: true
     );
 
@@ -377,13 +409,13 @@ public function login(LoginRequest $request)
             $emailSent = false;
             $emailMessage = $contextMessage . ' We could not send the OTP. Please try again later.';
             Log::error('User OTP email failed: ' . $e->getMessage());
-            logUserActivity(
-                activity: 'OTP Email Failed',
-                category: 'Email',
+            LogAction::record(
                 userId: $user->id,
-                request: $request,
-                isSuccess: false,
-                extraDetails: ['error' => $e->getMessage()]
+                action: 'otp_email_failed',
+                description: 'OTP Email Failed',
+                metadata: ['error' => $e->getMessage()],
+                category: 'Email',
+                isSuccess: false
             );
         }
 
