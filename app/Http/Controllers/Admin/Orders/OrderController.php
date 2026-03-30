@@ -209,4 +209,105 @@ class OrderController extends Controller
             'data' => $history
         ]);
     }
+
+    public function store(Request $request)
+    {
+        $request->validate([
+            'items'                   => 'required|array|min:1',
+            'items.*.product_id'      => 'required|exists:products,id',
+            'items.*.variant_id'      => 'nullable|exists:product_variants,id',
+            'items.*.quantity'        => 'required|integer|min:1',
+            'items.*.price'           => 'required|numeric|min:0',
+            'shipping_first_name'     => 'required|string',
+            'shipping_last_name'      => 'required|string',
+            'shipping_email'          => 'required|email',
+            'shipping_phone'          => 'nullable|string',
+            'shipping_street_address' => 'required|string',
+            'shipping_city'           => 'required|string',
+            'shipping_state'          => 'nullable|string',
+            'shipping_zip_code'       => 'nullable|string',
+            'shipping_country'        => 'required|string',
+            'payment_method'          => 'nullable|string',
+            'payment_method_name'     => 'nullable|string',
+            'shipping_cost'           => 'nullable|numeric|min:0',
+            'discount'                => 'nullable|numeric|min:0',
+        ]);
+
+        DB::beginTransaction();
+        try {
+            // Generate unique order number
+            do {
+                $orderNumber = 'ORD-' . strtoupper(substr(md5(uniqid()), 0, 7));
+            } while (Order::where('order_number', $orderNumber)->exists());
+
+            $subtotal = collect($request->items)->sum(fn($i) => $i['price'] * $i['quantity']);
+
+            // Auto-calculate tax if state & country provided
+            $taxRate = 0;
+            if ($request->shipping_state && $request->shipping_country) {
+                $taxRecord = DB::table('taxes')
+                    ->where('country', $request->shipping_country)
+                    ->where('state', $request->shipping_state)
+                    ->first();
+                if ($taxRecord) $taxRate = $taxRecord->tax_rate;
+            }
+
+            $taxAmount    = round(($subtotal * $taxRate) / 100, 2);
+            $shippingCost = (float) $request->get('shipping_cost', 0);
+            $discount     = (float) $request->get('discount', 0);
+            $total        = $subtotal + $taxAmount + $shippingCost - $discount;
+
+            $order = Order::create([
+                'order_number'            => $orderNumber,
+                'user_id'                 => $request->get('user_id'),
+                'subtotal'                => $subtotal,
+                'tax'                     => $taxAmount,
+                'shipping_cost'           => $shippingCost,
+                'discount'                => $discount,
+                'total'                   => $total,
+                'status'                  => 'pending',
+                'delivery_status'         => 'pending',
+                'fulfillment_status'      => 'unfulfilled',
+                'payment_status'          => 'pending',
+                'payment_method'          => $request->get('payment_method', 'manual'),
+                'payment_method_name'     => $request->get('payment_method_name', 'Manual'),
+                'shipping_first_name'     => $request->shipping_first_name,
+                'shipping_last_name'      => $request->shipping_last_name,
+                'shipping_email'          => $request->shipping_email,
+                'shipping_phone'          => $request->shipping_phone,
+                'shipping_street_address' => $request->shipping_street_address,
+                'shipping_city'           => $request->shipping_city,
+                'shipping_state'          => $request->shipping_state,
+                'shipping_zip_code'       => $request->shipping_zip_code,
+                'shipping_country'        => $request->shipping_country,
+            ]);
+
+            foreach ($request->items as $item) {
+                $order->items()->create([
+                    'product_id'    => $item['product_id'],
+                    'variant_id'    => $item['variant_id'] ?? null,
+                    'quantity'      => $item['quantity'],
+                    'price'         => $item['price'],
+                    'regular_price' => $item['price'],
+                    'discount_price'=> 0,
+                ]);
+            }
+
+            DB::commit();
+            return response()->json([
+                'status'  => 'success',
+                'message' => 'Order created successfully',
+                'data'    => $order->load(['items.product', 'items.variant']),
+                'isError' => false,
+            ], 201);
+
+        } catch (\Exception $e) {
+            DB::rollBack();
+            return response()->json([
+                'status'  => 'error',
+                'message' => 'Failed to create order: ' . $e->getMessage(),
+                'isError' => true,
+            ], 500);
+        }
+    }
 }
