@@ -152,6 +152,32 @@ class AdminEcommerceDashboardController extends Controller
                 'percentage' => round(($l->count / $totalPaidOrders) * 100, 1),
             ]);
 
+        // ── High Revenue Categories ───────────────────────────────────────────
+        $topCategories = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->where('orders.payment_status', 'paid')
+            ->select(
+                'categories.id',
+                'categories.name',
+                DB::raw('SUM(order_items.quantity) as total_sold'),
+                DB::raw('SUM(order_items.quantity * order_items.price) as total_revenue')
+            )
+            ->groupBy('categories.id', 'categories.name')
+            ->orderByDesc('total_revenue')
+            ->take(4)
+            ->get()
+            ->map(function ($c) {
+                return [
+                    'id'      => $c->id,
+                    'name'    => $c->name,
+                    'sold'    => (int) $c->total_sold,
+                    'revenue' => (float) $c->total_revenue,
+                    'growth'  => '+12%', // Display placeholder for UI
+                ];
+            });
+
         return response()->json([
             'isError' => false,
             'data' => [
@@ -170,6 +196,7 @@ class AdminEcommerceDashboardController extends Controller
                 'top_products'        => $topProducts,
                 'top_customers'       => $topCustomers,
                 'top_locations'       => $topLocations,
+                'top_categories'      => $topCategories,
                 'satisfaction_rate'   => $satisfactionRate,
             ],
         ]);
