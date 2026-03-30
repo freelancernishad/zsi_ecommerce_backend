@@ -163,5 +163,10 @@ if (file_exists($UserCartRoutes = __DIR__.'/Users/Cart/CartRoutes.php')) {
     require $UserCartRoutes;
 }
 
+// Load AdminSettingsRoutes
+if (file_exists($AdminSettingsRoutes = __DIR__.'/Admins/Settings/SettingsRoutes.php')) {
+    require $AdminSettingsRoutes;
+}
+
 
 
