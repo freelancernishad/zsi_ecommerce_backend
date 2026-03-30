@@ -17,6 +17,11 @@ if (file_exists($AllowedOriginRoutes = __DIR__.'/Common/AllowedOriginRoutes.php'
     require $AllowedOriginRoutes;
 }
 
+// Load LocationRoutes
+if (file_exists($LocationRoutes = __DIR__.'/Common/LocationRoutes.php')) {
+    require $LocationRoutes;
+}
+
 // Load UserAuthRoutes
 if (file_exists($UserAuthRoutes = __DIR__.'/Users/Auth/UserAuthRoutes.php')) {
     require $UserAuthRoutes;

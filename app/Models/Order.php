@@ -17,7 +17,8 @@ class Order extends Model
         'shipping_first_name', 'shipping_last_name', 'shipping_email', 
         'shipping_phone', 'shipping_country', 'shipping_street_address', 
         'shipping_city', 'shipping_state', 'shipping_zip_code',
-        'payment_status', 'fulfillment_status', 'delivery_status'
+        'payment_status', 'fulfillment_status', 'delivery_status',
+        'courier_name', 'tracking_number', 'tracking_url', 'shipped_at'
     ];
 
     public function user()
@@ -28,6 +29,11 @@ class Order extends Model
     public function items()
     {
         return $this->hasMany(OrderItem::class);
+    }
+
+    public function statusHistories()
+    {
+        return $this->hasMany(OrderStatusHistory::class)->orderBy('created_at', 'desc');
     }
 
     public function shippingAddress()
