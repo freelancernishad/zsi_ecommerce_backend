@@ -87,14 +87,80 @@ public function successfulAdminEmails()
     ]);
 }
 
-public function show($id)
-{
-    $message = ContactMessage::where('email_sent', true)->findOrFail($id);
+    public function show($id)
+    {
+        $message = ContactMessage::findOrFail($id);
 
         return response()->json([
-        'success' => true,
-        'data' => $message,
-    ]);
-}
+            'success' => true,
+            'data' => $message,
+        ]);
+    }
+
+    public function reply(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'reply' => 'required|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        $message = ContactMessage::findOrFail($id);
+        
+        try {
+            $user = (object) [
+                'name' => $message->full_name,
+                'email' => $message->email,
+            ];
+
+            NotificationHelper::sendUserNotification(
+                $user,
+                $request->reply,
+                "Reply: " . $message->subject,
+                'ContactMessage',
+                $message->id,
+                'emails.supportAndConnect.admin_reply',
+                [
+                    'name' => $user->name,
+                    'reply_message' => $request->reply,
+                    'original_subject' => $message->subject,
+                    'original_message' => $message->message,
+                ]
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Reply sent successfully.',
+            ]);
+        } catch (\Exception $e) {
+            Log::error("Reply email failed: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send reply email.',
+            ], 500);
+        }
+    }
+
+    public function updateNote(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'admin_note' => 'nullable|string',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json(['success' => false, 'errors' => $validator->errors()], 422);
+        }
+
+        $message = ContactMessage::findOrFail($id);
+        $message->update(['admin_note' => $request->admin_note]);
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Internal note updated successfully.',
+            'data' => $message
+        ]);
+    }
 
 }

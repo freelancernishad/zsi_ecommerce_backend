@@ -9,6 +9,7 @@ Route::prefix('admin')->group(function () {
     Route::middleware(AuthenticateAdmin::class)->group(function () {
 
         // Support ticket routes
+        Route::get('/support/stats', [AdminSupportTicketApiController::class, 'stats']);
         Route::get('/support', [AdminSupportTicketApiController::class, 'index']);
         Route::get('/support/{ticket}', [AdminSupportTicketApiController::class, 'show']);
         Route::post('/support/{ticket}/reply', [AdminSupportTicketApiController::class, 'reply']);

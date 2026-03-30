@@ -12,11 +12,24 @@ use App\Http\Requests\Common\SupportAndConnect\Admin\SupportTicketStatusRequest;
 
 class AdminSupportTicketApiController extends Controller
 {
-    // Get all support tickets for admin
+    // Get all support tickets for admin with pagination
     public function index()
     {
-        $tickets = SupportTicket::with('user')->latest()->get();
+        $tickets = SupportTicket::with('user')->latest()->paginate(10);
         return response()->json($tickets);
+    }
+
+    // Get support dashboard statistics
+    public function stats()
+    {
+        $stats = [
+            'total' => SupportTicket::count(),
+            'open' => SupportTicket::whereIn('status', ['open', 'Active', 'replay'])->count(),
+            'pending' => SupportTicket::where('status', 'pending')->count(),
+            'resolved' => SupportTicket::whereIn('status', ['resolved', 'Closed', 'closed'])->count(),
+        ];
+
+        return response()->json(['success' => true, 'data' => $stats]);
     }
 
     // View a specific support ticket
