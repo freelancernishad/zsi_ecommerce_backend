@@ -63,11 +63,15 @@ class ProductController extends Controller
         ]);
     }
 
-    public function show($slug)
+    public function show($idOrSlug)
     {
-        $product = Product::where('slug', $slug)
-            ->with(['images', 'category', 'variants', 'reviews.user'])
-            ->firstOrFail();
+        $query = Product::with(['images', 'category', 'variants', 'reviews.user']);
+
+        if (is_numeric($idOrSlug)) {
+            $product = $query->findOrFail($idOrSlug);
+        } else {
+            $product = $query->where('slug', $idOrSlug)->firstOrFail();
+        }
 
         return response()->json([
             'status' => 'success',
