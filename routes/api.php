@@ -138,6 +138,11 @@ if (file_exists($EcommerceCommonRoutes = __DIR__.'/Common/EcommerceCommonRoutes.
     require $EcommerceCommonRoutes;
 }
 
+// Load HomepageRoutes
+if (file_exists($HomepageRoutes = __DIR__.'/Common/HomepageRoutes.php')) {
+    require $HomepageRoutes;
+}
+
 // Load AdminCategoryRoutes
 if (file_exists($AdminCategoryRoutes = __DIR__.'/Admins/Categories/CategoryRoutes.php')) {
     require $AdminCategoryRoutes;
