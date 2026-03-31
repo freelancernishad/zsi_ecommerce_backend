@@ -43,6 +43,6 @@ if (!function_exists('setting')) {
      */
     function setting($key, $default = null)
     {
-        return \App\Models\Admin\Settings\SiteSetting::get($key, $default);
+        return \App\Models\SiteSetting::getValue($key, $default);
     }
 }

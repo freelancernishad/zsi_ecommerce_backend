@@ -36,7 +36,13 @@ class FileUploadService
 
             Log::info('File uploaded to S3', ['file_path' => $filePath]);
 
-            return config('AWS_FILE_LOAD_BASE') . $filePath;
+            $baseUrl = config('AWS_FILE_LOAD_BASE');
+            if (empty($baseUrl)) {
+                // Determine base URL dynamically if not set
+                $baseUrl = Storage::disk('s3')->url('/');
+            }
+
+            return rtrim($baseUrl, '/') . '/' . ltrim($filePath, '/');
         } catch (\Exception $e) {
             Log::error('Error uploading file to S3: ' . $e->getMessage());
             throw $e;
