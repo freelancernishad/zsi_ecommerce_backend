@@ -11,10 +11,15 @@ class CategoryController extends Controller
 {
     public function index(Request $request)
     {
-        $perPage = $request->get('per_page', 8);
+        $perPage = $request->get('per_page', 20);
         $parentId = $request->get('parent_id');
+        $showOnHome = $request->get('show_on_home');
         
-        $query = Category::select('id', 'name', 'slug', 'image', 'status', 'created_at');
+        $query = Category::select('id', 'name', 'slug', 'image', 'status', 'created_at', 'show_on_home', 'home_order');
+        
+        if ($showOnHome !== null) {
+            $query->where('show_on_home', (int) $showOnHome);
+        }
         
         if ($parentId) {
             $query->where('parent_id', $parentId);
@@ -74,9 +79,8 @@ class CategoryController extends Controller
     public function store(Request $request)
     {
         $request->validate([
-            'name' => 'required|string|max:255',
-            'parent_id' => 'nullable|exists:categories,id',
             'status' => 'required|in:active,inactive',
+            'show_on_home' => 'nullable|boolean',
         ]);
 
         $category = Category::create([
@@ -128,15 +132,44 @@ class CategoryController extends Controller
             'name' => 'sometimes|required|string|max:255',
             'parent_id' => 'nullable|exists:categories,id',
             'status' => 'sometimes|required|in:active,inactive',
+            'show_on_home' => 'sometimes|nullable|boolean',
+            'home_order' => 'sometimes|nullable|integer',
         ]);
 
         if ($request->has('name')) {
             $category->slug = Str::slug($request->name) . '-' . time();
         }
 
-        $category->update($request->all());
+        $category->update($request->only(['name', 'description', 'image', 'parent_id', 'status', 'show_on_home', 'home_order']));
 
-        return response()->json(['status' => 'success', 'data' => $category]);
+        return response()->json([
+            'status'      => 'success',
+            'Message'     => 'Success',
+            'isError'     => false,
+            'data'        => $category,
+        ]);
+    }
+
+    public function reorder(Request $request)
+    {
+        $request->validate([
+            'items'             => 'required|array',
+            'items.*.id'        => 'required|integer|exists:categories,id',
+            'items.*.home_order'=> 'required|integer|min:0',
+        ]);
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($request) {
+            foreach ($request->items as $item) {
+                Category::where('id', $item['id'])
+                    ->update(['home_order' => $item['home_order']]);
+            }
+        });
+
+        return response()->json([
+            'status'  => 'success',
+            'Message' => 'Success',
+            'isError' => false,
+        ]);
     }
 
     public function destroy($id)

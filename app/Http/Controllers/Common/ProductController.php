@@ -12,25 +12,40 @@ class ProductController extends Controller
     {
         $query = Product::with(['images', 'category'])->where('status', 'published');
 
+        // Filter by category slug (supports comma-separated slugs for children)
         if ($request->has('category')) {
-            $query->whereHas('category', function($q) use ($request) {
-                $q->where('slug', $request->category);
+            $slug = $request->category;
+            $query->whereHas('category', function($q) use ($slug) {
+                $q->where('slug', $slug)
+                  ->orWhereHas('parent', function($q2) use ($slug) {
+                      $q2->where('slug', $slug);
+                  });
             });
         }
 
         if ($request->has('price_min')) {
             $query->where('price', '>=', $request->price_min);
         }
-
         if ($request->has('price_max')) {
             $query->where('price', '<=', $request->price_max);
         }
 
-        $products = $query->paginate(12);
+        // Sorting
+        switch ($request->get('sort', 'newest')) {
+            case 'oldest':       $query->orderBy('created_at', 'asc'); break;
+            case 'price_asc':    $query->orderBy('price', 'asc'); break;
+            case 'price_desc':   $query->orderBy('price', 'desc'); break;
+            default:             $query->orderBy('created_at', 'desc'); break; // newest
+        }
+
+        $limit   = max(1, min(50, (int) $request->get('limit', 12)));
+        $products = $request->has('limit')
+            ? $query->limit($limit)->get()
+            : $query->paginate(12);
 
         return response()->json([
             'status' => 'success',
-            'data' => $products
+            'data'   => $products
         ]);
     }
 

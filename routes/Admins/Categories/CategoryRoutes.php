@@ -7,6 +7,7 @@ Route::prefix('admin/categories')->middleware(AuthenticateAdmin::class)->group(f
     Route::get('/', [CategoryController::class, 'index']);
     Route::get('/tree', [CategoryController::class, 'tree']);
     Route::post('/', [CategoryController::class, 'store']);
+    Route::post('/reorder', [CategoryController::class, 'reorder']);
     Route::get('/{slug}', [CategoryController::class, 'show']);
     Route::put('/{id}', [CategoryController::class, 'update']);
     Route::delete('/{id}', [CategoryController::class, 'destroy']);

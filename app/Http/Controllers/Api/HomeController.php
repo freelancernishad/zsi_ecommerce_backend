@@ -23,6 +23,7 @@ class HomeController extends Controller
         
         // 2. Fetch Featured Categories (marked with show_on_home)
         $featuredCategories = Category::where('show_on_home', true)
+            ->withCount('products')
             ->with(['children' => function($q) {
                 $q->limit(4);
             }])
@@ -41,16 +42,18 @@ class HomeController extends Controller
             ->get();
 
         return response()->json([
-            'sections' => [
-                'hero' => $hero,
-                'spring_fling' => $springFling,
-                'trends_title' => $trendsTitle,
-                'brands' => $brands,
-                'viral_pick' => $viralPick
-            ],
-            'categories' => $featuredCategories,
-            'products' => [
-                'new_arrivals' => $newArrivals
+            'data' => [
+                'sections' => [
+                    'hero' => $hero,
+                    'spring_fling' => $springFling,
+                    'trends_title' => $trendsTitle,
+                    'brands' => $brands,
+                    'viral_pick' => $viralPick
+                ],
+                'categories' => $featuredCategories,
+                'products' => [
+                    'new_arrivals' => $newArrivals
+                ]
             ]
         ]);
     }
