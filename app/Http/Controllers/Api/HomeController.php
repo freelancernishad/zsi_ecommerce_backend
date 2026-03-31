@@ -93,6 +93,15 @@ class HomeController extends Controller
                 if ($cat->image && !str_starts_with($cat->image, 'http')) {
                     $cat->image = asset('storage/' . $cat->image);
                 }
+                
+                // Format children images
+                if ($cat->children) {
+                    foreach ($cat->children as $child) {
+                        if ($child->image && !str_starts_with($child->image, 'http')) {
+                            $child->image = asset('storage/' . $child->image);
+                        }
+                    }
+                }
                 return $cat;
             });
 
