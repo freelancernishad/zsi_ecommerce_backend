@@ -28,7 +28,7 @@ class Product extends Model
         'category_id',
         'sub_category_id',
         'sub_sub_category_id',
-        'brand',
+        'brand_id',
         'status',
         'weight',
         'weight_unit',
@@ -46,6 +46,11 @@ class Product extends Model
         'review_count',
         'tags',
     ];
+
+    public function brand()
+    {
+        return $this->belongsTo(Brand::class);
+    }
 
     public function category()
     {

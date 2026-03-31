@@ -30,6 +30,10 @@ class ProductController extends Controller
             $query->where('price', '<=', $request->price_max);
         }
 
+        if ($request->has('brand_id')) {
+            $query->where('brand_id', $request->brand_id);
+        }
+
         // Sorting
         switch ($request->get('sort', 'newest')) {
             case 'oldest':       $query->orderBy('created_at', 'asc'); break;

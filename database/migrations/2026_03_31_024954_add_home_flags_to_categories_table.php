@@ -12,8 +12,12 @@ return new class extends Migration
     public function up(): void
     {
         Schema::table('categories', function (Blueprint $table) {
-            $table->boolean('show_on_home')->default(false)->after('status');
-            $table->integer('home_order')->default(0)->after('show_on_home');
+            if (!Schema::hasColumn('categories', 'show_on_home')) {
+                $table->boolean('show_on_home')->default(false)->after('status');
+            }
+            if (!Schema::hasColumn('categories', 'home_order')) {
+                $table->integer('home_order')->default(0)->after('show_on_home');
+            }
         });
     }
 

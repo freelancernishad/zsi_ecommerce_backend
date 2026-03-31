@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Models\SiteSetting;
 use App\Models\Category;
 use App\Models\Product;
+use App\Models\Brand;
 use Illuminate\Http\Request;
 
 class HomeController extends Controller
@@ -46,7 +47,40 @@ class HomeController extends Controller
                 ->find($trendsConfig['viral_pick_id']);
         }
 
-        $brands = SiteSetting::getValue('home_brands', []);
+        $brands = Brand::where('status', 'active')
+            ->where('show_on_home', true)
+            ->orderBy('home_order', 'asc')
+            ->get()
+            ->map(function($brand) {
+                if ($brand->logo && !str_starts_with($brand->logo, 'http')) {
+                    $brand->logo = asset('storage/' . $brand->logo);
+                }
+                return $brand;
+            });
+        
+        $brandSectionConfig = SiteSetting::getValue('home_brand_section', [
+            'title' => 'Top Picks from The Most Favorite Brands',
+            'product_ids' => []
+        ]);
+
+        $brandSectionConfig['brands'] = $brands;
+
+        // If brands exist, fetch products for the first brand as default
+        $brandSectionProducts = [];
+        if ($brands->isNotEmpty()) {
+            $firstBrand = $brands->first();
+            $brandSectionProducts = Product::with(['images', 'reviews', 'category'])
+                ->where('brand_id', $firstBrand->id)
+                ->where('status', 'published')
+                ->limit(12)
+                ->get();
+        } elseif (!empty($brandSectionConfig['product_ids'])) {
+            // Fallback to manual selection if no featured brands exist (or as secondary fallback)
+            $brandSectionProducts = Product::with(['images', 'reviews', 'category'])
+                ->whereIn('id', $brandSectionConfig['product_ids'])
+                ->where('status', 'published')
+                ->get();
+        }
         
         // 2. Fetch Featured Categories (marked with show_on_home) - For Highlights (Always show)
         $featuredCategories = Category::where('show_on_home', true)
@@ -105,6 +139,7 @@ class HomeController extends Controller
             ->map($formatProduct);
 
         foreach ($springFlingProducts as $p) $formatProduct($p);
+        foreach ($brandSectionProducts as $p) $formatProduct($p);
         $formatProduct($viralPick);
 
         return response()->json([
@@ -116,7 +151,17 @@ class HomeController extends Controller
                     'spring_fling_products' => $springFlingProducts,
                     'trends' => $trendsConfig,
                     'brands' => $brands,
-                    'viral_pick' => $viralPick
+                    'brand_section' => [
+                        'title' => $brandSectionConfig['title'],
+                        'brands' => $brands,
+                        'products' => $brandSectionProducts
+                    ],
+                    'viral_pick' => $viralPick,
+                    'browsing_history' => Product::with(['images', 'reviews', 'category'])
+                        ->where('status', 'published')
+                        ->inRandomOrder()
+                        ->limit(12)
+                        ->get()
                 ],
                 'categories' => $featuredCategories,
                 'carousel_categories' => $carouselCategories,
