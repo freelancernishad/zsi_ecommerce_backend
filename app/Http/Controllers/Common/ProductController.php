@@ -65,7 +65,7 @@ class ProductController extends Controller
 
     public function show($idOrSlug)
     {
-        $query = Product::with(['images', 'category', 'variants', 'reviews.user']);
+        $query = Product::with(['images', 'category', 'brand', 'variants', 'reviews.user']);
 
         if (is_numeric($idOrSlug)) {
             $product = $query->findOrFail($idOrSlug);
