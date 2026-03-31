@@ -183,6 +183,21 @@ class HomeController extends Controller
                 'pinterest' => 'https://pinterest.com',
                 'linkedin' => 'https://linkedin.com',
                 'twitter' => 'https://twitter.com'
+            ],
+            'quick_links' => [
+                ['name' => 'Deal Of The Day', 'url' => '#'],
+                ['name' => 'New Arrival', 'url' => '#'],
+                ['name' => 'Featured Products', 'url' => '#'],
+                ['name' => 'Trending Now', 'url' => '#'],
+                ['name' => 'On Sale', 'url' => '#'],
+            ],
+            'customer_services' => [
+                ['name' => 'My Orders', 'url' => '#'],
+                ['name' => 'My Account', 'url' => '#'],
+                ['name' => 'Track My Order', 'url' => '#'],
+                ['name' => 'Return Policy', 'url' => '#'],
+                ['name' => 'Privacy Policy', 'url' => '#'],
+                ['name' => 'Help Center', 'url' => '#'],
             ]
         ]);
 
