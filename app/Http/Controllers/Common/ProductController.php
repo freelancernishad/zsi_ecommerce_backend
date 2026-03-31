@@ -34,6 +34,16 @@ class ProductController extends Controller
             $query->where('brand_id', $request->brand_id);
         }
 
+        if ($request->has('ids')) {
+            $ids = array_map('trim', explode(',', $request->ids));
+            $ids = array_filter($ids, 'is_numeric');
+            if (!empty($ids)) {
+                $query->whereIn('id', $ids);
+                // Keep the same order as requested IDs if needed, otherwise standard sort applies
+                // We'll rely on the frontend to sort them if it needs order.
+            }
+        }
+
         // Sorting
         switch ($request->get('sort', 'newest')) {
             case 'oldest':       $query->orderBy('created_at', 'asc'); break;

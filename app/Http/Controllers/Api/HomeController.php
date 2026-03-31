@@ -142,9 +142,57 @@ class HomeController extends Controller
         foreach ($brandSectionProducts as $p) $formatProduct($p);
         $formatProduct($viralPick);
 
+        // Fetch Popular Products
+        $popularProducts = Product::with(['images'])
+            ->where('status', 'published')
+            ->orderBy('review_count', 'desc')
+            ->limit(4)
+            ->get()
+            ->map($formatProduct);
+            
+        // Fetch Exclusive Deals (Products with highest absolute discount amount)
+        $exclusiveDeals = Product::with(['images'])
+            ->where('status', 'published')
+            ->whereColumn('original_price', '>', 'price')
+            ->orderByRaw('(original_price - price) DESC')
+            ->limit(4)
+            ->get()
+            ->map($formatProduct);
+
+        // Fetch Global Configs for Footer/PreFooter 
+        $preFooterConfig = SiteSetting::getValue('home_pre_footer', [
+            'title' => 'Shop with Ease: The Ultimate Shopping Experience - Discounts, Support and Security!',
+            'image' => 'https://via.placeholder.com/400x300/1c64d4/ffffff?text=App+Mockup',
+            'features' => [
+                ['text' => 'Enjoy free shipping on all orders over $1000!', 'icon_type' => 'shipping'],
+                ['text' => 'Quality support with 24/7 online assistance!', 'icon_type' => 'support'],
+                ['text' => 'Hassle-free returns & refunds within 30 days!', 'icon_type' => 'returns'],
+                ['text' => 'Gift voucher – get 20% off when you shop online!', 'icon_type' => 'gift'],
+            ]
+        ]);
+
+        $footerConfig = SiteSetting::getValue('site_footer', [
+            'brand_name' => 'FlipShop.',
+            'tagline' => 'SELECTIONS',
+            'phone' => '+880 1700000000',
+            'email' => 'contact@flipshopselections.com',
+            'website' => 'www.flipshopselections.com',
+            'copyright' => '© 2025 FlipShopSelections. Developed by ZSI.Ai',
+            'socials' => [
+                'facebook' => 'https://facebook.com',
+                'pinterest' => 'https://pinterest.com',
+                'linkedin' => 'https://linkedin.com',
+                'twitter' => 'https://twitter.com'
+            ]
+        ]);
+
         return response()->json([
             'status' => 'success',
             'data' => [
+                'settings' => [
+                    'pre_footer' => $preFooterConfig,
+                    'footer' => $footerConfig
+                ],
                 'sections' => [
                     'hero' => $hero,
                     'spring_fling' => $springFlingConfig,
@@ -167,7 +215,10 @@ class HomeController extends Controller
                 'carousel_categories' => $carouselCategories,
                 'products' => [
                     'new_arrivals' => $newArrivals,
-                    'deal_of_the_day' => $dealOfTheDay
+                    'deal_of_the_day' => $dealOfTheDay,
+                    'popular' => $popularProducts,
+                    'on_sale' => $dealOfTheDay->take(4),
+                    'exclusive_deals' => $exclusiveDeals
                 ]
             ]
         ]);
