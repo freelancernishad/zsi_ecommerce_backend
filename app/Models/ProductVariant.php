@@ -16,6 +16,7 @@ class ProductVariant extends Model
         'discount_price', 
         'sku', 
         'available_quantity',
+        'stock',
         'color', 
         'size', 
         'price_adjustment'
