@@ -3,6 +3,7 @@ use Illuminate\Support\Facades\Route;
 use App\Http\Controllers\Common\CategoryController;
 use App\Http\Controllers\Common\ProductController;
 use App\Http\Controllers\Common\BrandController;
+use App\Http\Controllers\Common\ActivityController;
 
 Route::prefix('ecommerce')->group(function () {
     Route::get('categories', [CategoryController::class, 'index']);
@@ -13,4 +14,5 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('products/{slug}', [ProductController::class, 'show']);
     Route::post('reviews', [\App\Http\Controllers\Common\ReviewController::class, 'store'])->middleware('auth:sanctum');
     Route::get('settings/{group}', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getSettingsByGroup']);
+    Route::post('track', [ActivityController::class, 'track']);
 });

@@ -5,6 +5,7 @@ namespace App\Http\Controllers\Common;
 use App\Http\Controllers\Controller;
 use App\Models\Product;
 use Illuminate\Http\Request;
+use Illuminate\Support\Facades\DB;
 
 class ProductController extends Controller
 {
@@ -120,14 +121,91 @@ class ProductController extends Controller
             }
         }
 
-        // Sorting
+        // Personalized Sorting (If user is authenticated)
+        $personalized = false;
+        if (auth('user')->check() && !$request->has('sort')) {
+            $userId = auth('user')->id();
+            
+            // 1. Category Interest (Weight 30)
+            $topCategories = \App\Models\UserActivity::where('user_id', $userId)
+                ->where('activity_type', 'view_category')
+                ->whereNotNull('entity_id')
+                ->select('entity_id', \DB::raw('count(*) as count'))
+                ->groupBy('entity_id')
+                ->orderBy('count', 'desc')
+                ->limit(3)
+                ->pluck('entity_id')
+                ->toArray();
+
+            // 2. Keyword Interest (Weight 50) - Looking at last 10 searches
+            $recentKeywords = \App\Models\UserActivity::where('user_id', $userId)
+                ->where('activity_type', 'search')
+                ->latest()
+                ->limit(10)
+                ->pluck('metadata')
+                ->map(fn($meta) => $meta['keywords'] ?? null)
+                ->filter()
+                ->unique()
+                ->toArray();
+
+            // 3. Tag interest (Weight 10 per tag match) - From last 20 product views
+            $recentTags = \App\Models\UserActivity::where('user_id', $userId)
+                ->where('activity_type', 'view_product')
+                ->latest()
+                ->limit(20)
+                ->pluck('metadata')
+                ->flatMap(fn($meta) => $meta['tags'] ?? [])
+                ->countBy()
+                ->sortDesc()
+                ->take(5)
+                ->keys()
+                ->toArray();
+
+            $rawOrder = [];
+            
+            if (!empty($topCategories)) {
+                $categoryOrder = implode(',', $topCategories);
+                $rawOrder[] = "(CASE WHEN category_id IN ({$categoryOrder}) THEN 30 ELSE 0 END)";
+            }
+
+            if (!empty($recentKeywords)) {
+                $keywordCase = "";
+                foreach ($recentKeywords as $keyword) {
+                    $escaped = str_replace("'", "''", $keyword);
+                    $keywordCase .= "WHEN name LIKE '%{$escaped}%' THEN 50 ";
+                }
+                $rawOrder[] = "(CASE {$keywordCase} ELSE 0 END)";
+            }
+
+            if (!empty($recentTags)) {
+                $tagCases = [];
+                foreach ($recentTags as $tag) {
+                    $escapedTag = str_replace("'", "''", $tag);
+                    // Using JSON_CONTAINS for clean tag matching
+                    $tagCases[] = "(CASE WHEN JSON_CONTAINS(LOWER(tags), '\"" . strtolower($escapedTag) . "\"') THEN 10 ELSE 0 END)";
+                }
+                $rawOrder[] = "(" . implode(' + ', $tagCases) . ")";
+            }
+
+            if (!empty($rawOrder)) {
+                $query->orderByRaw("(" . implode(' + ', $rawOrder) . ") DESC");
+                $personalized = true;
+            }
+        }
+    
+
+        // Standard Sorting (Secondary or Primary if no personalization)
         switch ($request->get('sort', 'newest')) {
             case 'oldest':         $query->orderBy('created_at', 'asc'); break;
             case 'price_asc':      $query->orderBy('price', 'asc'); break;
             case 'price_desc':     $query->orderBy('price', 'desc'); break;
             case 'rating_desc':    $query->orderBy('rating', 'desc'); break;
             case 'best_selling':   $query->withCount('orderItems')->orderBy('order_items_count', 'desc'); break;
-            default:               $query->orderBy('created_at', 'desc'); break; // newest
+            default:               
+                if (!$personalized) {
+                    $query->orderBy('created_at', 'desc'); 
+                }
+                break; 
         }
 
         $limit   = max(1, min(100, (int) $request->get('limit', 24)));
