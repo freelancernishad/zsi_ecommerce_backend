@@ -85,8 +85,8 @@ class AdminEcommerceDashboardController extends Controller
                 ];
             });
 
-        // ── Top Products ──────────────────────────────────────────────────────
-        $topProducts = DB::table('order_items')
+        // ── Best Selling Products ─────────────────────────────────────────────
+        $bestSellingProducts = DB::table('order_items')
             ->join('products', 'order_items.product_id', '=', 'products.id')
             ->join('orders', 'order_items.order_id', '=', 'orders.id')
             ->where('orders.payment_status', 'paid')
@@ -99,9 +99,13 @@ class AdminEcommerceDashboardController extends Controller
             )
             ->groupBy('products.id', 'products.name', 'products.price', 'products.original_price')
             ->orderByDesc('total_sold')
-            ->take(4)
+            ->take(5)
             ->get()
             ->map(function ($p) {
+                // Get first image
+                $image = DB::table('product_images')->where('product_id', $p->id)->first();
+                $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+
                 $avg = Review::where('product_id', $p->id)->avg('rating') ?? 0;
                 $cnt = Review::where('product_id', $p->id)->count();
                 return [
@@ -109,9 +113,37 @@ class AdminEcommerceDashboardController extends Controller
                     'name'          => $p->name,
                     'price'         => (float) $p->price,
                     'originalPrice' => $p->original_price ? (float) $p->original_price : null,
+                    'image'         => $imagePath,
                     'rating'        => round($avg, 1),
                     'reviews'       => $cnt,
-                    'status'        => 'In Stock',
+                    'status'        => 'Top Sales',
+                    'color'         => 'bg-emerald-50 text-emerald-700 border-emerald-100'
+                ];
+            });
+
+        // ── Best Rated Products ───────────────────────────────────────────────
+        $bestRatedProducts = Product::withCount(['reviews as reviews_count'])
+            ->withAvg('reviews as rating', 'rating')
+            ->having('reviews_count', '>', 0)
+            ->orderByDesc('rating')
+            ->orderByDesc('reviews_count')
+            ->take(5)
+            ->get()
+            ->map(function ($p) {
+                // Get first image
+                $image = DB::table('product_images')->where('product_id', $p->id)->first();
+                $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+
+                return [
+                    'id'            => $p->id,
+                    'name'          => $p->name,
+                    'price'         => (float) $p->price,
+                    'originalPrice' => $p->original_price ? (float) $p->original_price : null,
+                    'image'         => $imagePath,
+                    'rating'        => round($p->rating, 1),
+                    'reviews'       => $p->reviews_count,
+                    'status'        => 'Best Rated',
+                    'color'         => 'bg-amber-50 text-amber-700 border-amber-100'
                 ];
             });
 
@@ -153,6 +185,28 @@ class AdminEcommerceDashboardController extends Controller
             ]);
 
         // ── High Revenue Categories ───────────────────────────────────────────
+        $categoryRevenueCurrent = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->where('orders.payment_status', 'paid')
+            ->where('orders.created_at', '>=', now()->subDays($period))
+            ->select('categories.id', DB::raw('SUM(order_items.quantity * order_items.price) as revenue'))
+            ->groupBy('categories.id')
+            ->get()
+            ->pluck('revenue', 'id');
+
+        $categoryRevenuePrevious = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->where('orders.payment_status', 'paid')
+            ->whereBetween('orders.created_at', [now()->subDays($period * 2), now()->subDays($period)])
+            ->select('categories.id', DB::raw('SUM(order_items.quantity * order_items.price) as revenue'))
+            ->groupBy('categories.id')
+            ->get()
+            ->pluck('revenue', 'id');
+
         $topCategories = DB::table('order_items')
             ->join('orders', 'order_items.order_id', '=', 'orders.id')
             ->join('products', 'order_items.product_id', '=', 'products.id')
@@ -168,13 +222,17 @@ class AdminEcommerceDashboardController extends Controller
             ->orderByDesc('total_revenue')
             ->take(4)
             ->get()
-            ->map(function ($c) {
+            ->map(function ($c) use ($categoryRevenueCurrent, $categoryRevenuePrevious) {
+                $current  = $categoryRevenueCurrent[$c->id] ?? 0;
+                $previous = $categoryRevenuePrevious[$c->id] ?? 0;
+                $growth   = $previous > 0 ? round((($current - $previous) / $previous) * 100, 1) : 0;
+
                 return [
                     'id'      => $c->id,
                     'name'    => $c->name,
                     'sold'    => (int) $c->total_sold,
                     'revenue' => (float) $c->total_revenue,
-                    'growth'  => '+12%', // Display placeholder for UI
+                    'growth'  => ($growth >= 0 ? '+' : '') . $growth . '%',
                 ];
             });
 
@@ -193,12 +251,205 @@ class AdminEcommerceDashboardController extends Controller
                 'monthly_stats'       => $monthlyStats,
                 'balance_breakdown'   => $balanceBreakdown,
                 'recent_orders'       => $recentOrders,
-                'top_products'        => $topProducts,
+                'best_selling_products' => $bestSellingProducts,
+                'best_review_products'  => $bestRatedProducts,
                 'top_customers'       => $topCustomers,
                 'top_locations'       => $topLocations,
                 'top_categories'      => $topCategories,
                 'satisfaction_rate'   => $satisfactionRate,
             ],
+        ]);
+    }
+
+    public function categoryAnalytics(Request $request)
+    {
+        $period = $request->get('period', 30);
+
+        // ── Category Performance List ─────────────────────────────────────────
+        $currentStart  = now()->subDays($period);
+        $previousStart = now()->subDays($period * 2);
+
+        $categories = DB::table('categories')
+            ->leftJoin('products', 'categories.id', '=', 'products.category_id')
+            ->leftJoin('order_items', 'products.id', '=', 'order_items.product_id')
+            ->leftJoin('orders', 'order_items.order_id', '=', 'orders.id')
+            ->select(
+                'categories.id',
+                'categories.name',
+                'categories.image',
+                DB::raw('COUNT(DISTINCT products.id) as products_count'),
+                DB::raw('SUM(CASE WHEN orders.payment_status = "paid" THEN order_items.quantity ELSE 0 END) as total_sold'),
+                DB::raw('SUM(CASE WHEN orders.payment_status = "paid" THEN order_items.quantity * order_items.price ELSE 0 END) as total_revenue'),
+                DB::raw('COUNT(DISTINCT CASE WHEN orders.payment_status = "paid" THEN orders.id ELSE NULL END) as orders_count')
+            )
+            ->groupBy('categories.id', 'categories.name', 'categories.image')
+            ->orderByDesc('total_revenue')
+            ->get();
+
+        // Calculate growth per category
+        $currentRevenue = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->where('orders.payment_status', 'paid')
+            ->where('orders.created_at', '>=', $currentStart)
+            ->select('products.category_id', DB::raw('SUM(order_items.quantity * order_items.price) as revenue'))
+            ->groupBy('products.category_id')
+            ->get()
+            ->pluck('revenue', 'category_id');
+
+        $previousRevenue = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->where('orders.payment_status', 'paid')
+            ->whereBetween('orders.created_at', [$previousStart, $currentStart])
+            ->select('products.category_id', DB::raw('SUM(order_items.quantity * order_items.price) as revenue'))
+            ->groupBy('products.category_id')
+            ->get()
+            ->pluck('revenue', 'category_id');
+
+        $categoryData = $categories->map(function ($c) use ($currentRevenue, $previousRevenue) {
+            $curr = $currentRevenue[$c->id] ?? 0;
+            $prev = $previousRevenue[$c->id] ?? 0;
+            $growth = $prev > 0 ? round((($curr - $prev) / $prev) * 100, 1) : 0;
+            $aov = $c->orders_count > 0 ? round($c->total_revenue / $c->orders_count, 2) : 0;
+
+            return [
+                'id'             => $c->id,
+                'name'           => $c->name,
+                'image'          => $c->image ? asset('storage/' . $c->image) : null,
+                'products_count' => (int) $c->products_count,
+                'total_sold'     => (int) $c->total_sold,
+                'total_revenue'  => (float) $c->total_revenue,
+                'orders_count'   => (int) $c->orders_count,
+                'growth'         => (float) $growth,
+                'aov'            => (float) $aov,
+            ];
+        });
+
+        // ── Revenue Share (Pie Chart Data) ────────────────────────────────────
+        $revenueShare = $categoryData->map(fn($c) => [
+            'name'  => $c['name'],
+            'value' => $c['total_revenue']
+        ])->sortByDesc('value')->take(8)->values();
+
+        // ── Performance Over Time (Bar Chart Data) ────────────────────────────
+        // Group by month for the last 6 months for the top 5 categories
+        $top5Ids = $categoryData->take(5)->pluck('id');
+        $timeData = DB::table('order_items')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('categories', 'products.category_id', '=', 'categories.id')
+            ->where('orders.payment_status', 'paid')
+            ->where('orders.created_at', '>=', now()->subMonths(6))
+            ->whereIn('categories.id', $top5Ids)
+            ->select(
+                DB::raw("DATE_FORMAT(orders.created_at, '%b') as month"),
+                DB::raw("DATE_FORMAT(orders.created_at, '%Y-%m') as month_key"),
+                'categories.name',
+                DB::raw('SUM(order_items.quantity * order_items.price) as revenue')
+            )
+            ->groupBy('month_key', 'month', 'categories.name')
+            ->orderBy('month_key')
+            ->get();
+
+        $performanceOverTime = [];
+        $months = $timeData->pluck('month')->unique()->values();
+        foreach ($months as $month) {
+            $row = ['month' => $month];
+            foreach ($categoryData->take(5) as $cat) {
+                $rev = $timeData->where('month', $month)->where('name', $cat['name'])->first();
+                $row[$cat['name']] = $rev ? (float) $rev->revenue : 0;
+            }
+            $performanceOverTime[] = $row;
+        }
+
+        return response()->json([
+            'isError' => false,
+            'category_performance' => $categoryData,
+            'revenue_share'        => $revenueShare,
+            'performance_trends'   => $performanceOverTime,
+        ]);
+    }
+
+    public function bestSellingProductsFull(Request $request)
+    {
+        $limit = $request->get('limit', 20);
+
+        $bestSellingProducts = DB::table('order_items')
+            ->join('products', 'order_items.product_id', '=', 'products.id')
+            ->join('orders', 'order_items.order_id', '=', 'orders.id')
+            ->where('orders.payment_status', 'paid')
+            ->select(
+                'products.id',
+                'products.name',
+                'products.price',
+                'products.original_price',
+                'products.sku',
+                DB::raw('SUM(order_items.quantity) as total_sold'),
+                DB::raw('SUM(order_items.quantity * order_items.price) as total_revenue')
+            )
+            ->groupBy('products.id', 'products.name', 'products.price', 'products.original_price', 'products.sku')
+            ->orderByDesc('total_sold')
+            ->paginate($limit);
+
+        $bestSellingProducts->getCollection()->transform(function ($p) {
+            $image = DB::table('product_images')->where('product_id', $p->id)->first();
+            $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+
+            $avg = Review::where('product_id', $p->id)->avg('rating') ?? 0;
+            $cnt = Review::where('product_id', $p->id)->count();
+
+            return [
+                'id'            => $p->id,
+                'name'          => $p->name,
+                'price'         => (float) $p->price,
+                'originalPrice' => $p->original_price ? (float) $p->original_price : null,
+                'sku'           => $p->sku,
+                'total_sold'    => (int) $p->total_sold,
+                'total_revenue' => (float) $p->total_revenue,
+                'image'         => $imagePath,
+                'rating'        => round($avg, 1),
+                'reviews'       => $cnt,
+            ];
+        });
+
+        return response()->json([
+            'isError' => false,
+            'data' => $bestSellingProducts,
+        ]);
+    }
+
+    public function bestRatedProductsFull(Request $request)
+    {
+        $limit = $request->get('limit', 20);
+
+        $bestRatedProducts = Product::withCount(['reviews as reviews_count'])
+            ->withAvg('reviews as avg_rating', 'rating')
+            ->having('reviews_count', '>', 0)
+            ->orderByDesc('avg_rating')
+            ->orderByDesc('reviews_count')
+            ->paginate($limit);
+
+        $bestRatedProducts->getCollection()->transform(function ($p) {
+            $image = DB::table('product_images')->where('product_id', $p->id)->first();
+            $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+
+            return [
+                'id'            => $p->id,
+                'name'          => $p->name,
+                'price'         => (float) $p->price,
+                'originalPrice' => $p->original_price ? (float) $p->original_price : null,
+                'sku'           => $p->sku,
+                'rating'        => round($p->avg_rating, 1),
+                'reviews'       => $p->reviews_count,
+                'image'         => $imagePath,
+                'status'        => 'Best Rated',
+            ];
+        });
+
+        return response()->json([
+            'isError' => false,
+            'data' => $bestRatedProducts,
         ]);
     }
 }

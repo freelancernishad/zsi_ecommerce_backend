@@ -8,4 +8,6 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('categories/{slug}', [CategoryController::class, 'show']);
     Route::get('products', [ProductController::class, 'index']);
     Route::get('products/{slug}', [ProductController::class, 'show']);
+    Route::post('reviews', [\App\Http\Controllers\Common\ReviewController::class, 'store'])->middleware('auth:sanctum');
+    Route::get('settings/{group}', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getSettingsByGroup']);
 });
