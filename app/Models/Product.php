@@ -11,6 +11,7 @@ class Product extends Model
 
     protected $casts = [
         'tags' => 'json',
+        'variant_options' => 'json',
     ];
 
     protected $fillable = [
@@ -45,6 +46,10 @@ class Product extends Model
         'rating',
         'review_count',
         'tags',
+        'variant_options',
+        'size_guide',
+        'shipping_policy',
+        'return_policy',
     ];
 
     public function brand()

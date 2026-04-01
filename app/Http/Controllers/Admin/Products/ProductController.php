@@ -104,6 +104,9 @@ class ProductController extends Controller
             'images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
             'sub_category_id' => 'nullable|exists:categories,id',
             'sub_sub_category_id' => 'nullable|exists:categories,id',
+            'size_guide' => 'nullable|string',
+            'shipping_policy' => 'nullable|string',
+            'return_policy' => 'nullable|string',
         ]);
 
         return DB::transaction(function () use ($request) {
@@ -137,6 +140,10 @@ class ProductController extends Controller
                 'is_physical'           => $request->is_physical ?? true,
                 'charge_tax'            => $request->charge_tax ?? true,
                 'tags'                  => $request->has('tags') ? array_values($request->tags) : [],
+                'variant_options'       => $request->has('variant_options') ? json_decode($request->variant_options, true) : null,
+                'size_guide'            => $request->size_guide,
+                'shipping_policy'       => $request->shipping_policy,
+                'return_policy'         => $request->return_policy,
             ]);
 
             // Handle Images
@@ -180,7 +187,7 @@ class ProductController extends Controller
         $product = Product::findOrFail($id);
 
         return DB::transaction(function () use ($request, $product) {
-            $data = $request->except(['images', 'variant_combinations']);
+            $data = $request->except(['images', 'variant_combinations', 'variant_options', 'size_guide']);
 
             // Map frontend 'quantity' to 'stock_quantity' for mass assignment
             if ($request->has('quantity')) {
@@ -199,6 +206,14 @@ class ProductController extends Controller
             if ($request->has('continue_selling')) $data['continue_selling'] = $request->continue_selling;
             if ($request->has('is_physical')) $data['is_physical'] = $request->is_physical;
             if ($request->has('charge_tax')) $data['charge_tax'] = $request->charge_tax;
+
+            if ($request->has('variant_options')) {
+                $product->variant_options = json_decode($request->variant_options, true);
+            }
+
+            if ($request->has('size_guide')) {
+                $product->size_guide = $request->size_guide;
+            }
 
             $product->update($data);
 
