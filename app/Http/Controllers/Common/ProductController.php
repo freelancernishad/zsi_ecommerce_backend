@@ -68,15 +68,47 @@ class ProductController extends Controller
 
         if ($request->has('color') && !empty($request->color)) {
             $colors = array_filter(explode(',', $request->color));
-            $query->whereHas('variants', function ($q) use ($colors) {
-                $q->whereIn('color', $colors);
+            $query->where(function($q) use ($colors) {
+                // Legacy column check
+                $q->whereHas('variants', function($qv) use ($colors) {
+                    $qv->whereIn('color', $colors);
+                })
+                // JSON variant_options check
+                ->orWhere(function($qj) use ($colors) {
+                    foreach ($colors as $c) {
+                        $qj->orWhereRaw("JSON_SEARCH(LOWER(variant_options), 'one', ?, NULL, '$[*].values') IS NOT NULL", [strtolower(trim($c))]);
+                    }
+                });
             });
         }
 
         if ($request->has('size') && !empty($request->size)) {
             $sizes = array_filter(explode(',', $request->size));
-            $query->whereHas('variants', function ($q) use ($sizes) {
-                $q->whereIn('size', $sizes);
+            $query->where(function($q) use ($sizes) {
+                // Legacy column check
+                $q->whereHas('variants', function($qs) use ($sizes) {
+                    $qs->whereIn('size', $sizes);
+                })
+                // JSON variant_options check
+                ->orWhere(function($qj) use ($sizes) {
+                    foreach ($sizes as $s) {
+                        $qj->orWhereRaw("JSON_SEARCH(LOWER(variant_options), 'one', ?, NULL, '$[*].values') IS NOT NULL", [strtolower(trim($s))]);
+                    }
+                });
+            });
+        }
+
+        // Support for other attributes like 'material'
+        $allParams = $request->all();
+        $reserved = ['category', 'brand', 'brand_id', 'color', 'size', 'sort', 'page', 'limit', 'price_min', 'price_max', 'q', 'rating', 'in_stock', 'ids'];
+        foreach ($allParams as $key => $val) {
+            if (in_array($key, $reserved) || empty($val)) continue;
+            
+            $values = array_filter(explode(',', $val));
+            $query->where(function($q) use ($values) {
+                foreach ($values as $v) {
+                    $q->orWhereRaw("JSON_SEARCH(LOWER(variant_options), 'one', ?, NULL, '$[*].values') IS NOT NULL", [strtolower(trim($v))]);
+                }
             });
         }
 
@@ -90,10 +122,12 @@ class ProductController extends Controller
 
         // Sorting
         switch ($request->get('sort', 'newest')) {
-            case 'oldest':       $query->orderBy('created_at', 'asc'); break;
-            case 'price_asc':    $query->orderBy('price', 'asc'); break;
-            case 'price_desc':   $query->orderBy('price', 'desc'); break;
-            default:             $query->orderBy('created_at', 'desc'); break; // newest
+            case 'oldest':         $query->orderBy('created_at', 'asc'); break;
+            case 'price_asc':      $query->orderBy('price', 'asc'); break;
+            case 'price_desc':     $query->orderBy('price', 'desc'); break;
+            case 'rating_desc':    $query->orderBy('rating', 'desc'); break;
+            case 'best_selling':   $query->withCount('orderItems')->orderBy('order_items_count', 'desc'); break;
+            default:               $query->orderBy('created_at', 'desc'); break; // newest
         }
 
         $limit   = max(1, min(100, (int) $request->get('limit', 24)));
@@ -126,17 +160,60 @@ class ProductController extends Controller
         $categories = \App\Models\Category::where('status', 'active')->whereNull('parent_id')->with('children')->get();
         $brands = \App\Models\Brand::where('status', 'active')->get();
         
-        // Get unique colors and sizes from variants
-        $colors = \App\Models\ProductVariant::whereNotNull('color')->distinct()->pluck('color')->filter();
-        $sizes = \App\Models\ProductVariant::whereNotNull('size')->distinct()->pluck('size')->filter();
+        // 1. Get legacy variants from product_variants columns (fallback)
+        $legacyColors = \App\Models\ProductVariant::whereNotNull('color')->distinct()->pluck('color')->filter()->toArray();
+        $legacySizes = \App\Models\ProductVariant::whereNotNull('size')->distinct()->pluck('size')->filter()->toArray();
+        
+        // 2. Get dynamic variants from product-level JSON 'variant_options'
+        $allVariantOptions = \App\Models\Product::whereNotNull('variant_options')->pluck('variant_options');
+        
+        $variantFilters = [];
+        
+        // Seed with legacy values
+        if (!empty($legacyColors)) $variantFilters['Color'] = array_values(array_unique($legacyColors));
+        if (!empty($legacySizes)) $variantFilters['Size'] = array_values(array_unique($legacySizes));
+
+        foreach ($allVariantOptions as $options) {
+            if (!is_array($options)) continue;
+            
+            foreach ($options as $opt) {
+                $name = $opt['name'] ?? null;
+                $values = $opt['values'] ?? [];
+                if (!$name || empty($values)) continue;
+                
+                // Use the exact name from database for the filter group
+                if (!isset($variantFilters[$name])) {
+                    $variantFilters[$name] = [];
+                }
+                
+                // Normalize values to Title Case to prevent duplicates (e.g. 'black' vs 'Black')
+                $normalizedValues = array_map(function($v) {
+                    return mb_convert_case(trim($v), MB_CASE_TITLE, "UTF-8");
+                }, $values);
+
+                $variantFilters[$name] = array_values(array_unique(array_merge($variantFilters[$name], $normalizedValues)));
+            }
+        }
+
+        // Final cleanup for each group: normalize existing legacy values too
+        foreach ($variantFilters as $key => $vals) {
+            $variantFilters[$key] = array_values(array_unique(array_map(function($v) {
+                return mb_convert_case(trim($v), MB_CASE_TITLE, "UTF-8");
+            }, $vals)));
+        }
+
+        // 3. Get Price Bounds (Min/Max) for Slider
+        $minPrice = (float) \App\Models\Product::where('status', 'active')->min('price') ?: 0;
+        $maxPrice = (float) \App\Models\Product::where('status', 'active')->max('price') ?: 1000;
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'categories' => $categories,
-                'brands' => $brands,
-                'colors' => $colors,
-                'sizes' => $sizes
+                'brands'      => $brands,
+                'variant_filters' => $variantFilters,
+                'min_price' => floor($minPrice),
+                'max_price' => ceil($maxPrice)
             ]
         ]);
     }
