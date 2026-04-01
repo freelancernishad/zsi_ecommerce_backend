@@ -22,14 +22,19 @@ class ProductController extends Controller
             });
         }
 
-        // Filter by category slug (supports recursive children)
+        // Filter by category slug (supports recursive children and multiple categories)
         if ($request->has('category') && !empty($request->category)) {
-            $category = \App\Models\Category::with('children')->where('slug', $request->category)->first();
-            if ($category) {
-                $categoryIds = $this->getCategoryIdsRecursive($category);
-                $query->whereIn('category_id', $categoryIds);
+            $slugs = array_filter(explode(',', $request->category));
+            $categories = \App\Models\Category::with('children')->whereIn('slug', $slugs)->get();
+            
+            if ($categories->isNotEmpty()) {
+                $allCategoryIds = [];
+                foreach ($categories as $cat) {
+                    $allCategoryIds = array_merge($allCategoryIds, $this->getCategoryIdsRecursive($cat));
+                }
+                $query->whereIn('category_id', array_unique($allCategoryIds));
             } else {
-                $query->whereRaw('1 = 0'); // No category found, return nothing
+                $query->whereRaw('1 = 0');
             }
         }
 
@@ -40,11 +45,17 @@ class ProductController extends Controller
             $query->where('price', '<=', $request->price_max);
         }
 
-        if ($request->has('brand_id')) {
-            $query->where('brand_id', $request->brand_id);
-        } elseif ($request->has('brand')) {
-            // Support both brand_id and brand as param for flexibility
-            $query->where('brand_id', $request->brand);
+        if ($request->has('brand') && !empty($request->brand)) {
+             $brands = array_filter(explode(',', $request->brand));
+             if (is_numeric($brands[0])) {
+                 $query->whereIn('brand_id', $brands);
+             } else {
+                 $brandIds = \App\Models\Brand::whereIn('slug', $brands)->pluck('id');
+                 $query->whereIn('brand_id', $brandIds);
+             }
+        } elseif ($request->has('brand_id')) {
+            $brandIds = array_filter(explode(',', $request->brand_id));
+            $query->whereIn('brand_id', $brandIds);
         }
 
         if ($request->has('rating') && is_numeric($request->rating)) {
@@ -56,16 +67,16 @@ class ProductController extends Controller
         }
 
         if ($request->has('color') && !empty($request->color)) {
-            $color = $request->color;
-            $query->whereHas('variants', function ($q) use ($color) {
-                $q->where('color', $color);
+            $colors = array_filter(explode(',', $request->color));
+            $query->whereHas('variants', function ($q) use ($colors) {
+                $q->whereIn('color', $colors);
             });
         }
 
         if ($request->has('size') && !empty($request->size)) {
-            $size = $request->size;
-            $query->whereHas('variants', function ($q) use ($size) {
-                $q->where('size', $size);
+            $sizes = array_filter(explode(',', $request->size));
+            $query->whereHas('variants', function ($q) use ($sizes) {
+                $q->whereIn('size', $sizes);
             });
         }
 
