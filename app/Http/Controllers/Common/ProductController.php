@@ -12,8 +12,18 @@ class ProductController extends Controller
     {
         $query = Product::with(['images', 'category'])->where('status', 'published');
 
+        // Search by name or description
+        if ($request->has('q') && !empty($request->q)) {
+            $searchTerm = '%' . $request->q . '%';
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', $searchTerm)
+                  ->orWhere('description', 'like', $searchTerm)
+                  ->orWhere('short_description', 'like', $searchTerm);
+            });
+        }
+
         // Filter by category slug (supports comma-separated slugs for children)
-        if ($request->has('category')) {
+        if ($request->has('category') && !empty($request->category)) {
             $slug = $request->category;
             $query->whereHas('category', function($q) use ($slug) {
                 $q->where('slug', $slug)
@@ -23,24 +33,33 @@ class ProductController extends Controller
             });
         }
 
-        if ($request->has('price_min')) {
+        if ($request->has('price_min') && is_numeric($request->price_min)) {
             $query->where('price', '>=', $request->price_min);
         }
-        if ($request->has('price_max')) {
+        if ($request->has('price_max') && is_numeric($request->price_max)) {
             $query->where('price', '<=', $request->price_max);
         }
 
         if ($request->has('brand_id')) {
             $query->where('brand_id', $request->brand_id);
+        } elseif ($request->has('brand')) {
+            // Support both brand_id and brand as param for flexibility
+            $query->where('brand_id', $request->brand);
         }
 
-        if ($request->has('ids')) {
+        if ($request->has('rating') && is_numeric($request->rating)) {
+            $query->where('rating', '>=', $request->rating);
+        }
+
+        if ($request->boolean('in_stock')) {
+            $query->where('stock_quantity', '>', 0);
+        }
+
+        if ($request->has('ids') && !empty($request->ids)) {
             $ids = array_map('trim', explode(',', $request->ids));
             $ids = array_filter($ids, 'is_numeric');
             if (!empty($ids)) {
                 $query->whereIn('id', $ids);
-                // Keep the same order as requested IDs if needed, otherwise standard sort applies
-                // We'll rely on the frontend to sort them if it needs order.
             }
         }
 
