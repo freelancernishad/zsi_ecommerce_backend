@@ -22,15 +22,15 @@ class ProductController extends Controller
             });
         }
 
-        // Filter by category slug (supports comma-separated slugs for children)
+        // Filter by category slug (supports recursive children)
         if ($request->has('category') && !empty($request->category)) {
-            $slug = $request->category;
-            $query->whereHas('category', function($q) use ($slug) {
-                $q->where('slug', $slug)
-                  ->orWhereHas('parent', function($q2) use ($slug) {
-                      $q2->where('slug', $slug);
-                  });
-            });
+            $category = \App\Models\Category::with('children')->where('slug', $request->category)->first();
+            if ($category) {
+                $categoryIds = $this->getCategoryIdsRecursive($category);
+                $query->whereIn('category_id', $categoryIds);
+            } else {
+                $query->whereRaw('1 = 0'); // No category found, return nothing
+            }
         }
 
         if ($request->has('price_min') && is_numeric($request->price_min)) {
@@ -53,6 +53,20 @@ class ProductController extends Controller
 
         if ($request->boolean('in_stock')) {
             $query->where('stock_quantity', '>', 0);
+        }
+
+        if ($request->has('color') && !empty($request->color)) {
+            $color = $request->color;
+            $query->whereHas('variants', function ($q) use ($color) {
+                $q->where('color', $color);
+            });
+        }
+
+        if ($request->has('size') && !empty($request->size)) {
+            $size = $request->size;
+            $query->whereHas('variants', function ($q) use ($size) {
+                $q->where('size', $size);
+            });
         }
 
         if ($request->has('ids') && !empty($request->ids)) {
@@ -96,5 +110,34 @@ class ProductController extends Controller
             'status' => 'success',
             'data' => $product
         ]);
+    }
+
+    public function getFilters()
+    {
+        $categories = \App\Models\Category::where('status', 'active')->whereNull('parent_id')->with('children')->get();
+        $brands = \App\Models\Brand::where('status', 'active')->get();
+        
+        // Get unique colors and sizes from variants
+        $colors = \App\Models\ProductVariant::whereNotNull('color')->distinct()->pluck('color')->filter();
+        $sizes = \App\Models\ProductVariant::whereNotNull('size')->distinct()->pluck('size')->filter();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => [
+                'categories' => $categories,
+                'brands' => $brands,
+                'colors' => $colors,
+                'sizes' => $sizes
+            ]
+        ]);
+    }
+
+    private function getCategoryIdsRecursive($category)
+    {
+        $ids = [$category->id];
+        foreach ($category->children as $child) {
+            $ids = array_merge($ids, $this->getCategoryIdsRecursive($child));
+        }
+        return $ids;
     }
 }
