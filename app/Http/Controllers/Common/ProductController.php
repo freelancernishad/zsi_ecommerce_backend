@@ -96,10 +96,8 @@ class ProductController extends Controller
             default:             $query->orderBy('created_at', 'desc'); break; // newest
         }
 
-        $limit   = max(1, min(50, (int) $request->get('limit', 12)));
-        $products = $request->has('limit')
-            ? $query->limit($limit)->get()
-            : $query->paginate(12);
+        $limit   = max(1, min(100, (int) $request->get('limit', 24)));
+        $products = $query->paginate($limit);
 
         return response()->json([
             'status' => 'success',
