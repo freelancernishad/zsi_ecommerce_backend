@@ -9,6 +9,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('categories', [CategoryController::class, 'index']);
     Route::get('categories/{slug}', [CategoryController::class, 'show']);
     Route::get('products', [ProductController::class, 'index']);
+    Route::get('products/suggestions', [ProductController::class, 'suggestions']);
     Route::get('brands', [BrandController::class, 'index']);
     Route::get('products/filters', [ProductController::class, 'getFilters']);
     Route::get('products/{slug}', [ProductController::class, 'show']);

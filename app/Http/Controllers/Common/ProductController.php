@@ -130,7 +130,7 @@ class ProductController extends Controller
             $topCategories = \App\Models\UserActivity::where('user_id', $userId)
                 ->where('activity_type', 'view_category')
                 ->whereNotNull('entity_id')
-                ->select('entity_id', \DB::raw('count(*) as count'))
+                ->select('entity_id', DB::raw('count(*) as count'))
                 ->groupBy('entity_id')
                 ->orderBy('count', 'desc')
                 ->limit(3)
@@ -210,6 +210,30 @@ class ProductController extends Controller
 
         $limit   = max(1, min(100, (int) $request->get('limit', 24)));
         $products = $query->paginate($limit);
+
+        return response()->json([
+            'status' => 'success',
+            'data'   => $products
+        ]);
+    }
+
+    public function suggestions(Request $request)
+    {
+        $query = Product::with(['images' => function($q) {
+            $q->select('id', 'product_id', 'image_path')->limit(1);
+        }])
+        ->where('status', 'published')
+        ->select('id', 'name', 'slug', 'price', 'original_price', 'category_id', 'rating');
+
+        if ($request->has('q') && !empty($request->q)) {
+            $searchTerm = '%' . $request->q . '%';
+            $query->where(function ($q) use ($searchTerm) {
+                $q->where('name', 'like', $searchTerm)
+                  ->orWhere('tags', 'like', $searchTerm);
+            });
+        }
+
+        $products = $query->limit(8)->get();
 
         return response()->json([
             'status' => 'success',
