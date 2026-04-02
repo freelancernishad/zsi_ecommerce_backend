@@ -127,11 +127,13 @@ class EcommerceSeeder extends Seeder
             $randomBase = $baseNameKeys[array_rand($baseNameKeys)];
             $s3Urls = $cachedS3Paths[$randomBase];
             $hName = Str::title(str_replace('-', ' ', $randomBase));
-            $productName = $faker->catchPhrase . ' ' . $hName;
+            $catchphrase = $faker->catchPhrase;
+            $productName = $catchphrase . ": " . $hName;
+            $slugBase = \Illuminate\Support\Str::limit($catchphrase . " " . $hName, 40, '');
 
             $product = Product::create([
                 'name' => $productName,
-                'slug' => Str::slug($productName) . '-' . uniqid(),
+                'slug' => Str::slug($slugBase) . '-' . uniqid(),
                 'description' => $faker->paragraphs(3, true),
                 'short_description' => $faker->sentence(10),
                 'price' => $faker->randomFloat(2, 50, 5000),
