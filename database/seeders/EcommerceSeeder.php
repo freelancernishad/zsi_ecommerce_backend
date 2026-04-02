@@ -4,6 +4,7 @@ namespace Database\Seeders;
 
 use Illuminate\Database\Seeder;
 use Illuminate\Support\Str;
+use App\Models\User;
 use App\Models\Category;
 use App\Models\Product;
 use App\Models\ProductImage;
@@ -11,23 +12,28 @@ use App\Models\ProductVariant;
 use App\Models\Review;
 use App\Models\Order;
 use App\Models\OrderItem;
+use App\Models\ShippingMethod;
+use App\Models\Tax;
+use App\Models\SupportAndConnect\Ticket\SupportTicket;
+use App\Models\SupportAndConnect\Contacts\ContactMessage;
 use Illuminate\Http\UploadedFile;
 use Illuminate\Support\Facades\File as FacadesFile;
 use App\Services\FileSystem\FileUploadService;
 use Illuminate\Support\Facades\Log;
+use Illuminate\Support\Facades\DB;
 use Faker\Factory as Faker;
 
 class EcommerceSeeder extends Seeder
 {
     public function run(): void
     {
-        $this->command->info('Starting Massive Ecommerce Seeder (1500 Products)...');
+        $this->command->info('🚀 Starting Massive Ecommerce Seeder (Large Volume)...');
 
         $faker = Faker::create();
         $fileUploadService = app(FileUploadService::class);
         $directory = base_path('products_images');
 
-        // 1. Group Local Images
+        // 1. Group Local Images & Upload once
         $files = FacadesFile::exists($directory) ? FacadesFile::files($directory) : [];
         $imageGroups = [];
         foreach ($files as $file) {
@@ -36,222 +42,230 @@ class EcommerceSeeder extends Seeder
             $imageGroups[$baseNameStr][] = $file;
         }
 
-        $this->command->info("Phase 1/3: Uploading " . count($files) . " unique images to S3 (Caching)...");
-        
+        $this->command->info("Phase 1: Uploading baseline images to S3...");
         $cachedS3Paths = [];
-        $bar = $this->command->getOutput()->createProgressBar(count($files));
-        $bar->start();
-
         foreach ($imageGroups as $baseName => $groupFiles) {
             foreach ($groupFiles as $file) {
                 try {
-                    $uploadedFile = new UploadedFile(
-                        $file->getPathname(), $file->getFilename(),
-                        mime_content_type($file->getPathname()), null, true
-                    );
+                    $uploadedFile = new UploadedFile($file->getPathname(), $file->getFilename(), mime_content_type($file->getPathname()), null, true);
                     $path = $fileUploadService->uploadFileToS3($uploadedFile, 'products/images');
                     $cachedS3Paths[$baseName][] = $path;
-                } catch (\Exception $e) {
-                    Log::error("Failed to upload image $baseName: " . $e->getMessage());
-                }
-                $bar->advance();
+                } catch (\Exception $e) {}
             }
         }
-        $bar->finish();
-        $this->command->newLine();
+        if (empty($cachedS3Paths)) $cachedS3Paths['Placeholder Item'][] = 'https://via.placeholder.com/600x600?text=Placeholder';
+        $baseNameKeys = array_keys($cachedS3Paths);
 
-        // If no images found or uploaded, add a fallback dummy category so script doesn't fail
-        if (empty($cachedS3Paths)) {
-            $cachedS3Paths['Placeholder Item'][] = 'https://via.placeholder.com/600x600?text=Placeholder';
-        }
+        // 2. Create Users (500)
+        $this->command->info("Phase 2: Creating 500 Users...");
+        User::factory()->count(500)->create();
+        $allUserIds = User::pluck('id')->toArray();
 
-        // 2. Setup Categories
-        $categoriesList = [
-            'Fashion' => ['Shoes', 'Clothing', 'Accessories', 'Sportswear'],
-            'Electronics' => ['Computers', 'Audio', 'Gadgets', 'Smartwatches', 'Cameras'],
-            'Home & Living' => ['Decor', 'Appliances', 'Furniture', 'Kitchenware'],
-            'Health & Beauty' => ['Cosmetics', 'Wellness', 'Skincare', 'Fragrances'],
+        // 3. Create Categories (50 Total)
+        $this->command->info("Phase 3: Creating 50 Categories...");
+        $mainCategoriesList = [
+            'Fashion', 'Electronics', 'Home & Living', 'Health & Beauty', 'Sports & Outdoors',
+            'Toys & Games', 'Automotive', 'Books', 'Grocery', 'Pet Supplies'
         ];
-
+        
         $createdCategories = [];
-        foreach ($categoriesList as $mainCat => $subCats) {
-            $parent = Category::updateOrCreate(
-                ['slug' => Str::slug($mainCat)],
-                ['name' => $mainCat, 'status' => 'active', 'show_on_home' => 1]
-            );
-            foreach ($subCats as $subCat) {
-                $createdCategories[$subCat] = Category::updateOrCreate(
-                    ['slug' => Str::slug($subCat)], 
-                    ['name' => $subCat, 'parent_id' => $parent->id, 'status' => 'active']
-                );
+        foreach ($mainCategoriesList as $mainCat) {
+            $parent = Category::updateOrCreate(['slug' => Str::slug($mainCat)], [
+                'name' => $mainCat, 
+                'status' => 'active', 
+                'show_on_home' => 1,
+                'image' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0]
+            ]);
+            
+            // 4 subcategories for each
+            for ($k = 0; $k < 4; $k++) {
+                $subName = $faker->word . ' ' . $mainCat;
+                $createdCategories[] = Category::create([
+                    'name' => Str::title($subName),
+                    'slug' => Str::slug($subName) . '-' . uniqid(),
+                    'parent_id' => $parent->id,
+                    'status' => 'active',
+                    'image' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0]
+                ]);
             }
         }
+        $categoryIds = collect($createdCategories)->pluck('id')->toArray();
 
-        $this->command->info("Phase 2/3: Generating 1500 Products & Variations...");
+        // 4. Shipping & Taxes
+        $this->command->info("Phase 4: Seeding Brands, Shipping and Taxes...");
+
+        $brandNames = ['Aeternum', 'Orange', 'Biogas', 'Aurora Vogue', 'Jeans & Co', 'Floralia', 'Elaria', 'Greenscape', 'Nike', 'Apple', 'Samsung', 'Gucci', 'Prada'];
+        $createdBrands = [];
+        foreach ($brandNames as $bName) {
+            $createdBrands[] = \App\Models\Brand::create([
+                'name' => $bName,
+                'slug' => Str::slug($bName) . '-' . uniqid(),
+                'logo' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0],
+                'status' => 'active',
+                'show_on_home' => 1,
+                'home_order' => rand(1, 20)
+            ]);
+        }
+        $brandIds = collect($createdBrands)->pluck('id')->toArray();
+
+        ShippingMethod::updateOrCreate(['name' => 'Standard Shipping'], ['cost' => 50, 'is_active' => true]);
+        ShippingMethod::updateOrCreate(['name' => 'Express Shipping'], ['cost' => 150, 'is_active' => true]);
+        ShippingMethod::updateOrCreate(['name' => 'Free Shipping'], ['cost' => 0, 'is_active' => true]);
+
+        $states = ['Dhaka', 'Chittagong', 'New York', 'California', 'Texas', 'London', 'Berlin'];
+        foreach ($states as $state) {
+            Tax::updateOrCreate(['state' => $state], ['country' => 'Global', 'tax_rate' => rand(5, 15)]);
+        }
+
+        // 5. Products (1500)
+        $this->command->info("Phase 5: Generating 1500 Products...");
         $bar = $this->command->getOutput()->createProgressBar(1500);
         $bar->start();
 
         $allProductIds = [];
-        $baseNameKeys = array_keys($cachedS3Paths);
-
-        $admin = \App\Models\Admin::first();
-        $user = \App\Models\User::first() ?: \App\Models\User::factory()->create();
-
-        // Batch arrays for fast insertion
-        $productsToInsert = [];
-        $imagesToInsert = [];
-        $variantsToInsert = [];
-        $reviewsToInsert = [];
-
         for ($i = 0; $i < 1500; $i++) {
-            // Pick a random base group for its images
             $randomBase = $baseNameKeys[array_rand($baseNameKeys)];
             $s3Urls = $cachedS3Paths[$randomBase];
-            
-            $humanName = Str::title(str_replace('-', ' ', $randomBase));
-            $productName = $faker->company . ' ' . $faker->word . ' ' . $humanName;
-
-            // Guess category
-            $subCategoryStr = 'Accessories';
-            $hLower = strtolower($humanName);
-            if (Str::contains($hLower, ['shirt', 'jacket', 'clothing', 'romper', 'sweater', 'dress'])) $subCategoryStr = collect(['Clothing', 'Sportswear'])->random();
-            elseif (Str::contains($hLower, ['shoe', 'sneaker', 'boot'])) $subCategoryStr = 'Shoes';
-            elseif (Str::contains($hLower, ['laptop', 'computer'])) $subCategoryStr = 'Computers';
-            elseif (Str::contains($hLower, ['headphone'])) $subCategoryStr = 'Audio';
-            elseif (Str::contains($hLower, ['camera'])) $subCategoryStr = 'Cameras';
-            elseif (Str::contains($hLower, ['kitchen', 'cleaner', 'pillow', 'appliance'])) $subCategoryStr = collect(['Decor', 'Appliances', 'Kitchenware'])->random();
-            elseif (Str::contains($hLower, ['powder', 'cream', 'makeup', 'perfume'])) $subCategoryStr = collect(['Cosmetics', 'Skincare', 'Fragrances'])->random();
-            elseif (Str::contains($hLower, ['watch'])) $subCategoryStr = 'Smartwatches';
-            
-            $categoryId = $createdCategories[$subCategoryStr]->id ?? Category::inRandomOrder()->value('id');
-
-            // Generate JSON Variant options (so filtering works wonderfully)
-            $variantOptions = [];
-            if (in_array($subCategoryStr, ['Clothing', 'Shoes', 'Sportswear'])) {
-                $variantOptions = [
-                    ['name' => 'Size', 'values' => (array) $faker->randomElements(['S', 'M', 'L', 'XL', 'XXL', '7', '8', '9', '10', '11'], rand(2, 5))],
-                    ['name' => 'Color', 'values' => (array) $faker->randomElements(['Black', 'White', 'Blue', 'Red', 'Green', 'Yellow', 'Grey'], rand(2, 4))]
-                ];
-            } elseif (in_array($subCategoryStr, ['Computers', 'Smartphones'])) {
-                $variantOptions = [
-                    ['name' => 'Storage', 'values' => (array) $faker->randomElements(['128GB', '256GB', '512GB', '1TB'], rand(2, 4))],
-                    ['name' => 'RAM', 'values' => (array) $faker->randomElements(['8GB', '16GB', '32GB'], rand(1, 3))]
-                ];
-            }
-
-            // Random Status Profile (most published, few draft/out of stock)
-            $statusChoice = $faker->randomElement(['published', 'published', 'published', 'published', 'draft', 'archived']);
-            $stock = rand(0, 100);
+            $hName = Str::title(str_replace('-', ' ', $randomBase));
+            $productName = $faker->catchPhrase . ' ' . $hName;
 
             $product = Product::create([
                 'name' => $productName,
                 'slug' => Str::slug($productName) . '-' . uniqid(),
                 'description' => $faker->paragraphs(3, true),
                 'short_description' => $faker->sentence(10),
-                'price' => $faker->randomFloat(2, 10, 1500),
-                'original_price' => $faker->randomFloat(2, 15, 2000), // higher than price usually
-                'stock_quantity' => $stock,
-                'category_id' => $categoryId,
-                'status' => $statusChoice,
+                'price' => $faker->randomFloat(2, 50, 5000),
+                'original_price' => $faker->randomFloat(2, 60, 6000),
+                'stock_quantity' => rand(5, 200),
+                'category_id' => $categoryIds[array_rand($categoryIds)],
+                'brand_id' => $brandIds[array_rand($brandIds)],
+                'status' => 'published',
                 'sku' => strtoupper($faker->bothify('???-#####')),
-                'barcode' => $faker->ean13(),
-                'is_physical' => true,
-                'charge_tax' => true,
-                'tags' => $faker->words(rand(1, 4)),
-                'variant_options' => !empty($variantOptions) ? $variantOptions : null,
-                'rating' => $faker->randomFloat(1, 1, 5),
+                'rating' => 0, // Will be updated by reviews booted method or manual calc
+                'review_count' => 0
             ]);
+
+            foreach ($s3Urls as $idx => $url) {
+                ProductImage::create(['product_id' => $product->id, 'image_path' => $url, 'is_primary' => $idx === 0]);
+            }
+
+            // Variants
+            if (rand(1, 100) <= 60) {
+                $product->update(['variant_options' => [
+                    ['name' => 'Size', 'values' => (array) $faker->randomElements(['S', 'M', 'L', 'XL'], 3)],
+                    ['name' => 'Color', 'values' => (array) $faker->randomElements(['Red', 'Green', 'Blue', 'Black'], 2)]
+                ]]);
+            }
 
             $allProductIds[] = $product->id;
-
-            // Save Images mapping
-            foreach ($s3Urls as $index => $s3Url) {
-                // If S3 generated the URL with a space and Next.js needs encoding, that's fine, 
-                // the frontend getImageUrl already handles it.
-                ProductImage::create([
-                    'product_id' => $product->id,
-                    'image_path' => $s3Url,
-                    'is_primary' => $index === 0,
-                ]);
-            }
-
-            // Flat Variants Table (Legacy but required for some structures)
-            if (!empty($variantOptions) && $variantOptions[0]['name'] === 'Size') {
-                $sizes = $variantOptions[0]['values'];
-                $colors = $variantOptions[1]['values'];
-                foreach ($faker->randomElements($sizes, rand(1, count($sizes))) as $sz) {
-                    foreach ($faker->randomElements($colors, rand(1, count($colors))) as $cl) {
-                        ProductVariant::create([
-                            'product_id' => $product->id,
-                            'color' => $cl,
-                            'size' => $sz,
-                            'stock' => rand(0, 20),
-                        ]);
-                    }
-                }
-            }
-
-            // Generate Random Reviews
-            if (rand(1, 100) <= 70) { // 70% chance of having reviews
-                for ($r = 0; $r < rand(1, 8); $r++) {
-                    Review::create([
-                        'product_id' => $product->id,
-                        'user_id' => $user->id,
-                        'rating' => rand(2, 5),
-                        'comment' => $faker->paragraph,
-                        'status' => 'active',
-                    ]);
-                }
-            }
-
             $bar->advance();
         }
-
         $bar->finish();
         $this->command->newLine();
 
-        $this->command->info("Phase 3/3: Generating 500 Analytics Orders...");
-        $bar = $this->command->getOutput()->createProgressBar(500);
+        // 6. Reviews (20-150 per product = ~100k reviews)
+        $this->command->info("Phase 6: Generating massive Reviews (using batch inserts)...");
+        $bar = $this->command->getOutput()->createProgressBar(count($allProductIds));
         $bar->start();
 
-        // Fast random selection for massive orders
-        $collectionIds = collect($allProductIds);
-
-        for ($j = 0; $j < 500; $j++) {
-            $order = Order::create([
-                'order_number' => 'ORD-' . strtoupper(uniqid()),
-                'user_id' => $user->id,
-                'subtotal' => 0,
-                'total' => 0,
-                'status' => $faker->randomElement(['pending', 'processing', 'shipped', 'delivered', 'delivered', 'delivered', 'cancelled']),
-                'payment_method' => $faker->randomElement(['cod', 'stripe', 'paypal']),
-                'created_at' => $faker->dateTimeBetween('-6 months', 'now'), // Good for analytics charts
-            ]);
-
-            $subtotal = 0;
-            $randomProds = $collectionIds->random(rand(1, 5));
-            foreach ($randomProds as $pId) {
-                $qty = rand(1, 3);
-                $price = rand(10, 500); // Dummy static pricing to avoid extra DB joins
-                OrderItem::create([
-                    'order_id' => $order->id,
+        foreach ($allProductIds as $pId) {
+            $reviewCount = rand(20, 150);
+            $batch = [];
+            for ($r = 0; $r < $reviewCount; $r++) {
+                $batch[] = [
                     'product_id' => $pId,
-                    'quantity' => $qty,
-                    'price' => $price,
-                ]);
-                $subtotal += ($qty * $price);
+                    'user_id' => $allUserIds[array_rand($allUserIds)],
+                    'rating' => rand(3, 5),
+                    'comment' => $faker->sentence(rand(5, 20)),
+                    'status' => 'active',
+                    'created_at' => now(),
+                    'updated_at' => now(),
+                ];
+                
+                if (count($batch) >= 150) {
+                    DB::table('reviews')->insert($batch);
+                    $batch = [];
+                }
             }
-
-            $order->update([
-                'subtotal' => $subtotal,
-                'total' => $subtotal + ($subtotal > 200 ? 0 : 50),
+            if (count($batch) > 0) DB::table('reviews')->insert($batch);
+            
+            // Update product counts manually to avoid booted overhead
+            Product::where('id', $pId)->update([
+                'review_count' => $reviewCount,
+                'rating' => rand(40, 50) / 10 // Mock rating
             ]);
-
+            
             $bar->advance();
         }
-
         $bar->finish();
         $this->command->newLine();
-        $this->command->info('✅ Successfully seeded 1500 Products!');
+
+        // 7. Orders (300)
+        $this->command->info("Phase 7: Generating 300 Orders...");
+        for ($o = 0; $o < 300; $o++) {
+            $order = Order::create([
+                'order_number' => 'ORD-' . strtoupper(uniqid()),
+                'user_id' => $allUserIds[array_rand($allUserIds)],
+                'subtotal' => 0,
+                'total' => 0,
+                'status' => collect(['pending', 'processing', 'shipped', 'delivered'])->random(),
+                'payment_method' => 'cod',
+                'created_at' => $faker->dateTimeBetween('-4 months', 'now'),
+            ]);
+
+            $st = 0;
+            $pItems = collect($allProductIds)->random(rand(1, 4));
+            foreach ($pItems as $pid) {
+                $qty = rand(1, 2);
+                $pr = rand(100, 1000);
+                OrderItem::create(['order_id' => $order->id, 'product_id' => $pid, 'quantity' => $qty, 'price' => $pr]);
+                $st += ($qty * $pr);
+            }
+            $order->update(['subtotal' => $st, 'total' => $st + 50]);
+        }
+
+        // 8. Support Tickets (100)
+        $this->command->info("Phase 8: Generating 100 Support Tickets...");
+        for ($s = 0; $s < 100; $s++) {
+            SupportTicket::create([
+                'user_id' => $allUserIds[array_rand($allUserIds)],
+                'subject' => $faker->sentence,
+                'message' => $faker->paragraph,
+                'status' => $faker->randomElement(['open', 'closed', 'pending']),
+                'priority' => $faker->randomElement(['low', 'medium', 'high']),
+            ]);
+        }
+
+        // 9. Site Settings (Homepage)
+        $this->command->info("Phase 9: Updating Homepage Site Settings with S3 Images...");
+        
+        // Home Hero
+        \App\Models\SiteSetting::setValue('home_hero', [
+            'title' => 'MASSIVE SCALE SALE',
+            'subtitle' => 'Explore 1500+ New Products',
+            'discount' => '70%',
+            'image' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0]
+        ], 'home', 'json');
+
+        // Home Brands (Top Picks)
+        $homeBrandsData = [];
+        foreach ($createdBrands as $b) {
+            $homeBrandsData[] = [
+                'id' => $b->id,
+                'name' => $b->name,
+                'image' => $b->logo
+            ];
+        }
+        \App\Models\SiteSetting::setValue('home_brands', array_slice($homeBrandsData, 0, 8), 'home', 'json');
+
+        // Spring Fling
+        \App\Models\SiteSetting::setValue('home_spring_fling', [
+            'title' => 'Summer Collection 2026',
+            'subtitle' => 'Fresh styles just uploaded to S3',
+            'button_text' => 'Shop Now',
+            'image' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0]
+        ], 'home', 'json');
+
+        $this->command->info("✅ Massive Seeding & Site Settings Completed Successfully!");
     }
 }

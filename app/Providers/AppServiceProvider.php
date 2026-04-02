@@ -7,6 +7,7 @@ use Illuminate\Support\ServiceProvider;
 use App\Models\SystemSetting;
 use Illuminate\Database\QueryException;
 use Illuminate\Support\Facades\Event;
+use Illuminate\Support\Facades\Log;
 use App\Events\StripePaymentEvent;
 use App\Listeners\CheckStripePaymentStatus;
 
@@ -42,9 +43,9 @@ class AppServiceProvider extends ServiceProvider
             $this->configureCorsSettings();
 
         } catch (QueryException $e) {
-            \Log::error('Error loading system settings: ' . $e->getMessage());
+            Log::error('Error loading system settings: ' . $e->getMessage());
         } catch (\Exception $e) {
-            \Log::error('Unexpected error loading system settings: ' . $e->getMessage());
+            Log::error('Unexpected error loading system settings: ' . $e->getMessage());
         }
 
         // Register Stripe Event Listener
@@ -162,10 +163,11 @@ class AppServiceProvider extends ServiceProvider
             });
 
             if (!empty($origins)) {
-                Config::set('cors.allowed_origins', $origins);
+                $existing = Config::get('cors.allowed_origins', []);
+                Config::set('cors.allowed_origins', array_unique(array_merge($existing, $origins)));
             }
         } catch (\Exception $e) {
-            \Log::error('Error loading allowed origins: ' . $e->getMessage());
+            Log::error('Error loading allowed origins: ' . $e->getMessage());
         }
     }
 }

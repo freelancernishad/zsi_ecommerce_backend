@@ -92,33 +92,41 @@ public function register(AdminRegisterRequest $request)
      */
     public function login(AdminLoginRequest $request)
     {
-
         $credentials = $request->only('email', 'password');
+        
+        Log::info('Admin Login Attempt', [
+            'email' => $credentials['email'],
+            'ip' => $request->ip(),
+            'ua' => $request->userAgent(),
+        ]);
 
-        if (Auth::guard('admin')->attempt($credentials)) {
-            $admin = Auth::guard('admin')->user();
+        try {
+            // In JWT guard, attempt() returns the token string on success or false on failure.
+            if ($token = Auth::guard('admin')->attempt($credentials)) {
+                $admin = Auth::guard('admin')->user();
 
-            // Custom payload data
-            $payload = [
-                'email' => $admin->email,
-                'name' => $admin->name,
-                'email_verified' => !is_null($admin->email_verified_at),
-                // Add additional fields as necessary
-            ];
+                Log::info('Admin Login Success', ['email' => $admin->email]);
 
-            try {
-                // Generate a JWT token with custom claims
-                $token = JWTAuth::fromUser($admin, ['guard' => 'admin']);
-            } catch (JWTException $e) {
-                return response()->json(['error' => 'Could not create token'], 500);
+                $payload = [
+                    'email' => $admin->email,
+                    'name' => $admin->name,
+                    'email_verified' => !is_null($admin->email_verified_at),
+                ];
+
+                return response()->json([
+                    'token' => $token,
+                    'admin' => $payload,
+                ], 200);
             }
-
-            return response()->json([
-                'token' => $token,
-                'admin' => $payload,
-            ], 200);
+        } catch (JWTException $e) {
+            Log::error('JWT Login Error: ' . $e->getMessage());
+            return response()->json(['error' => 'Could not create token'], 500);
+        } catch (\Exception $e) {
+            Log::error('General Login Error: ' . $e->getMessage());
+            return response()->json(['error' => 'An unexpected error occurred during login.'], 500);
         }
 
+        Log::warning('Admin Login Failed: Invalid Credentials', ['email' => $credentials['email']]);
         return response()->json(['message' => 'Invalid credentials'], 401);
     }
 

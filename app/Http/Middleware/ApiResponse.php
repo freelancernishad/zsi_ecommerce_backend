@@ -66,8 +66,14 @@ class ApiResponse
             }
         }
 
-        // Return the formatted response, PRESERVING the original status code
-        return response()->json($formattedResponse, $statusCode);
+        // Capture headers from the original response (including CORS headers)
+        $headers = [];
+        if ($response instanceof Response || $response instanceof \Illuminate\Http\JsonResponse) {
+            $headers = $response->headers->all();
+        }
+
+        // Return the formatted response, PRESERVING the original status code and headers
+        return response()->json($formattedResponse, $statusCode)->withHeaders($headers);
     }
 
     /**
