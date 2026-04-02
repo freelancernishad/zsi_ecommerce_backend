@@ -155,7 +155,7 @@ class HomeController extends Controller
         $popularProducts = Product::with(['images'])
             ->where('status', 'published')
             ->orderBy('review_count', 'desc')
-            ->limit(4)
+            ->limit(6)
             ->get()
             ->map($formatProduct);
             
@@ -164,7 +164,7 @@ class HomeController extends Controller
             ->where('status', 'published')
             ->whereColumn('original_price', '>', 'price')
             ->orderByRaw('(original_price - price) DESC')
-            ->limit(4)
+            ->limit(6)
             ->get()
             ->map($formatProduct);
 
@@ -210,9 +210,12 @@ class HomeController extends Controller
             ]
         ]);
 
+        $siteNavigation = SiteSetting::getValue('site_navigation', []);
+
         return response()->json([
             'status' => 'success',
             'data' => [
+                'site_navigation' => $siteNavigation,
                 'settings' => [
                     'pre_footer' => $preFooterConfig,
                     'footer' => $footerConfig
@@ -241,7 +244,7 @@ class HomeController extends Controller
                     'new_arrivals' => $newArrivals,
                     'deal_of_the_day' => $dealOfTheDay,
                     'popular' => $popularProducts,
-                    'on_sale' => $dealOfTheDay->take(4),
+                    'on_sale' => $dealOfTheDay->take(6),
                     'exclusive_deals' => $exclusiveDeals
                 ]
             ]

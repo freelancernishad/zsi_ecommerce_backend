@@ -260,13 +260,44 @@ class EcommerceSeeder extends Seeder
         }
         \App\Models\SiteSetting::setValue('home_brands', array_slice($homeBrandsData, 0, 8), 'home', 'json');
 
-        // Spring Fling
-        \App\Models\SiteSetting::setValue('home_spring_fling', [
-            'title' => 'Summer Collection 2026',
-            'subtitle' => 'Fresh styles just uploaded to S3',
-            'button_text' => 'Shop Now',
-            'image' => $cachedS3Paths[$baseNameKeys[array_rand($baseNameKeys)]][0]
-        ], 'home', 'json');
+        // 10. Site Navigation (Advanced Menu System)
+        $navigationData = [
+            [
+                'id' => 'nav-1',
+                'label' => 'Deal Of The Day',
+                'type' => 'custom',
+                'url' => '/products?deal=true',
+                'badge' => 'Hot'
+            ],
+            [
+                'id' => 'nav-2',
+                'label' => 'New Arrival',
+                'type' => 'custom',
+                'url' => '/products?sort=newest',
+                'badge' => 'New'
+            ],
+            [
+                'id' => 'nav-3',
+                'label' => 'On Sale',
+                'type' => 'custom',
+                'url' => '/products?sale=true',
+                'badge' => 'Sale'
+            ]
+        ];
+
+        // Add top 4 categories to the main bar
+        $topNavCategories = Category::whereNull('parent_id')->where('status', 'active')->limit(4)->get();
+        foreach ($topNavCategories as $cat) {
+            $navigationData[] = [
+                'id' => 'cat-' . $cat->id,
+                'label' => $cat->name,
+                'type' => 'category',
+                'resource_slug' => $cat->slug,
+                'badge' => ($cat->name === 'Electronics') ? 'Tech' : null
+            ];
+        }
+
+        \App\Models\SiteSetting::setValue('site_navigation', $navigationData, 'home', 'json');
 
         $this->command->info("✅ Massive Seeding & Site Settings Completed Successfully!");
     }

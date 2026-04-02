@@ -39,6 +39,7 @@ class CategoryController extends Controller
                 }]);
             }])
             ->withCount('children')
+            ->orderBy('home_order', 'asc')
             ->orderBy('created_at', 'desc')
             ->paginate($perPage);
 
@@ -98,6 +99,8 @@ class CategoryController extends Controller
             'image' => $imagePath,
             'parent_id' => $request->parent_id,
             'status' => $request->status,
+            'show_on_home' => $request->show_on_home ?? false,
+            'home_order' => $request->home_order ?? 0,
         ]);
 
         return response()->json(['status' => 'success', 'data' => $category]);
