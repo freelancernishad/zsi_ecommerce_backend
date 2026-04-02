@@ -18,6 +18,9 @@ class UserActivity extends Model
     protected $casts = [
         'metadata' => 'array'
     ];
+    
+    // Disable updated_at since it's not in the migration
+    const UPDATED_AT = null;
 
     public function user()
     {
