@@ -1,6 +1,9 @@
 <?php
 
 use Illuminate\Support\Facades\Route;
+use App\Http\Controllers\User\AddressManagement\AddressController;
+use App\Http\Controllers\User\Management\UserPaymentMethodController;
+use App\Http\Controllers\User\UserManagement\UserController;
 
 Route::get('/test-cors', function() {
     return response()->json(['message' => 'CORS Test Successful', 'origin' => request()->header('Origin')])
@@ -173,6 +176,11 @@ if (file_exists($UserAddressRoutes = __DIR__.'/Users/Address/AddressRoutes.php')
     require $UserAddressRoutes;
 }
 
+// Load UserWishlistRoutes
+if (file_exists($UserWishlistRoutes = __DIR__.'/Users/Wishlist/WishlistRoutes.php')) {
+    require $UserWishlistRoutes;
+}
+
 // Load UserCartRoutes
 if (file_exists($UserCartRoutes = __DIR__.'/Users/Cart/CartRoutes.php')) {
     require $UserCartRoutes;
@@ -183,11 +191,21 @@ if (file_exists($AdminSettingsRoutes = __DIR__.'/Admins/Settings/SettingsRoutes.
     require $AdminSettingsRoutes;
 }
 
+    Route::group(['prefix' => 'user', 'middleware' => 'auth:api'], function () {
+        Route::put('/profile', [UserController::class, 'updateProfile']);
+        Route::get('/addresses', [AddressController::class, 'index']);
+        Route::post('/addresses', [AddressController::class, 'store']);
+        Route::put('/addresses/{id}', [AddressController::class, 'update']);
+        Route::delete('/addresses/{id}', [AddressController::class, 'destroy']);
+        
+        Route::get('/payment-methods', [UserPaymentMethodController::class, 'index']);
+        Route::post('/payment-methods', [UserPaymentMethodController::class, 'store']);
+        Route::put('/payment-methods/{id}', [UserPaymentMethodController::class, 'update']);
+        Route::delete('/payment-methods/{id}', [UserPaymentMethodController::class, 'destroy']);
+    });
+
 // Ecommerce Dashboard Stats API
 Route::get('/admin/dashboard/stats', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'index']);
 Route::get('/admin/dashboard/category-analytics', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'categoryAnalytics']);
 Route::get('/admin/dashboard/full-best-selling', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestSellingProductsFull']);
 Route::get('/admin/dashboard/full-top-rated', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestRatedProductsFull']);
-
-
-

@@ -18,6 +18,19 @@ class ReviewController extends Controller
         $this->fileUploadService = $fileUploadService;
     }
 
+    public function index()
+    {
+        $reviews = Review::where('user_id', Auth::id())
+            ->with(['product.images'])
+            ->latest()
+            ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $reviews
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
@@ -63,5 +76,29 @@ class ReviewController extends Controller
                 'message' => 'Failed to submit review: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function pendingReviews()
+    {
+        $userId = Auth::id();
+        
+        // Find which products have already been reviewed by this user
+        $reviewedProductIds = Review::where('user_id', $userId)
+            ->pluck('product_id')
+            ->toArray();
+
+        // Find all OrderItems in DELIVERED orders for this user that haven't been reviewed
+        $pendingOrderItems = \App\Models\OrderItem::whereHas('order', function ($query) use ($userId) {
+            $query->where('user_id', $userId)
+                  ->where('status', 'delivered');
+        })
+        ->whereNotIn('product_id', $reviewedProductIds)
+        ->with(['product.images', 'variant'])
+        ->get();
+
+        return response()->json([
+            'status' => 'success',
+            'data' => $pendingOrderItems
+        ]);
     }
 }

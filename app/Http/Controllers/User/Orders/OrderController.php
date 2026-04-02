@@ -16,14 +16,17 @@ class OrderController extends Controller
 {
     public function index()
     {
-        $orders = Order::where('user_id', Auth::id())->latest()->get();
+        $orders = Order::where('user_id', Auth::id())
+            ->with(['items.product.images', 'items.variant'])
+            ->latest()
+            ->get();
         return response()->json(['status' => 'success', 'data' => $orders]);
     }
 
     public function show($id)
     {
         $order = Order::where('user_id', Auth::id())
-            ->with(['items.product', 'items.variant', 'shippingAddress'])
+            ->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories'])
             ->findOrFail($id);
         
         return response()->json(['status' => 'success', 'data' => $order]);
