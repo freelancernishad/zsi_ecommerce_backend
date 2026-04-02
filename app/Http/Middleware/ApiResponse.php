@@ -135,9 +135,13 @@ class ApiResponse
             return []; // Return an empty array
         }
 
-        // If the response has a 'data' key
+        // If the response is a Laravel Paginator (contains 'data' AND 'current_page' AND 'total')
+        if (isset($responseData['data']) && isset($responseData['current_page']) && isset($responseData['total'])) {
+            return $responseData;
+        }
+
+        // If the response has a 'data' key (and isn't a paginator), return the sub-data
         if (isset($responseData['data'])) {
-            // If 'data' contains actual data, return it
             return $responseData['data'];
         }
 

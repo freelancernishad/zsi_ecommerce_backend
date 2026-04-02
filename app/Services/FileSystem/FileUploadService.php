@@ -38,7 +38,6 @@ class FileUploadService
 
             $baseUrl = config('AWS_FILE_LOAD_BASE');
             if (empty($baseUrl)) {
-                // Determine base URL dynamically if not set
                 $baseUrl = Storage::disk('s3')->url('/');
             }
 

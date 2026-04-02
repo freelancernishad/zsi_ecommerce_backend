@@ -83,11 +83,19 @@ class CategoryController extends Controller
             'show_on_home' => 'nullable|boolean',
         ]);
 
+        $imagePath = null;
+        if ($request->hasFile('image')) {
+            $fileUploadService = app(\App\Services\FileSystem\FileUploadService::class);
+            $imagePath = $fileUploadService->uploadFileToS3($request->file('image'), 'categories/images');
+        } elseif (is_string($request->image)) {
+            $imagePath = $request->image;
+        }
+
         $category = Category::create([
             'name' => $request->name,
             'slug' => Str::slug($request->name) . '-' . time(),
             'description' => $request->description,
-            'image' => $request->image,
+            'image' => $imagePath,
             'parent_id' => $request->parent_id,
             'status' => $request->status,
         ]);
