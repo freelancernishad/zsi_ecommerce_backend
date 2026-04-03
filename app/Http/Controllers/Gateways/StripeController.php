@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use App\Services\Gateways\StripeService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
+use App\Models\UserPaymentMethod;
 
 class StripeController extends Controller
 {
@@ -91,10 +92,11 @@ class StripeController extends Controller
         $currency = $request->input('currency', 'usd');
         $metadata = $request->input('metadata', []);
         $successUrl = $request->input('success_url', url('/payment/success'));
-        $saveCard = $request->boolean('save_card', true);
+        $saveCard = $request->boolean('save_card', false);
+        $paymentMethodId = $request->input('payment_method_id');
 
         try {
-            $intent = $this->stripeService->createPaymentIntent($user, $amount, $currency, $metadata, $saveCard);
+            $intent = $this->stripeService->createPaymentIntent($user, $amount, $currency, $metadata, $saveCard, $paymentMethodId);
             return response()->json([
                 'client_secret' => $intent->client_secret,
                 'success_url' => $successUrl
@@ -147,7 +149,11 @@ class StripeController extends Controller
         $user = Auth::user();
 
         try {
-            $cards = $this->stripeService->listCards($user);
+            $cards = \App\Models\UserPaymentMethod::where('user_id', $user->id)
+                ->orderBy('is_default', 'desc')
+                ->orderBy('created_at', 'desc')
+                ->get();
+                
             return response()->json(['data' => $cards]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 400);
@@ -160,8 +166,65 @@ class StripeController extends Controller
     public function deleteCard($id)
     {
         try {
+            // Delete from Stripe
             $this->stripeService->deleteCard($id);
+
+            // Delete from Local Database
+            UserPaymentMethod::where('stripe_payment_method_id', $id)
+                ->where('user_id', Auth::id())
+                ->delete();
+
             return response()->json(['message' => 'Card deleted successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => $e->getMessage()], 400);
+        }
+    }
+
+    /**
+     * Verify and sync a single card from Stripe.
+     */
+    public function verifyCard($id)
+    {
+        $user = Auth::user();
+        try {
+            $card = $this->stripeService->syncPaymentMethod($user, $id);
+            return response()->json(['data' => $card, 'message' => 'Card verified successfully']);
+        } catch (\Exception $e) {
+            // If card not found on Stripe, mark as action required
+            $localMethod = UserPaymentMethod::where('stripe_payment_method_id', $id)
+                ->where('user_id', $user->id)
+                ->first();
+            
+            if ($localMethod) {
+                $localMethod->update(['status' => 'action_required']);
+            }
+
+            return response()->json(['error' => 'Card could not be verified on Stripe. Action required.'], 400);
+        }
+    }
+
+    /**
+     * Set a payment method as default.
+     */
+    public function setDefaultCard($id)
+    {
+        $user = Auth::user();
+
+        try {
+            // 1. Update Stripe
+            $this->stripeService->setDefaultPaymentMethod($user, $id);
+
+            // 2. Clear other defaults in DB
+            UserPaymentMethod::where('user_id', $user->id)
+                ->where('is_default', true)
+                ->update(['is_default' => false]);
+
+            // 3. Set new default in DB
+            UserPaymentMethod::where('user_id', $user->id)
+                ->where('stripe_payment_method_id', $id)
+                ->update(['is_default' => true]);
+
+            return response()->json(['message' => 'Default payment method updated successfully']);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 400);
         }

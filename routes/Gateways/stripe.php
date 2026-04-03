@@ -3,6 +3,7 @@
 use App\Http\Controllers\Gateways\StripeController;
 use App\Http\Controllers\Gateways\StripeWebhookController;
 use App\Http\Middleware\AuthenticateUser;
+use Illuminate\Support\Facades\Route;
 
 
 
@@ -22,6 +23,8 @@ Route::middleware([AuthenticateUser::class])->group(function () {
     Route::post('/update-payment-intent', [StripeController::class, 'updatePaymentIntent']);
     Route::post('/save-card', [StripeController::class, 'saveCard']);
     Route::get('/cards', [StripeController::class, 'getCards']);
+    Route::post('/cards/{id}/verify', [StripeController::class, 'verifyCard']);
+    Route::post('/cards/{id}/set-default', [StripeController::class, 'setDefaultCard']);
     Route::delete('/cards/{id}', [StripeController::class, 'deleteCard']);
     Route::get('/payment-details/{session_id}', [StripeController::class, 'getPaymentDetails']);
 });

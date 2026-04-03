@@ -9,6 +9,7 @@ use Stripe\SetupIntent;
 use Stripe\PaymentMethod;
 use Stripe\Checkout\Session as CheckoutSession;
 use App\Models\User;
+use App\Models\UserPaymentMethod;
 use Exception;
 
 class StripeService
@@ -235,7 +236,7 @@ class StripeService
     /**
      * Create a Payment Intent.
      */
-    public function createPaymentIntent(User $user, int $amount, string $currency = 'usd', array $metadata = [], bool $setupFutureUsage = false)
+    public function createPaymentIntent(User $user, int $amount, string $currency = 'usd', array $metadata = [], bool $setupFutureUsage = false, string $paymentMethodId = null)
     {
         $customer = $this->createOrGetCustomer($user);
 
@@ -286,6 +287,12 @@ class StripeService
                 'enabled' => true,
             ],
         ];
+
+        if ($paymentMethodId) {
+            $params['payment_method'] = $paymentMethodId;
+            // If we have a payment method, we can disable automatic methods or keep them
+            // Usually for saved cards we want to confirm it.
+        }
 
         if ($setupFutureUsage) {
             $params['setup_future_usage'] = 'off_session';
@@ -423,5 +430,76 @@ class StripeService
         // Add more types as needed (alipay, paypal, etc.)
 
         return $details;
+    }
+
+    /**
+     * Sync a Stripe payment method to the local database.
+     */
+    public function syncPaymentMethod(User $user, $paymentMethod)
+    {
+        if (is_string($paymentMethod)) {
+            $paymentMethod = PaymentMethod::retrieve($paymentMethod);
+        }
+
+        $expiryDate = str_pad($paymentMethod->card->exp_month, 2, '0', STR_PAD_LEFT) . '/' . substr($paymentMethod->card->exp_year, -2);
+
+        // Check if this card already exists locally by Stripe ID
+        $localMethod = UserPaymentMethod::where('user_id', $user->id)
+            ->where('stripe_payment_method_id', $paymentMethod->id)
+            ->first();
+
+        // If not found by ID, try matching by last4/expiry to link existing records
+        if (!$localMethod) {
+            $localMethod = UserPaymentMethod::where('user_id', $user->id)
+                ->where('last4', $paymentMethod->card->last4)
+                ->where('expiry_date', $expiryDate)
+                ->whereNull('stripe_payment_method_id')
+                ->first();
+        }
+
+        $brand = strtolower($paymentMethod->card->brand);
+        $icon = "images/card-brands/{$brand}.svg";
+
+        if (!$localMethod) {
+            // Create new record
+            $hasOtherMethods = UserPaymentMethod::where('user_id', $user->id)->exists();
+
+            $localMethod = UserPaymentMethod::create([
+                'user_id' => $user->id,
+                'stripe_payment_method_id' => $paymentMethod->id,
+                'type' => $paymentMethod->card->brand,
+                'brand' => $paymentMethod->card->brand,
+                'last4' => $paymentMethod->card->last4,
+                'expiry_date' => $expiryDate,
+                'cardholder_name' => $paymentMethod->billing_details->name ?? 'Member',
+                'is_default' => !$hasOtherMethods,
+                'brand_icon' => $icon,
+            ]);
+        } else {
+            // Update existing record with the new Stripe ID and normalized data
+            $localMethod->update([
+                'stripe_payment_method_id' => $paymentMethod->id,
+                'type' => $paymentMethod->card->brand,
+                'brand' => $paymentMethod->card->brand,
+                'cardholder_name' => $paymentMethod->billing_details->name ?? $localMethod->cardholder_name,
+                'brand_icon' => $icon,
+            ]);
+        }
+
+        return $localMethod;
+    }
+
+    /**
+     * Set a payment method as default for a customer.
+     */
+    public function setDefaultPaymentMethod(User $user, string $paymentMethodId)
+    {
+        $customer = $this->createOrGetCustomer($user);
+
+        return Customer::update($customer->id, [
+            'invoice_settings' => [
+                'default_payment_method' => $paymentMethodId,
+            ],
+        ]);
     }
 }

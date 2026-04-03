@@ -48,6 +48,12 @@ class StripeWebhookService
             case 'customer.subscription.deleted':
                 $this->handleSubscriptionDeleted($event->data->object, $event->type);
                 break;
+            case 'setup_intent.succeeded':
+                $this->handleSetupIntentSucceeded($event->data->object, $event->type);
+                break;
+            case 'payment_method.detached':
+                $this->handlePaymentMethodDetached($event->data->object, $event->type);
+                break;
             // Add other event types as needed
             default:
                 Log::info('Received unknown event type ' . $event->type);
@@ -251,6 +257,41 @@ class StripeWebhookService
             StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'failed', $log->user_id);
         } else {
             StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'failed');
+        }
+    }
+
+    protected function handleSetupIntentSucceeded($setupIntent, $eventType)
+    {
+        $customerId = $setupIntent->customer;
+        $paymentMethodId = $setupIntent->payment_method;
+
+        if (!$customerId || !$paymentMethodId) {
+            return;
+        }
+
+        $user = \App\Models\User::where('stripe_id', $customerId)->first();
+
+        if ($user) {
+            $stripeService = app(StripeService::class);
+            $stripeService->syncPaymentMethod($user, $paymentMethodId);
+            
+            Log::info("Synced payment method {$paymentMethodId} for user {$user->id} via webhook.");
+            
+            StripePaymentEvent::dispatch($eventType, $setupIntent->toArray(), 'success', $user->id);
+        }
+    }
+
+    protected function handlePaymentMethodDetached($paymentMethod, $eventType)
+    {
+        $paymentMethodId = $paymentMethod->id;
+        
+        $localMethod = \App\Models\UserPaymentMethod::where('stripe_payment_method_id', $paymentMethodId)->first();
+
+        if ($localMethod) {
+            $localMethod->update(['status' => 'action_required']);
+            Log::info("Marked payment method {$paymentMethodId} as action_required (detached).");
+
+            StripePaymentEvent::dispatch($eventType, $paymentMethod->toArray(), 'action_required', $localMethod->user_id);
         }
     }
 }

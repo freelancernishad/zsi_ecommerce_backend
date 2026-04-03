@@ -11,12 +11,23 @@ class UserPaymentMethod extends Model
 
     protected $fillable = [
         'user_id',
+        'stripe_payment_method_id',
         'type',
+        'brand',
         'last4',
         'expiry_date',
         'cardholder_name',
-        'is_default'
+        'is_default',
+        'status',
+        'brand_icon'
     ];
+
+    protected $appends = ['brand_icon_url'];
+
+    public function getBrandIconUrlAttribute()
+    {
+        return $this->brand_icon ? asset($this->brand_icon) : null;
+    }
 
     public function user()
     {
