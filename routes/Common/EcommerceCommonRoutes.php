@@ -18,5 +18,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('my-reviews', [\App\Http\Controllers\Common\ReviewController::class, 'index'])->middleware('auth:api');
     Route::get('pending-reviews', [\App\Http\Controllers\Common\ReviewController::class, 'pendingReviews'])->middleware('auth:api');
     Route::get('settings/{group}', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getSettingsByGroup']);
+    Route::get('shipping-methods', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getShippingMethods']);
+    Route::get('tax-rates', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getTaxRates']);
     Route::post('track', [ActivityController::class, 'track']);
 });
