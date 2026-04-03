@@ -10,10 +10,8 @@ class Coupon extends Model
     use HasFactory;
 
     protected $fillable = [
-        'code', 'type', 'value', 'valid_from', 'valid_until', 'is_active', 'usage_limit'
+        'code', 'type', 'value', 'valid_from', 'valid_until', 'is_active', 'usage_limit', 'min_amount', 'max_amount'
     ];
-
-
 
     // Relationship with coupon associations (many-to-many)
     public function associations()
@@ -52,10 +50,18 @@ class Coupon extends Model
      */
     public function getDiscountAmount($amount)
     {
+        $discount = 0;
         if ($this->type == 'percentage') {
-            return ($this->value / 100) * $amount;
+            $discount = ($this->value / 100) * $amount;
+        } else {
+            $discount = $this->value; // Fixed discount value
         }
 
-        return $this->value; // Fixed discount value
+        // Apply max_amount as a cap for the discount (common for percentage coupons)
+        if ($this->max_amount && $discount > $this->max_amount) {
+            return $this->max_amount;
+        }
+
+        return $discount;
     }
 }

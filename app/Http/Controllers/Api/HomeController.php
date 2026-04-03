@@ -69,14 +69,14 @@ class HomeController extends Controller
         $brandSectionProducts = [];
         if ($brands->isNotEmpty()) {
             $firstBrand = $brands->first();
-            $brandSectionProducts = Product::with(['images', 'reviews', 'category'])
+            $brandSectionProducts = Product::with(['images', 'reviews', 'category', 'variants'])
                 ->where('brand_id', $firstBrand->id)
                 ->where('status', 'published')
                 ->limit(12)
                 ->get();
         } elseif (!empty($brandSectionConfig['product_ids'])) {
             // Fallback to manual selection if no featured brands exist (or as secondary fallback)
-            $brandSectionProducts = Product::with(['images', 'reviews', 'category'])
+            $brandSectionProducts = Product::with(['images', 'reviews', 'category', 'variants'])
                 ->whereIn('id', $brandSectionConfig['product_ids'])
                 ->where('status', 'published')
                 ->get();
@@ -133,7 +133,7 @@ class HomeController extends Controller
         };
 
         // 3. Fetch Deal Of The Day (Products with highest discount percentage)
-        $dealOfTheDay = Product::with(['images'])
+        $dealOfTheDay = Product::with(['images', 'variants'])
             ->whereColumn('original_price', '>', 'price')
             ->orderByRaw('(original_price - price) / original_price DESC')
             ->limit(10)
@@ -141,7 +141,7 @@ class HomeController extends Controller
             ->map($formatProduct);
 
         // 5. Fetch New Arrivals (Last 8 products)
-        $newArrivals = Product::with(['images'])
+        $newArrivals = Product::with(['images', 'variants'])
             ->orderBy('created_at', 'desc')
             ->limit(8)
             ->get()
@@ -152,7 +152,7 @@ class HomeController extends Controller
         $formatProduct($viralPick);
 
         // Fetch Popular Products
-        $popularProducts = Product::with(['images'])
+        $popularProducts = Product::with(['images', 'variants'])
             ->where('status', 'published')
             ->orderBy('review_count', 'desc')
             ->limit(6)
@@ -160,7 +160,7 @@ class HomeController extends Controller
             ->map($formatProduct);
             
         // Fetch Exclusive Deals (Products with highest absolute discount amount)
-        $exclusiveDeals = Product::with(['images'])
+        $exclusiveDeals = Product::with(['images', 'variants'])
             ->where('status', 'published')
             ->whereColumn('original_price', '>', 'price')
             ->orderByRaw('(original_price - price) DESC')
@@ -232,7 +232,7 @@ class HomeController extends Controller
                         'products' => $brandSectionProducts
                     ],
                     'viral_pick' => $viralPick,
-                    'browsing_history' => Product::with(['images', 'reviews', 'category'])
+                    'browsing_history' => Product::with(['images', 'reviews', 'category', 'variants'])
                         ->where('status', 'published')
                         ->inRandomOrder()
                         ->limit(12)
