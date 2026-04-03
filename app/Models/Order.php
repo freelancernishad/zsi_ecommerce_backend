@@ -10,7 +10,8 @@ class Order extends Model
     use HasFactory;
 
     protected $fillable = [
-        'order_number', 'user_id', 'subtotal', 'discount', 
+        'order_number', 'user_id', 'original_subtotal', 'subtotal', 'discount', 
+        'coupon_code', 'coupon_type', 'coupon_value',
         'shipping_cost', 'tax', 'total', 'status', 
         'payment_method', 'payment_method_name', 'payment_gateway', 'transaction_id', 'payment_details',
         'shipping_method', 'shipping_address_id',
