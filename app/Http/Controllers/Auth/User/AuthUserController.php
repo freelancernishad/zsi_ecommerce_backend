@@ -283,7 +283,10 @@ public function login(LoginRequest $request)
                 category: 'Authentication',
                 isSuccess: true
             );
-            JWTAuth::invalidate($token);
+            if (config('jwt.blacklist_enabled')) {
+                JWTAuth::invalidate($token);
+            }
+            
             return response()->json([
                 'success' => true,
                 'message' => 'Logged out successfully.'
