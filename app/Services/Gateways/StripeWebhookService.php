@@ -13,6 +13,12 @@ class StripeWebhookService
 {
     public function handleWebhook($payload, $sigHeader)
     {
+        Log::info('Stripe Webhook Received', [
+            'sig' => $sigHeader ? 'Present' : 'Missing',
+            'content_length' => strlen($payload),
+            'remote_ip' => request()->ip()
+        ]);
+
         Stripe::setApiKey(config('services.stripe.secret'));
         $endpointSecret = config('services.stripe.webhook');
 

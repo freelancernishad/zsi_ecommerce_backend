@@ -15,8 +15,10 @@ $app = Application::configure(basePath: dirname(__DIR__))
         $middleware->append(\App\Http\Middleware\ApiResponse::class);
         $middleware->append(\App\Http\Middleware\CompressionMiddleware::class);
         $middleware->validateCsrfTokens(except: [
+            'api/stripe/webhook',
+            'api/payment/stripe/webhook',
             '/api/stripe/webhook',
-            '/api/payment/stripe/webhook', // Exclude Stripe webhook
+            '/api/payment/stripe/webhook', // Exclude Stripe webhook variations
         ]);
         $middleware->encryptCookies(except: [
             'admin_token',
