@@ -453,6 +453,18 @@
                                     </div>
                                 </div>
                             </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Google Client Secret</label>
+                                <div class="relative group">
+                                    <input type="password" name="google_client_secret" 
+                                        class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm pr-12" placeholder="GOCSPX-xxxxxxxxxxxxxxxxxxxxxxxxxxxx">
+                                    <button type="button" onclick="togglePassword(this)" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors">
+                                        <svg class="w-5 h-5 eye-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                                        <svg class="w-5 h-5 eye-off-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+                                    </button>
+                                </div>
+                                <p class="text-[10px] text-slate-500 mt-2 italic px-1 font-medium">Required only for "Full Page Redirect" mode.</p>
+                            </div>
                         </div>
                     </div>
 
@@ -520,6 +532,18 @@
                                         </button>
                                     </div>
                                 </div>
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Apple Client Secret</label>
+                                <div class="relative group">
+                                    <input type="password" name="apple_client_secret" 
+                                        class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm pr-12" placeholder="Your Apple Client Secret">
+                                    <button type="button" onclick="togglePassword(this)" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors">
+                                        <svg class="w-5 h-5 eye-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
+                                        <svg class="w-5 h-5 eye-off-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
+                                    </button>
+                                </div>
+                                <p class="text-[10px] text-slate-500 mt-2 italic px-1 font-medium">Required only if you are using Full Page Redirect.</p>
                             </div>
                         </div>
                     </div>
@@ -657,10 +681,15 @@
                              if (input.value === value || (value === 'true' || value === '1')) {
                                  input.checked = true;
                              } else {
-                                 input.checked = false; // ensure unchecked if value doesn't match
+                                 input.checked = false;
                              }
                         } else {
                             input.value = value;
+                            // SYNC UI for flow dropdowns
+                            if (key === 'google_login_flow' || key === 'apple_login_flow') {
+                                const type = key.split('_')[0];
+                                selectFlow(type, value);
+                            }
                         }
                     }
                 }
@@ -690,12 +719,12 @@
         const flowOptions = {
             popup: {
                 label: 'Popup Modal',
-                sub: 'Opens in a separate window',
+                sub: 'Opens in a new window/tab (Recommended)',
                 color: 'indigo'
             },
             redirect: {
                 label: 'Full Page Redirect',
-                sub: 'Best for complex configurations',
+                sub: 'Replaces the current tab (Auth Code Flow)',
                 color: 'emerald'
             }
         };
@@ -744,11 +773,13 @@
                 steps: [
                     "Go to the <span class='text-white font-bold'>Google Cloud Console</span>.",
                     "Create a new Project (or select an existing one).",
-                    "Navigate to <span class='text-white font-bold'>APIs & Services > OAuth consent screen</span> and set it up.",
-                    "Go to <span class='text-white font-bold'>Credentials > Create Credentials > OAuth client ID</span>.",
+                    "Do <b>not</b> search the API Library. Instead, open the <span class='text-white font-bold'>Side Menu (≡)</span>.",
+                    "Go to <span class='text-white font-bold'>APIs & Services > <a href='https://console.cloud.google.com/apis/credentials/consent' target='_blank' class='text-indigo-400 hover:underline'>OAuth consent screen</a></span> and set it up.",
+                    "After setting up the consent screen, go to <span class='text-white font-bold'>Credentials > Create Credentials > OAuth client ID</span>.",
                     "Choose <span class='text-white font-bold'>Web application</span>.",
-                    "Add <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors' onclick='copyText(\"http://localhost:3000\", this)'>http://localhost:3000</code> (and your production domain) to <span class='text-white font-bold'>Authorized JavaScript origins</span>.",
-                    "Copy the <span class='text-white font-bold font-mono'>Client ID</span> and paste it here."
+                    "Add your domain (e.g., <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors' onclick='copyText(\"http://localhost:3001\", this)'>http://localhost:3001</code>) to <span class='text-white font-bold'>Authorized JavaScript origins</span>.",
+                    "Add <b>both</b> of these to <span class='text-white font-bold tracking-tight'>Authorized redirect URIs</span>:<br>1. <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors inline-block mt-1' onclick='copyText(\"http://localhost:3001/login\", this)'>http://localhost:3001/login</code><br>2. <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors inline-block mt-1' onclick='copyText(\"http://localhost:3001/register\", this)'>http://localhost:3001/register</code>",
+                    "After saving, copy the <span class='text-white font-bold font-mono'>Client ID</span> and <span class='text-emerald-400 font-bold'>Client Secret</span> and paste them here."
                 ]
             },
             apple: {
