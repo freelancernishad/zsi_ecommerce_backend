@@ -116,6 +116,11 @@ if (file_exists($AdminSubscriptionsRoutes = __DIR__.'/Admins/Subscriptions/Admin
     require $AdminSubscriptionsRoutes;
 }
 
+// Load EmailTemplateApiRoutes
+if (file_exists($EmailTemplateApiRoutes = __DIR__.'/Admins/EmailTemplates/EmailTemplateApiRoutes.php')) {
+    require $EmailTemplateApiRoutes;
+}
+
 
 
 // Load BlogCategoryRoutes

@@ -68,16 +68,10 @@
         </tbody>
     </table>
 </div>
-@push('styles')
-<style>
-    .modal-backdrop { @apply fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4; }
-    .modal-content { @apply bg-slate-900 border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl; }
-</style>
-@endpush
 
 <!-- Edit Details Modal -->
-<div id="settingsModal" class="modal-backdrop hidden">
-    <div class="modal-content glass">
+<div id="settingsModal" class="fixed inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4 hidden">
+    <div class="bg-slate-900 border border-white/10 rounded-2xl w-full max-w-md p-6 shadow-2xl glass">
         <h3 class="text-xl font-bold text-white mb-4">Template Settings</h3>
         <form id="settingsForm" class="space-y-4">
             <input type="hidden" id="edit_id">

@@ -136,11 +136,12 @@ Route::prefix('admin')->group(function () {
             return view('admin.support.index');
         })->name('admin.support.index');
 
-        // Email Templates Management (View only - index)
-        Route::get('/email-templates', [\App\Http\Controllers\Admins\EmailTemplateController::class, 'index'])->name('admin.email-templates.index');
+        // Email Templates Management
+        Route::resource('email-templates', \App\Http\Controllers\Admins\EmailTemplateController::class)->names('admin.email-templates');
 
-        // Email Sender (View only)
+        // Email Sender
         Route::get('/email-sender', [\App\Http\Controllers\Admins\EmailSenderController::class, 'index'])->name('admin.email-sender.index');
+        Route::post('/email-sender/test', [\App\Http\Controllers\Admins\EmailSenderController::class, 'sendTest'])->name('admin.email-sender.test');
 
         // Email Logs / History (View only)
         Route::get('/email-history', [\App\Http\Controllers\Admins\EmailLogController::class, 'index'])->name('admin.email-logs.index');
