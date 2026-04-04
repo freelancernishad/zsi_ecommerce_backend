@@ -62,6 +62,27 @@
                         </svg>
                         Support
                     </button>
+
+                    <div class="pt-4 pb-2 px-4">
+                        <p class="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">Social Authentication</p>
+                    </div>
+
+                    <button onclick="switchTab('google')" id="tab-btn-google" class="tab-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-slate-400 hover:text-white hover:bg-white/5 transition-all mb-1">
+                        <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z" />
+                            <path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z" />
+                            <path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z" />
+                            <path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z" />
+                        </svg>
+                        Google Login
+                    </button>
+
+                    <button onclick="switchTab('apple')" id="tab-btn-apple" class="tab-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-slate-400 hover:text-white hover:bg-white/5 transition-all mb-1">
+                        <svg class="h-5 w-5 flex-shrink-0" viewBox="0 0 24 24" fill="currentColor">
+                            <path d="M17.05 20.28c-.96.95-2.04 1.72-3.41 1.72-1.33 0-1.78-.83-3.34-.83-1.58 0-2.08.81-3.32.81-1.33 0-2.4-.8-3.41-1.72-2.04-1.89-3.57-5.36-3.57-8.38 0-4.99 3.09-7.62 6.07-7.62 1.54 0 2.47.81 3.51.81.99 0 1.83-.81 3.53-.81 2.53 0 4.7 1.41 5.8 3.51-5.11 2.14-4.29 9.38 1.14 11.51zM12.03 4.39c-.11-2.52 1.95-4.63 4.27-4.39.24 2.62-2.12 4.91-4.27 4.39z" />
+                        </svg>
+                        Apple Login
+                    </button>
                 </nav>
             </div>
 
@@ -367,6 +388,142 @@
                         </div>
                     </div>
 
+                    <!-- Google Tab -->
+                    <div id="tab-google" class="tab-content hidden">
+                        <h2 class="text-2xl font-bold font-outfit text-white mb-6">Google Authentication</h2>
+                        <div class="space-y-6">
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="block text-sm font-medium text-slate-400">Google Client ID</label>
+                                    <button type="button" onclick="openHelp('google')" class="text-[10px] bg-white/5 hover:bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded border border-indigo-500/20 transition-all flex items-center gap-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        How to get this?
+                                    </button>
+                                </div>
+                                <input type="text" name="google_client_id" 
+                                    class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm" placeholder="xxxxxxxxxxxx-xxxxxxxxxxxxxxxx.apps.googleusercontent.com">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Login Flow Preference</label>
+                                <div class="relative">
+                                    <input type="hidden" name="google_login_flow" id="google_login_flow" value="popup">
+                                    <button type="button" onclick="toggleFlowDropdown('google')" id="google-flow-trigger" class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:border-indigo-500/50 outline-none text-white text-left flex justify-between items-center transition-all">
+                                        <span id="google-flow-label" class="flex items-center gap-3">
+                                            <span class="p-1 rounded-lg bg-indigo-500/20 text-indigo-400">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold">Popup Modal</p>
+                                                <p class="text-[10px] text-slate-500">Opens in a separate window</p>
+                                            </div>
+                                        </span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </button>
+
+                                    <!-- Dropdown Menu -->
+                                    <div id="google-flow-menu" class="hidden absolute top-full left-0 w-full mt-2 bg-slate-900 border border-white/10 rounded-2xl p-2 shadow-2xl z-50 backdrop-blur-xl">
+                                        <button type="button" onclick="selectFlow('google', 'popup')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group">
+                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white transition-all">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold text-white">Popup Modal</p>
+                                                <p class="text-[10px] text-slate-500">Fastest setup (Recommended)</p>
+                                            </div>
+                                        </button>
+                                        <button type="button" onclick="selectFlow('google', 'redirect')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group mt-1">
+                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold text-white">Full Page Redirect</p>
+                                                <p class="text-[10px] text-slate-500">Best for complex configurations</p>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Apple Tab -->
+                    <div id="tab-apple" class="tab-content hidden">
+                        <h2 class="text-2xl font-bold font-outfit text-white mb-6">Apple Authentication</h2>
+                        <div class="space-y-6">
+                            <div>
+                                <div class="flex items-center justify-between mb-2">
+                                    <label class="block text-sm font-medium text-slate-400">Apple Client ID (Service ID)</label>
+                                    <button type="button" onclick="openHelp('apple')" class="text-[10px] bg-white/5 hover:bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded border border-indigo-500/20 transition-all flex items-center gap-1">
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                        </svg>
+                                        How to get this?
+                                    </button>
+                                </div>
+                                <input type="text" name="apple_client_id" 
+                                    class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm" placeholder="com.example.app.service">
+                            </div>
+                            <div>
+                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Login Flow Preference</label>
+                                <div class="relative">
+                                    <input type="hidden" name="apple_login_flow" id="apple_login_flow" value="popup">
+                                    <button type="button" onclick="toggleFlowDropdown('apple')" id="apple-flow-trigger" class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:border-indigo-500/50 outline-none text-white text-left flex justify-between items-center transition-all">
+                                        <span id="apple-flow-label" class="flex items-center gap-3">
+                                            <span class="p-1 rounded-lg bg-indigo-500/20 text-indigo-400">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold">Popup Modal</p>
+                                                <p class="text-[10px] text-slate-500">Opens in a separate window</p>
+                                            </div>
+                                        </span>
+                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
+                                        </svg>
+                                    </button>
+
+                                    <!-- Dropdown Menu -->
+                                    <div id="apple-flow-menu" class="hidden absolute top-full left-0 w-full mt-2 bg-slate-900 border border-white/10 rounded-2xl p-2 shadow-2xl z-50 backdrop-blur-xl">
+                                        <button type="button" onclick="selectFlow('apple', 'popup')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group">
+                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white transition-all">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold text-white">Popup Modal</p>
+                                                <p class="text-[10px] text-slate-500">Fastest setup (Recommended)</p>
+                                            </div>
+                                        </button>
+                                        <button type="button" onclick="selectFlow('apple', 'redirect')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group mt-1">
+                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
+                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                                </svg>
+                                            </span>
+                                            <div>
+                                                <p class="text-sm font-bold text-white">Full Page Redirect</p>
+                                                <p class="text-[10px] text-slate-500">Best for complex configurations</p>
+                                            </div>
+                                        </button>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
                     <div class="pt-8 flex justify-end border-t border-white/5 mt-8">
                         <button type="submit" class="px-8 py-3 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white font-bold shadow-lg shadow-indigo-500/30 transition-all flex items-center gap-2">
                              <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24" stroke="currentColor">
@@ -529,6 +686,168 @@
                 eyeOffIcon.classList.add('hidden');
             }
         }
+
+        const flowOptions = {
+            popup: {
+                label: 'Popup Modal',
+                sub: 'Opens in a separate window',
+                color: 'indigo'
+            },
+            redirect: {
+                label: 'Full Page Redirect',
+                sub: 'Best for complex configurations',
+                color: 'emerald'
+            }
+        };
+
+        function toggleFlowDropdown(type) {
+            const menu = document.getElementById(`${type}-flow-menu`);
+            document.querySelectorAll('[id$="-flow-menu"]').forEach(m => {
+                if(m.id !== `${type}-flow-menu`) m.classList.add('hidden');
+            });
+            menu.classList.toggle('hidden');
+        }
+
+        function selectFlow(type, flow) {
+            const input = document.getElementById(`${type}_login_flow`);
+            const label = document.getElementById(`${type}-flow-label`);
+            const opt = flowOptions[flow];
+            
+            input.value = flow;
+            label.innerHTML = `
+                <span class="p-1 rounded-lg bg-${opt.color}-500/20 text-${opt.color}-400">
+                    <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
+                    </svg>
+                </span>
+                <div>
+                    <p class="text-sm font-bold">${opt.label}</p>
+                    <p class="text-[10px] text-slate-500">${opt.sub}</p>
+                </div>
+            `;
+            
+            document.getElementById(`${type}-flow-menu`).classList.add('hidden');
+        }
+
+        // Close dropdowns on outside click
+        window.addEventListener('click', (e) => {
+            if (!e.target.closest('[id$="-flow-trigger"]') && !e.target.closest('[id$="-flow-menu"]')) {
+                document.querySelectorAll('[id$="-flow-menu"]').forEach(m => m.classList.add('hidden'));
+            }
+        });
+
+        const helpDocs = {
+            google: {
+                title: 'Google Login Setup',
+                link: 'https://console.cloud.google.com/apis/credentials',
+                icon: `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M22.56 12.25c0-.78-.07-1.53-.2-2.25H12v4.26h5.92c-.26 1.37-1.04 2.53-2.21 3.31v2.77h3.57c2.08-1.92 3.28-4.74 3.28-8.09z"/><path d="M12 23c2.97 0 5.46-.98 7.28-2.66l-3.57-2.77c-.98.66-2.23 1.06-3.71 1.06-2.86 0-5.29-1.93-6.16-4.53H2.18v2.84C3.99 20.53 7.7 23 12 23z"/><path d="M5.84 14.09c-.22-.66-.35-1.36-.35-2.09s.13-1.43.35-2.09V7.07H2.18C1.43 8.55 1 10.22 1 12s.43 3.45 1.18 4.93l3.66-2.84z"/><path d="M12 5.38c1.62 0 3.06.56 4.21 1.64l3.15-3.15C17.45 2.09 14.97 1 12 1 7.7 1 3.99 3.47 2.18 7.07l3.66 2.84c.87-2.6 3.3-4.53 6.16-4.53z"/></svg>`,
+                steps: [
+                    "Go to the <span class='text-white font-bold'>Google Cloud Console</span>.",
+                    "Create a new Project (or select an existing one).",
+                    "Navigate to <span class='text-white font-bold'>APIs & Services > OAuth consent screen</span> and set it up.",
+                    "Go to <span class='text-white font-bold'>Credentials > Create Credentials > OAuth client ID</span>.",
+                    "Choose <span class='text-white font-bold'>Web application</span>.",
+                    "Add <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors' onclick='copyText(\"http://localhost:3000\", this)'>http://localhost:3000</code> (and your production domain) to <span class='text-white font-bold'>Authorized JavaScript origins</span>.",
+                    "Copy the <span class='text-white font-bold font-mono'>Client ID</span> and paste it here."
+                ]
+            },
+            apple: {
+                title: 'Apple Login Setup',
+                link: 'https://developer.apple.com/account/resources/identifiers/list',
+                icon: `<svg class="w-6 h-6" viewBox="0 0 24 24" fill="currentColor"><path d="M17.05 20.28c-.96.95-2.04 1.72-3.41 1.72-1.33 0-1.78-.83-3.34-.83-1.58 0-2.08.81-3.32.81-1.33 0-2.4-.8-3.41-1.72-2.04-1.89-3.57-5.36-3.57-8.38 0-4.99 3.09-7.62 6.07-7.62 1.54 0 2.47.81 3.51.81.99 0 1.83-.81 3.53-.81 2.53 0 4.7 1.41 5.8 3.51-5.11 2.14-4.29 9.38 1.14 11.51zM12.03 4.39c-.11-2.52 1.95-4.63 4.27-4.39.24 2.62-2.12 4.91-4.27 4.39z"/></svg>`,
+                steps: [
+                    "Go to the <span class='text-white font-bold'>Apple Developer Console</span>.",
+                    "Navigate to <span class='text-white font-bold'>Certificates, Identifiers & Profiles</span>.",
+                    "Register a new <span class='text-white font-bold'>Services ID</span>.",
+                    "Configure <span class='text-white font-bold'>Sign In with Apple</span> for your Services ID.",
+                    "Enter your <span class='text-white font-bold'>Primary App ID</span>.",
+                    "Add your <span class='text-indigo-400 font-bold'>domain</span> and <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors font-mono' onclick='copyText(\"http://localhost:3000/auth/apple/callback\", this)'>http://localhost:3000/auth/apple/callback</code> to <span class='text-white font-bold'>Return URLs</span>.",
+                    "Copy the <span class='text-white font-bold font-mono'>Identifier</span> (this is your Apple Client ID) and paste it here."
+                ]
+            }
+        };
+
+        function copyText(text, el) {
+            navigator.clipboard.writeText(text).then(() => {
+                const original = el.innerHTML;
+                el.innerHTML = "Copied!";
+                el.classList.add('bg-green-500/20', 'text-green-400', 'border-green-500/20');
+                el.classList.remove('text-indigo-400', 'bg-white/5');
+                
+                setTimeout(() => {
+                    el.innerHTML = original;
+                    el.classList.remove('bg-green-500/20', 'text-green-400', 'border-green-500/20');
+                    el.classList.add('text-indigo-400', 'bg-white/5');
+                }, 1000);
+            });
+        }
+
+        function openHelp(type) {
+            const doc = helpDocs[type];
+            document.getElementById('help-title').innerText = doc.title;
+            document.getElementById('help-icon').innerHTML = doc.icon;
+            document.getElementById('help-link').href = doc.link;
+            
+            const content = document.getElementById('help-content');
+            content.innerHTML = `
+                <ul class="space-y-4 text-sm">
+                    ${doc.steps.map((step, idx) => `
+                        <li class="flex gap-4">
+                            <span class="flex-shrink-0 w-6 h-6 rounded-full bg-slate-800 text-slate-400 flex items-center justify-center text-[10px] font-bold border border-white/5">${idx + 1}</span>
+                            <span>${step}</span>
+                        </li>
+                    `).join('')}
+                </ul>
+            `;
+            
+            document.getElementById('help-modal').classList.remove('hidden');
+        }
+
+        function closeHelp() {
+            document.getElementById('help-modal').classList.add('hidden');
+        }
     </script>
+
+    <!-- Help Modals -->
+    <div id="help-modal" class="fixed inset-0 z-[100] hidden">
+        <div class="absolute inset-0 bg-slate-950/80 backdrop-blur-sm" onclick="closeHelp()"></div>
+        <div class="absolute top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 w-full max-w-2xl bg-slate-900 border border-white/10 rounded-3xl p-8 shadow-2xl overflow-y-auto max-h-[90vh]">
+            <div class="flex justify-between items-start mb-6">
+                <div class="flex items-center gap-4">
+                    <div id="help-icon" class="w-12 h-12 rounded-2xl flex items-center justify-center bg-indigo-500/20 text-indigo-400 shadow-lg shadow-indigo-500/20">
+                        <!-- Icon injected by JS -->
+                    </div>
+                    <div>
+                        <h3 id="help-title" class="text-xl font-bold text-white font-outfit">Configuration Guide</h3>
+                        <p class="text-xs text-slate-500 mt-1 uppercase tracking-widest font-bold">Step-by-step instructions</p>
+                    </div>
+                </div>
+                <button onclick="closeHelp()" class="p-2 rounded-xl hover:bg-white/5 text-slate-400 hover:text-white transition-all">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div id="help-content" class="text-slate-300 leading-relaxed py-4 border-y border-white/5 my-6">
+                <!-- Content injected by JS -->
+            </div>
+
+            <div class="pt-6 flex justify-between items-center">
+                <p class="text-[10px] text-slate-500 uppercase tracking-widest font-bold">Follow these steps carefully</p>
+                <div class="flex items-center gap-3">
+                    <button onclick="closeHelp()" class="px-6 py-2.5 rounded-xl bg-white/5 hover:bg-white/10 text-white text-sm font-semibold transition-all">
+                        Close
+                    </button>
+                    <a id="help-link" href="#" target="_blank" class="px-6 py-2.5 rounded-xl bg-indigo-600 hover:bg-indigo-500 text-white text-sm font-bold shadow-lg shadow-indigo-500/30 transition-all flex items-center gap-2">
+                        Open Developer Console
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                        </svg>
+                    </a>
+                </div>
+            </div>
+        </div>
+    </div>
 @endsection
 

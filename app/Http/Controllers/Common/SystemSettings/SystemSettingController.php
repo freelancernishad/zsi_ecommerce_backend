@@ -57,4 +57,21 @@ class SystemSettingController extends Controller
         }
     }
 
+    public function getPublicSettings()
+    {
+        $safeKeys = [
+            'google_client_id',
+            'google_login_flow',
+            'apple_client_id',
+            'apple_login_flow',
+            'app_name',
+            'app_logo',
+            'primary_color',
+            'support_email'
+        ];
+
+        $settings = SystemSetting::whereIn('key', $safeKeys)->pluck('value', 'key');
+
+        return response()->json($settings);
+    }
 }

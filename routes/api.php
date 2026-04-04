@@ -15,6 +15,11 @@ if (file_exists($SystemSettingsRoutes = __DIR__.'/Common/SystemSettingsRoutes.ph
     require $SystemSettingsRoutes;
 }
 
+// Load CommonPublicRoutes
+if (file_exists($CommonPublicRoutes = __DIR__.'/Common/CommonPublicRoutes.php')) {
+    require $CommonPublicRoutes;
+}
+
 // Load AllowedOriginRoutes
 if (file_exists($AllowedOriginRoutes = __DIR__.'/Common/AllowedOriginRoutes.php')) {
     require $AllowedOriginRoutes;
