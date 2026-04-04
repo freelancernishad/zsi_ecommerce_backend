@@ -38,7 +38,15 @@ class OrderController extends Controller
             'items' => 'required|array',
             'items.*.product_id' => 'required|exists:products,id',
             'items.*.quantity' => 'required|integer|min:1',
-            'shipping_address_id' => 'required|exists:addresses,id',
+            'shipping_address_id' => 'nullable|exists:addresses,id',
+            'address_data' => 'nullable|array',
+            'address_data.fullName' => 'required_without:shipping_address_id|string',
+            'address_data.phone' => 'required_without:shipping_address_id|string',
+            'address_data.country' => 'required_without:shipping_address_id|string',
+            'address_data.addressLine1' => 'required_without:shipping_address_id|string',
+            'address_data.city' => 'required_without:shipping_address_id|string',
+            'address_data.state' => 'required_without:shipping_address_id|string',
+            'address_data.postalCode' => 'required_without:shipping_address_id|string',
             'payment_method' => 'required|string',
             'subtotal' => 'required|numeric',
             'original_subtotal' => 'required|numeric',
@@ -53,8 +61,31 @@ class OrderController extends Controller
             'transaction_id' => 'nullable|string',
         ]);
 
+
         return DB::transaction(function () use ($request) {
-            $address = Auth::user()->addresses()->findOrFail($request->shipping_address_id);
+            if ($request->shipping_address_id) {
+                $address = Auth::user()->addresses()->findOrFail($request->shipping_address_id);
+            } else {
+                // Handle manual address entry
+                $nameParts = explode(' ', $request->address_data['fullName'], 2);
+                $firstName = $nameParts[0];
+                $lastName = $nameParts[1] ?? '';
+
+                $address = Auth::user()->addresses()->create([
+                    'first_name' => $firstName,
+                    'last_name' => $lastName,
+                    'email' => Auth::user()->email,
+                    'phone' => $request->address_data['phone'],
+                    'country' => $request->address_data['country'],
+                    'street_address' => $request->address_data['addressLine1'],
+                    'city' => $request->address_data['city'],
+                    'state' => $request->address_data['state'],
+                    'zip_code' => $request->address_data['postalCode'],
+                    'type' => 'shipping',
+                    'is_default' => $request->address_data['isDefault'] ?? false,
+                ]);
+            }
+
 
             $order = Order::create([
                 'order_number' => 'ORD-' . strtoupper(Str::random(10)),

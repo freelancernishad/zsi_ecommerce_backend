@@ -13,13 +13,30 @@ class StripeWebhookService
 {
     public function handleWebhook($payload, $sigHeader)
     {
+        $endpointSecret = config('services.stripe.webhook');
+
+        // Fallback: If config is empty, try to fetch directly from SystemSetting database table
+        if (!$endpointSecret) {
+            try {
+                $setting = \App\Models\SystemSetting::where('key', 'STRIPE_WEBHOOK_SECRET')->first();
+                if ($setting) {
+                    $endpointSecret = $setting->value;
+                    // Also update the config for the rest of the request
+                    config(['services.stripe.webhook' => $endpointSecret]);
+                }
+            } catch (\Exception $e) {
+                Log::error('Webhook Fallback DB Error: ' . $e->getMessage());
+            }
+        }
+
         Log::info('Stripe Webhook Heartbeat', [
             'url' => request()->fullUrl(),
             'method' => request()->method(),
             'ip' => request()->ip(),
             'cf_ip' => request()->header('CF-Connecting-IP'),
             'signature_present' => !!$sigHeader,
-            'payload_length' => strlen($payload)
+            'payload_length' => strlen($payload),
+            'secret_configured' => $endpointSecret ? 'Yes (starts with ' . substr($endpointSecret, 0, 8) . '...)' : 'No'
         ]);
 
         Stripe::setApiKey(config('services.stripe.secret'));
