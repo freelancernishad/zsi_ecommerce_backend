@@ -10,6 +10,8 @@ use App\Http\Controllers\Auth\User\UserPasswordResetController;
 
 Route::prefix('auth/user')->group(function () {
     Route::post('login', [AuthUserController::class, 'login'])->name('login');
+    Route::post('login/google', [AuthUserController::class, 'login']);
+    Route::post('login/apple', [AuthUserController::class, 'login']);
     Route::post('register', [AuthUserController::class, 'register']);
 
     Route::middleware(AuthenticateUser::class)->group(function () { // Applying user middleware

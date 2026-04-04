@@ -14,10 +14,11 @@ class LoginRequest extends FormRequest
     public function rules(): array
     {
         return [
-            'email' => 'required_without_all:access_token,identity_token|string|email',
-            'password' => 'required_without_all:access_token,identity_token|string',
+            'email' => 'required_without_all:access_token,identity_token,code|string|email',
+            'password' => 'required_without_all:access_token,identity_token,code|string',
             'access_token' => 'string',
             'identity_token' => 'string',
+            'code' => 'string',
         ];
     }
 }

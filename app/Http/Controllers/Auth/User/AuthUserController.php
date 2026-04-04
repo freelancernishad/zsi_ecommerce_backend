@@ -113,7 +113,7 @@ public function register(RegisterRequest $request)
 public function login(LoginRequest $request)
 {
     // Handle Google login
-    if ($request->access_token) {
+    if ($request->access_token || $request->code) {
         $googleAuthService = new GoogleAuthService();
         return $googleAuthService->login($request);
     }
