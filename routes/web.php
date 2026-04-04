@@ -42,8 +42,7 @@ Route::get('/', function () {
 Route::get('/db-check', function () {
     try {
         DB::connection()->getPdo(); // DB connection check
-        $databaseName = DB::connection()->getDatabaseName();
-        return "✅ Database connected successfully! Database name: " . $databaseName;
+        return "✅ Database connected successfully!";
     } catch (\Exception $e) {
         return "❌ Database connection failed: " . $e->getMessage();
     }

@@ -121,10 +121,6 @@
                         </span>
                     </div>
                     <div class="flex justify-between items-center">
-                        <span>Catalog</span>
-                        <span class="text-indigo-400 italic">"{{ $projectInfo['db_name'] }}"</span>
-                    </div>
-                    <div class="flex justify-between items-center">
                         <span>Sync Time</span>
                         <span class="text-slate-500 text-xs">{{ $projectInfo['server_time'] }}</span>
                     </div>
