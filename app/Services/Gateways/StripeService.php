@@ -502,4 +502,22 @@ class StripeService
             ],
         ]);
     }
+
+    /**
+     * Sync a payment method using a SetupIntent ID.
+     */
+    public function syncPaymentMethodFromSetupIntent(User $user, string $setupIntentId)
+    {
+        $setupIntent = SetupIntent::retrieve($setupIntentId);
+        
+        if ($setupIntent->status !== 'succeeded') {
+            throw new Exception("Setup intent not succeeded. Status: " . $setupIntent->status);
+        }
+
+        if (!$setupIntent->payment_method) {
+            throw new Exception("No payment method associated with this Setup Intent");
+        }
+
+        return $this->syncPaymentMethod($user, $setupIntent->payment_method);
+    }
 }

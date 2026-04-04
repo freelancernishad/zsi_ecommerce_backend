@@ -23,6 +23,7 @@ Route::middleware([AuthenticateUser::class])->group(function () {
     Route::post('/update-payment-intent', [StripeController::class, 'updatePaymentIntent']);
     Route::post('/save-card', [StripeController::class, 'saveCard']);
     Route::get('/cards', [StripeController::class, 'getCards']);
+    Route::post('/cards/confirm', [StripeController::class, 'confirmSaveCard']);
     Route::post('/cards/{id}/verify', [StripeController::class, 'verifyCard']);
     Route::post('/cards/{id}/set-default', [StripeController::class, 'setDefaultCard']);
     Route::delete('/cards/{id}', [StripeController::class, 'deleteCard']);

@@ -142,6 +142,27 @@ class StripeController extends Controller
     }
 
     /**
+     * Confirm a saved card after Stripe setup success.
+     */
+    public function confirmSaveCard(Request $request)
+    {
+        $user = Auth::user();
+        $setupIntentId = $request->input('setup_intent_id');
+
+        if (!$setupIntentId) {
+            return response()->json(['error' => 'Setup Intent ID is required'], 400);
+        }
+
+        try {
+            // Use Stripe Service to sync the payment method to our DB synchronously
+            $paymentMethod = $this->stripeService->syncPaymentMethodFromSetupIntent($user, $setupIntentId);
+            return response()->json(['data' => $paymentMethod, 'message' => 'Card confirmed and saved successfully']);
+        } catch (\Exception $e) {
+            return response()->json(['error' => 'Confirmation failed: ' . $e->getMessage()], 400);
+        }
+    }
+
+    /**
      * List user's saved cards.
      */
     public function getCards()
