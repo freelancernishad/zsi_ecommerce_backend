@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- STANDALONE BLADE FILE: No npm build/vite required -->
 <html lang="en">
 <head>
     <meta charset="UTF-8">

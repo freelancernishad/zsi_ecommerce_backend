@@ -1,4 +1,5 @@
 <!DOCTYPE html>
+<!-- STANDALONE BLADE FILE: No npm build/vite required -->
 <html lang="{{ str_replace('_', '-', app()->getLocale()) }}" class="dark">
 <head>
     <meta charset="utf-8">

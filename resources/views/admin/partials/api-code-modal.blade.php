@@ -24,6 +24,7 @@
 
                 <div class="p-6 space-y-6">
                     <!-- Prism Theme -->
+                    @push('styles')
                     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/prism/1.29.0/themes/prism-tomorrow.min.css">
                     <style>
                         /* Custom Prism Overrides */
@@ -40,6 +41,7 @@
                             font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace !important;
                         }
                     </style>
+                    @endpush
 
                     <!-- Language Switcher -->
                     <div class="flex flex-wrap p-1 bg-black/40 rounded-2xl w-fit border border-white/5 gap-1">

@@ -380,6 +380,7 @@
         </div>
     </div>
     
+    @push('styles')
     <style>
         .active-tab {
             background: rgba(255, 255, 255, 0.05);
@@ -387,6 +388,7 @@
             border-left: 3px solid #6366f1;
         }
     </style>
+    @endpush
 
     <script>
         function switchTab(tabId) {
