@@ -176,6 +176,11 @@ if (file_exists($AdminBrandRoutes = __DIR__.'/Admins/Brands/BrandRoutes.php')) {
     require $AdminBrandRoutes;
 }
 
+// Load AdminPageRoutes
+if (file_exists($AdminPageRoutes = __DIR__.'/Admins/Pages/PageRoutes.php')) {
+    require $AdminPageRoutes;
+}
+
 // Load UserOrderRoutes
 if (file_exists($UserOrderRoutes = __DIR__.'/Users/Orders/OrderRoutes.php')) {
     require $UserOrderRoutes;

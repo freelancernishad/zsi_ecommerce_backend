@@ -21,4 +21,5 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('shipping-methods', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getShippingMethods']);
     Route::get('tax-rates', [\App\Http\Controllers\Ecommerce\EcommerceSettingController::class, 'getTaxRates']);
     Route::post('track', [ActivityController::class, 'track']);
+    Route::get('pages/{slug}', [\App\Http\Controllers\Admin\Pages\PageController::class, 'getBySlug']);
 });
