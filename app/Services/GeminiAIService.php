@@ -10,7 +10,7 @@ use Illuminate\Support\Facades\Log;
 class GeminiAIService
 {
     protected $apiKey;
-    protected $baseUrl = 'https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent';
+    protected $baseUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent';
 
     public function __construct()
     {
@@ -59,14 +59,14 @@ class GeminiAIService
                     'topP' => 0.95,
                     'topK' => 40,
                     'maxOutputTokens' => 8192,
-                    'responseMimeType' => 'text/plain',
                 ]
             ]);
 
             if ($response->successful()) {
                 $result = $response->json();
                 if (isset($result['candidates'][0]['content']['parts'][0]['text'])) {
-                    return $result['candidates'][0]['content']['parts'][0]['text'];
+                    $text = $result['candidates'][0]['content']['parts'][0]['text'];
+                    return $this->cleanHtml($text);
                 }
                 
                 Log::error('Gemini API Error: Unexpected response structure.', ['response' => $result]);
@@ -89,5 +89,24 @@ class GeminiAIService
             ]);
             return null;
         }
+    }
+
+    /**
+     * Clean the AI response by removing markdown blocks and extracting body content.
+     */
+    private function cleanHtml(string $text)
+    {
+        // 1. Remove Markdown code blocks if present
+        $text = preg_replace('/```(?:html)?\s*(.*?)\s*```/is', '$1', $text);
+        
+        // 2. If it's a full HTML document, extract only what's inside <body>
+        if (stripos($text, '<body') !== false) {
+            preg_match('/<body[^>]*>(.*?)<\/body>/is', $text, $matches);
+            if (isset($matches[1])) {
+                $text = $matches[1];
+            }
+        }
+
+        return trim($text);
     }
 }
