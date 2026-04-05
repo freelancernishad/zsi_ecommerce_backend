@@ -181,6 +181,11 @@ if (file_exists($AdminPageRoutes = __DIR__.'/Admins/Pages/PageRoutes.php')) {
     require $AdminPageRoutes;
 }
 
+// Load AdminAIRoutes
+if (file_exists($AdminAIRoutes = __DIR__.'/Admins/AI/AIRoutes.php')) {
+    require $AdminAIRoutes;
+}
+
 // Load UserOrderRoutes
 if (file_exists($UserOrderRoutes = __DIR__.'/Users/Orders/OrderRoutes.php')) {
     require $UserOrderRoutes;

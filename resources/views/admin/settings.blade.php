@@ -83,6 +83,17 @@
                         </svg>
                         Apple Login
                     </button>
+
+                    <div class="pt-4 pb-2 px-4">
+                        <p class="text-[10px] font-black uppercase tracking-[0.2em] text-slate-500">AI Integration</p>
+                    </div>
+
+                    <button onclick="switchTab('gemini')" id="tab-btn-gemini" class="tab-btn w-full flex items-center gap-3 px-4 py-3 rounded-xl text-left text-slate-400 hover:text-white hover:bg-white/5 transition-all mb-1">
+                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 flex-shrink-0" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-7.714 2.143L11 21l-2.286-6.857L1 12l7.714-2.143L11 3z" />
+                        </svg>
+                        Gemini AI
+                    </button>
                 </nav>
             </div>
 
@@ -468,82 +479,44 @@
                         </div>
                     </div>
 
-                    <!-- Apple Tab -->
-                    <div id="tab-apple" class="tab-content hidden">
-                        <h2 class="text-2xl font-bold font-outfit text-white mb-6">Apple Authentication</h2>
-                        <div class="space-y-6">
-                            <div>
-                                <div class="flex items-center justify-between mb-2">
-                                    <label class="block text-sm font-medium text-slate-400">Apple Client ID (Service ID)</label>
-                                    <button type="button" onclick="openHelp('apple')" class="text-[10px] bg-white/5 hover:bg-indigo-500/20 text-indigo-400 px-2 py-1 rounded border border-indigo-500/20 transition-all flex items-center gap-1">
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-3 w-3" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
-                                        </svg>
-                                        How to get this?
-                                    </button>
+                    <div id="tab-gemini" class="tab-content hidden">
+                        <div class="flex items-center justify-between mb-6">
+                            <h2 class="text-2xl font-bold font-outfit text-white">Gemini AI Configuration</h2>
+                            <button type="button" onclick="openHelp('gemini')" class="text-[10px] bg-white/5 hover:bg-indigo-500/20 text-indigo-400 px-3 py-1.5 rounded-lg border border-indigo-500/20 transition-all flex items-center gap-2">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-4 w-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+                                </svg>
+                                How to get this?
+                            </button>
+                        </div>
+                        
+                        <div class="space-y-8">
+                            <div class="p-6 bg-indigo-600/5 rounded-3xl border border-indigo-500/10 mb-8 items-center flex gap-6">
+                                <div class="w-16 h-16 rounded-2xl bg-indigo-600/20 flex items-center justify-center text-indigo-400 shadow-xl shadow-indigo-600/10">
+                                    <svg xmlns="http://www.w3.org/2000/svg" class="h-8 w-8" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.260.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" />
+                                    </svg>
                                 </div>
-                                <input type="text" name="apple_client_id" 
-                                    class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm" placeholder="com.example.app.service">
+                                <div>
+                                    <h4 class="text-white font-bold text-lg leading-none">Google Gemini Pro</h4>
+                                    <p class="text-slate-400 text-sm mt-2">Power your platform with advanced AI content generation and SEO intelligence.</p>
+                                </div>
                             </div>
-                            <div>
-                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Login Flow Preference</label>
-                                <div class="relative">
-                                    <input type="hidden" name="apple_login_flow" id="apple_login_flow" value="popup">
-                                    <button type="button" onclick="toggleFlowDropdown('apple')" id="apple-flow-trigger" class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 hover:border-indigo-500/50 outline-none text-white text-left flex justify-between items-center transition-all">
-                                        <span id="apple-flow-label" class="flex items-center gap-3">
-                                            <span class="p-1 rounded-lg bg-indigo-500/20 text-indigo-400">
-                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                                                </svg>
-                                            </span>
-                                            <div>
-                                                <p class="text-sm font-bold">Popup Modal</p>
-                                                <p class="text-[10px] text-slate-500">Opens in a separate window</p>
-                                            </div>
-                                        </span>
-                                        <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5 text-slate-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7" />
-                                        </svg>
-                                    </button>
 
-                                    <!-- Dropdown Menu -->
-                                    <div id="apple-flow-menu" class="hidden absolute top-full left-0 w-full mt-2 bg-slate-900 border border-white/10 rounded-2xl p-2 shadow-2xl z-50 backdrop-blur-xl">
-                                        <button type="button" onclick="selectFlow('apple', 'popup')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group">
-                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-indigo-500 group-hover:text-white transition-all">
-                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M8 7h12m0 0l-4-4m4 4l-4 4m0 6H4m0 0l4 4m-4-4l4-4" />
-                                                </svg>
-                                            </span>
-                                            <div>
-                                                <p class="text-sm font-bold text-white">Popup Modal</p>
-                                                <p class="text-[10px] text-slate-500">Fastest setup (Recommended)</p>
-                                            </div>
-                                        </button>
-                                        <button type="button" onclick="selectFlow('apple', 'redirect')" class="w-full p-3 rounded-xl hover:bg-white/5 flex items-center gap-3 text-left transition-all group mt-1">
-                                            <span class="p-2 rounded-lg bg-slate-800 text-slate-400 group-hover:bg-emerald-500 group-hover:text-white transition-all">
-                                                <svg class="w-4 h-4" fill="none" viewBox="0 0 24 24" stroke="currentColor">
-                                                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
-                                                </svg>
-                                            </span>
-                                            <div>
-                                                <p class="text-sm font-bold text-white">Full Page Redirect</p>
-                                                <p class="text-[10px] text-slate-500">Best for complex configurations</p>
-                                            </div>
-                                        </button>
-                                    </div>
-                                </div>
-                            </div>
                             <div>
-                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Apple Client Secret</label>
+                                <label class="block text-sm font-medium text-slate-400 mb-2 font-outfit uppercase tracking-widest text-[10px]">Gemini API Key</label>
                                 <div class="relative group">
-                                    <input type="password" name="apple_client_secret" 
-                                        class="w-full px-4 py-3 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm pr-12" placeholder="Your Apple Client Secret">
+                                    <input type="password" name="gemini_api_key" 
+                                        class="w-full px-5 py-4 rounded-xl bg-white/5 border border-white/10 focus:border-indigo-500 outline-none text-white font-mono text-sm pr-12 transition-all focus:ring-4 focus:ring-indigo-500/10" placeholder="Enter your Gemini Pro API key...">
                                     <button type="button" onclick="togglePassword(this)" class="absolute right-4 top-1/2 -translate-y-1/2 text-slate-500 hover:text-white transition-colors">
                                         <svg class="w-5 h-5 eye-icon" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M2.458 12C3.732 7.943 7.523 5 12 5c4.478 0 8.268 2.943 9.542 7-1.274 4.057-5.064 7-9.542 7-4.477 0-8.268-2.943-9.542-7z"/></svg>
                                         <svg class="w-5 h-5 eye-off-icon hidden" fill="none" viewBox="0 0 24 24" stroke="currentColor"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13.875 18.825A10.05 10.05 0 0112 19c-4.478 0-8.268-2.943-9.543-7a9.97 9.97 0 011.563-3.029m5.858.908a3 3 0 114.243 4.243M9.878 9.878l4.242 4.242M9.88 9.88l-3.29-3.29m7.532 7.532l3.29 3.29M3 3l18 18"/></svg>
                                     </button>
                                 </div>
-                                <p class="text-[10px] text-slate-500 mt-2 italic px-1 font-medium">Required only if you are using Full Page Redirect.</p>
+                                <p class="text-[10px] text-emerald-400 mt-3 flex items-center gap-1.5 px-1 font-bold">
+                                    <svg class="w-3.5 h-3.5" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17L4 12"/></svg>
+                                    Active AI Service: Gemini 1.5 Flash (Optimized)
+                                </p>
                             </div>
                         </div>
                     </div>
@@ -794,6 +767,20 @@
                     "Enter your <span class='text-white font-bold'>Primary App ID</span>.",
                     "Add your <span class='text-indigo-400 font-bold'>domain</span> and <code class='bg-white/5 text-indigo-400 px-1.5 py-0.5 rounded border border-white/10 cursor-pointer hover:bg-indigo-500/10 transition-colors font-mono' onclick='copyText(\"http://localhost:3000/auth/apple/callback\", this)'>http://localhost:3000/auth/apple/callback</code> to <span class='text-white font-bold'>Return URLs</span>.",
                     "Copy the <span class='text-white font-bold font-mono'>Identifier</span> (this is your Apple Client ID) and paste it here."
+                ]
+            },
+            gemini: {
+                title: 'Google Gemini AI Setup',
+                link: 'https://aistudio.google.com/app/apikey',
+                icon: `<svg class="w-6 h-6" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path stroke-linecap="round" stroke-linejoin="round" d="M19.428 15.428a2 2 0 00-1.022-.547l-2.387-.477a6 6 0 00-3.86.517l-.318.158a6 6 0 01-3.86.517L6.05 15.21a2 2 0 00-1.806.547M8 4h8l-1 1v5.172a2 2 0 00.586 1.414l5 5c1.26 1.26.367 3.414-1.415 3.414H4.828c-1.782 0-2.674-2.154-1.414-3.414l5-5A2 2 0 009 10.172V5L8 4z" /></svg>`,
+                steps: [
+                    "Visit the <span class='text-white font-bold'>Google AI Studio</span> (formerly MakerSuite).",
+                    "Sign in with your <span class='text-white font-bold'>Google Account</span>.",
+                    "Click on the <span class='text-indigo-400 font-bold'>'Get API key'</span> button in the top left sidebar.",
+                    "Click <span class='text-white font-bold'>'Create API key in new project'</span>.",
+                    "Copy your <span class='text-emerald-400 font-bold font-mono'>API Key</span>.",
+                    "Return here and paste the key into the <span class='text-white font-bold'>Gemini API Key</span> field.",
+                    "Click <span class='text-white font-bold'>'Save Configuration'</span> to activate AI features across your platform."
                 ]
             }
         };
