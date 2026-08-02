@@ -226,6 +226,7 @@ if (file_exists($AdminSettingsRoutes = __DIR__.'/Admins/Settings/SettingsRoutes.
 
 // Ecommerce Dashboard Stats API
 Route::get('/admin/dashboard/stats', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'index']);
+Route::get('/admin/dashboard/overview', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'index']);
 Route::get('/admin/dashboard/category-analytics', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'categoryAnalytics']);
 Route::get('/admin/dashboard/full-best-selling', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestSellingProductsFull']);
 Route::get('/admin/dashboard/full-top-rated', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestRatedProductsFull']);
