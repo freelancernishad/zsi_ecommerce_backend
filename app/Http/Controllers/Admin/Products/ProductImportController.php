@@ -23,10 +23,27 @@ class ProductImportController extends Controller
             'status'        => 'nullable|string|in:published,draft',
         ]);
 
-        $file         = $request->file('file');
-        $categoryId   = $request->input('category_id');
-        if ($categoryId === 'Uncategorized' || !$categoryId) {
-            $categoryId = \App\Models\Category::first()?->id;
+        $file          = $request->file('file');
+        $rawCategoryId = $request->input('category_id');
+        $categoryId    = null;
+
+        if ($rawCategoryId && is_numeric($rawCategoryId) && (int)$rawCategoryId > 0) {
+            $categoryId = (int) $rawCategoryId;
+        }
+
+        if (!$categoryId) {
+            $firstCat = \App\Models\Category::first();
+            if ($firstCat) {
+                $categoryId = $firstCat->id;
+            } else {
+                $newCat = \App\Models\Category::create([
+                    'name'        => 'General',
+                    'slug'        => 'general-' . time(),
+                    'description' => 'Default Category',
+                    'status'      => 'active',
+                ]);
+                $categoryId = $newCat->id;
+            }
         }
         $defaultStock = (int) $request->input('default_stock', 10);
         $priceMarkup  = (float) $request->input('price_markup', 0);
