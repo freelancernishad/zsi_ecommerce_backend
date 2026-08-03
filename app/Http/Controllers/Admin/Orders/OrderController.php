@@ -13,7 +13,7 @@ class OrderController extends Controller
 {
     public function index(Request $request)
     {
-        $query = Order::with(['user', 'items.product', 'shippingAddress'])
+        $query = Order::with(['user', 'items.product.images', 'shippingAddress'])
             ->withCount('items');
 
         // Filter by user_id
@@ -75,7 +75,7 @@ class OrderController extends Controller
 
     public function show($id)
     {
-        $order = Order::with(['user', 'items.product', 'items.variant', 'shippingAddress', 'statusHistories'])->findOrFail($id);
+        $order = Order::with(['user', 'items.product.images', 'items.variant', 'shippingAddress', 'statusHistories'])->findOrFail($id);
         return response()->json(['status' => 'success', 'data' => $order]);
     }
 

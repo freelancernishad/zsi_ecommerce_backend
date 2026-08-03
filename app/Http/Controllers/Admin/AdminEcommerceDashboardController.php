@@ -104,7 +104,12 @@ class AdminEcommerceDashboardController extends Controller
             ->map(function ($p) {
                 // Get first image
                 $image = DB::table('product_images')->where('product_id', $p->id)->first();
-                $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+                $imagePath = null;
+                if ($image && $image->image_path) {
+                    $imagePath = str_starts_with($image->image_path, 'http')
+                        ? $image->image_path
+                        : asset('storage/' . $image->image_path);
+                }
 
                 $avg = Review::where('product_id', $p->id)->avg('rating') ?? 0;
                 $cnt = Review::where('product_id', $p->id)->count();
@@ -132,7 +137,12 @@ class AdminEcommerceDashboardController extends Controller
             ->map(function ($p) {
                 // Get first image
                 $image = DB::table('product_images')->where('product_id', $p->id)->first();
-                $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+                $imagePath = null;
+                if ($image && $image->image_path) {
+                    $imagePath = str_starts_with($image->image_path, 'http')
+                        ? $image->image_path
+                        : asset('storage/' . $image->image_path);
+                }
 
                 return [
                     'id'            => $p->id,
@@ -313,10 +323,15 @@ class AdminEcommerceDashboardController extends Controller
             $growth = $prev > 0 ? round((($curr - $prev) / $prev) * 100, 1) : 0;
             $aov = $c->orders_count > 0 ? round($c->total_revenue / $c->orders_count, 2) : 0;
 
+            $catImage = null;
+            if ($c->image) {
+                $catImage = str_starts_with($c->image, 'http') ? $c->image : asset('storage/' . $c->image);
+            }
+
             return [
                 'id'             => $c->id,
                 'name'           => $c->name,
-                'image'          => $c->image ? asset('storage/' . $c->image) : null,
+                'image'          => $catImage,
                 'products_count' => (int) $c->products_count,
                 'total_sold'     => (int) $c->total_sold,
                 'total_revenue'  => (float) $c->total_revenue,
@@ -394,7 +409,12 @@ class AdminEcommerceDashboardController extends Controller
 
         $bestSellingProducts->getCollection()->transform(function ($p) {
             $image = DB::table('product_images')->where('product_id', $p->id)->first();
-            $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+            $imagePath = null;
+            if ($image && $image->image_path) {
+                $imagePath = str_starts_with($image->image_path, 'http')
+                    ? $image->image_path
+                    : asset('storage/' . $image->image_path);
+            }
 
             $avg = Review::where('product_id', $p->id)->avg('rating') ?? 0;
             $cnt = Review::where('product_id', $p->id)->count();
@@ -432,7 +452,12 @@ class AdminEcommerceDashboardController extends Controller
 
         $bestRatedProducts->getCollection()->transform(function ($p) {
             $image = DB::table('product_images')->where('product_id', $p->id)->first();
-            $imagePath = $image ? asset('storage/' . $image->image_path) : null;
+            $imagePath = null;
+            if ($image && $image->image_path) {
+                $imagePath = str_starts_with($image->image_path, 'http')
+                    ? $image->image_path
+                    : asset('storage/' . $image->image_path);
+            }
 
             return [
                 'id'            => $p->id,
