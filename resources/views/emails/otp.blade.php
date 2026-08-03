@@ -1,77 +1,42 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+@extends('emails.layout')
 
-    <style>
-        body {
-            font-family: Arial, sans-serif;
-            background-color: #eaeaea;
-            padding: 40px;
-            margin: 0;
-        }
-        .container {
-            max-width: 600px;
-            margin: 0 auto;
-            background: #ffffff;
-            border-radius: 10px;
-            box-shadow: 0 2px 10px rgba(0,0,0,0.1);
-            padding: 30px;
-        }
-        .header {
-            background-color: #4CAF50;
-            color: white;
-            padding: 20px;
-            border-radius: 10px 10px 0 0;
-            text-align: center;
-        }
-        .header h1 {
-            margin: 0;
-            font-size: 24px;
-        }
-        .otp {
-            font-size: 36px;
-            font-weight: bold;
-            color: #4CAF50;
-            text-align: center;
-            background-color: #f1f1f1;
-            padding: 20px;
-            border-radius: 5px;
-            margin: 20px 0;
-            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
-        }
-        .footer {
-            text-align: center;
-            margin-top: 30px;
-            font-size: 14px;
-            color: #555;
-        }
-        .footer a {
-            color: #4CAF50;
-            text-decoration: none;
-        }
-        .footer a:hover {
-            text-decoration: underline;
-        }
-    </style>
-</head>
-<body>
-    <div class="container">
-        <div class="header">
-            <h1>Welcome to {{ env('APP_NAME') }}</h1>
-        </div>
-        <p style="font-size: 16px; line-height: 1.5; color: #333;">
-            Thank you for registering with us! To complete your registration, please use the following One-Time Password (OTP):
-        </p>
-        <div class="otp">{{ $otp }}</div>
-        <p style="font-size: 16px; line-height: 1.5; color: #333;">
-            This OTP is valid for a short period. If you did not request this OTP, please ignore this email.
-        </p>
-        <div class="footer">
-            <p>Thank you for choosing our service!</p>
-            <p>If you have any questions, feel free to <a target="_blank" href="#">contact us</a>.</p>
-        </div>
+@section('title', 'Your Verification Code - ' . config('app.name'))
+
+@section('extra_css')
+<style>
+    .otp-card {
+        background: linear-gradient(135deg, #f8fafc 0%, #eff6ff 100%);
+        border: 2px dashed #2b59ff;
+        border-radius: 14px;
+        padding: 24px;
+        text-align: center;
+        margin: 28px 0;
+    }
+    .otp-code {
+        font-size: 38px;
+        font-weight: 800;
+        letter-spacing: 10px;
+        color: #2b59ff;
+        margin: 8px 0;
+        font-family: 'Courier New', Courier, monospace;
+    }
+    .otp-subtitle {
+        font-size: 13px;
+        color: #64748b;
+        margin-bottom: 0;
+    }
+</style>
+@endsection
+
+@section('content')
+    <h1>Verify Your Account</h1>
+    <p>Thank you for registering with <strong>{{ config('app.name') }}</strong>! To complete your verification process, please use the following One-Time Password (OTP):</p>
+    
+    <div class="otp-card">
+        <div class="otp-code">{{ $otp }}</div>
+        <p class="otp-subtitle">Valid for a short period. Do not share this code with anyone.</p>
     </div>
-</body>
-</html>
+
+    <p>If you did not request this OTP, please ignore this message or contact support if you suspect unauthorized activity.</p>
+    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+@endsection

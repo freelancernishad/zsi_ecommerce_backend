@@ -1,31 +1,22 @@
-<!DOCTYPE html>
-<html>
-<head>
-    <meta charset="UTF-8">
-    <title>Registration Successful</title>
-</head>
-<body style="font-family: Arial, sans-serif; background-color: #f9f9f9; padding: 20px;">
-    <div style="max-width: 600px; margin: 0 auto; background-color: white; padding: 30px; border-radius: 8px; box-shadow: 0 0 10px rgba(0,0,0,0.1);">
-        <h2 style="color: #2c3e50;">🎉 Welcome, {{ $name }}!</h2>
+@extends('emails.layout')
 
-        <p style="font-size: 16px; color: #333;">
-            We’re excited to have you on board. Your registration was <strong>successful</strong>.
-        </p>
+@section('title', 'Welcome to ' . config('app.name'))
 
-        <p style="font-size: 16px; color: #333;">
-            You can now log in and start using all the features of our platform.
-        </p>
-
-        <hr style="margin: 20px 0;">
-
-        <p style="font-size: 14px; color: #888;">
-            If you have any questions, feel free to contact our support team.
-        </p>
-
-        <p style="font-size: 14px; color: #888;">
-            Thanks,<br>
-            The Team
-        </p>
+@section('content')
+    <div style="text-align: center; margin-bottom: 20px;">
+        <span style="font-size: 40px; display: inline-block; margin-bottom: 8px;">🎉</span>
+        <h1>Welcome, {{ $name }}!</h1>
     </div>
-</body>
-</html>
+
+    <p>We're excited to have you on board! Your account registration on <strong>{{ config('app.name') }}</strong> was completed successfully.</p>
+
+    <p>You can now log in to explore all the features, services, and products available on our platform.</p>
+
+    <div class="btn-container">
+        <a href="{{ config('app.url') }}" class="btn-primary">Explore Platform</a>
+    </div>
+
+    <p>If you have any questions or need assistance, our support team is always here to help.</p>
+
+    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+@endsection
