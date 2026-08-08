@@ -42,6 +42,11 @@ class UserController extends Controller
         ]);
     }
 
+    public function updateProfile(UserUpdateProfileRequest $request)
+    {
+        return $this->update($request);
+    }
+
     public function updateProfilePicture(UserUpdateProfilePictureRequest $request)
     {
         $user = $request->user();
