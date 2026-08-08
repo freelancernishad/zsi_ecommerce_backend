@@ -28,9 +28,10 @@ class CartController extends Controller
                     $availableStock = $item->product->stock_quantity;
                 }
                 
+                $continueSelling = (bool)($item->product->continue_selling ?? false);
                 $item->available_stock = $availableStock;
-                $item->is_out_of_stock = $availableStock <= 0;
-                $item->has_insufficient_stock = $availableStock < $item->quantity;
+                $item->is_out_of_stock = ($availableStock <= 0) && !$continueSelling;
+                $item->has_insufficient_stock = ($availableStock < $item->quantity) && !$continueSelling;
                 return $item;
             });
         

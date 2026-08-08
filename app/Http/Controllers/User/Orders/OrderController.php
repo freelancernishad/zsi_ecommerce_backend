@@ -125,13 +125,17 @@ class OrderController extends Controller
 
                     if (isset($item['variant_id']) && $item['variant_id']) {
                         $variant = ProductVariant::findOrFail($item['variant_id']);
-                        if ($variant->available_quantity < $quantity) {
-                            throw new \Exception("Product variant '{$variant->combination_label}' is out of stock or does not have enough quantity.");
+                        if (!$product->continue_selling) {
+                            if ($variant->available_quantity < $quantity) {
+                                throw new \Exception("Product variant '{$variant->combination_label}' is out of stock or does not have enough quantity.");
+                            }
                         }
                         $variant->decrement('available_quantity', $quantity);
                     } else {
-                        if ($product->stock_quantity < $quantity) {
-                            throw new \Exception("Product '{$product->name}' is out of stock or does not have enough quantity.");
+                        if (!$product->continue_selling) {
+                            if ($product->stock_quantity < $quantity) {
+                                throw new \Exception("Product '{$product->name}' is out of stock or does not have enough quantity.");
+                            }
                         }
                         $product->decrement('stock_quantity', $quantity);
                     }

@@ -4,10 +4,11 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Factories\HasFactory;
 use Illuminate\Database\Eloquent\Model;
+use Illuminate\Database\Eloquent\SoftDeletes;
 
 class Product extends Model
 {
-    use HasFactory;
+    use HasFactory, SoftDeletes;
 
     protected $casts = [
         'tags' => 'json',
@@ -85,5 +86,15 @@ class Product extends Model
     public function categories()
     {
         return $this->belongsToMany(Category::class, 'category_product');
+    }
+
+    protected static function booted()
+    {
+        static::deleted(function ($product) {
+            $product->variants()->delete();
+        });
+        static::restored(function ($product) {
+            $product->variants()->restore();
+        });
     }
 }
