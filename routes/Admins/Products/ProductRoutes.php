@@ -21,4 +21,5 @@ Route::prefix('admin/products')->middleware(AuthenticateAdmin::class)->group(fun
     // Bulk actions
     Route::post('/bulk-status', [ProductController::class, 'bulkUpdateStatus']);
     Route::post('/bulk-delete', [ProductController::class, 'bulkDestroy']);
+    Route::post('/bulk-category', [ProductController::class, 'bulkAssignCategory']);
 });

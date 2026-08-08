@@ -311,4 +311,24 @@ class ProductController extends Controller
             'message' => count($request->product_ids) . ' products deleted successfully'
         ]);
     }
+
+    public function bulkAssignCategory(Request $request)
+    {
+        $request->validate([
+            'product_ids' => 'required|array',
+            'product_ids.*' => 'integer|exists:products,id',
+            'category_id' => 'required|integer|exists:categories,id',
+        ]);
+
+        Product::whereIn('id', $request->product_ids)->update([
+            'category_id' => $request->category_id,
+            'sub_category_id' => null,
+            'sub_sub_category_id' => null,
+        ]);
+
+        return response()->json([
+            'status' => 'success',
+            'message' => count($request->product_ids) . ' products assigned to category successfully.'
+        ]);
+    }
 }

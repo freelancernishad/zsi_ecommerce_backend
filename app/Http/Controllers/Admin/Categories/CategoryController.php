@@ -94,7 +94,7 @@ class CategoryController extends Controller
 
         $category = Category::create([
             'name' => $request->name,
-            'slug' => Str::slug($request->name) . '-' . time(),
+            'slug' => $this->generateUniqueSlug($request->name, $request->parent_id),
             'description' => $request->description,
             'image' => $imagePath,
             'parent_id' => $request->parent_id,
@@ -148,7 +148,7 @@ class CategoryController extends Controller
         ]);
 
         if ($request->has('name')) {
-            $category->slug = Str::slug($request->name) . '-' . time();
+            $category->slug = $this->generateUniqueSlug($request->name, $request->get('parent_id', $category->parent_id), $category->id);
         }
 
         $category->update($request->only(['name', 'description', 'image', 'parent_id', 'status', 'show_on_home', 'home_order']));
@@ -213,5 +213,39 @@ class CategoryController extends Controller
             $ids = array_merge($ids, $this->getAllDescendantIds($childId));
         }
         return $ids;
+    }
+
+    private function generateUniqueSlug($name, $parentId = null, $ignoreId = null)
+    {
+        $slug = Str::slug($name);
+        
+        $query = Category::where('slug', $slug);
+        if ($ignoreId) {
+            $query->where('id', '!=', $ignoreId);
+        }
+        
+        if ($query->exists() && $parentId) {
+            $parent = Category::find($parentId);
+            if ($parent) {
+                $slug = Str::slug($parent->name . ' ' . $name);
+            }
+        }
+        
+        $originalSlug = $slug;
+        $count = 1;
+
+        while (true) {
+            $query = Category::where('slug', $slug);
+            if ($ignoreId) {
+                $query->where('id', '!=', $ignoreId);
+            }
+            if (!$query->exists()) {
+                break;
+            }
+            $slug = $originalSlug . '-' . $count;
+            $count++;
+        }
+
+        return $slug;
     }
 }
