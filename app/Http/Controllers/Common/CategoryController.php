@@ -12,7 +12,13 @@ class CategoryController extends Controller
     {
         $categories = Category::where('status', 'active')
             ->whereNull('parent_id')
-            ->with('children')
+            ->with(['children' => function ($query) {
+                $query->where('status', 'active')
+                    ->orderBy('home_order', 'asc')
+                    ->orderBy('created_at', 'desc');
+            }])
+            ->orderBy('home_order', 'asc')
+            ->orderBy('created_at', 'desc')
             ->get();
 
         return response()->json([
