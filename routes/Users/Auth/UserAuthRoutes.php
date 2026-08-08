@@ -26,6 +26,8 @@ Route::prefix('auth/user')->group(function () {
 // Password reset routes
 Route::post('user/password/email', [UserPasswordResetController::class, 'sendResetLinkEmail']);
 Route::post('user/password/reset', [UserPasswordResetController::class, 'reset']);
+Route::post('user/password/otp/send', [UserPasswordResetController::class, 'sendOtp']);
+Route::post('user/password/otp/reset', [UserPasswordResetController::class, 'verifyOtpAndReset']);
 
 Route::post('/verify-otp', [VerificationController::class, 'verifyOtp']);
 Route::post('/resend/otp', [VerificationController::class, 'resendOtp']);

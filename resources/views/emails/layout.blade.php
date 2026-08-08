@@ -3,13 +3,13 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>@yield('title', config('app.name'))</title>
+    <title>@yield('title', $storeName ?? config('app.name'))</title>
     <style>
         /* Global & Reset Styles */
         body {
             font-family: 'Segoe UI', -apple-system, BlinkMacSystemFont, Roboto, Helvetica, Arial, sans-serif;
-            background-color: #f1f5f9;
-            color: #374151;
+            background-color: #f8fafc;
+            color: #334155;
             margin: 0;
             padding: 0;
             -webkit-text-size-adjust: none;
@@ -27,7 +27,7 @@
         /* Container & Cards */
         .email-wrapper {
             width: 100%;
-            background-color: #f1f5f9;
+            background-color: #f8fafc;
             padding: 40px 15px;
         }
         .email-card {
@@ -43,28 +43,11 @@
         /* Header & Masthead */
         .email-header {
             background-color: #ffffff;
-            padding: 28px 32px 20px 32px;
+            padding: 28px 32px;
             text-align: center;
-            border-bottom: 1px solid #f1f5f9;
+            border-bottom: 2px solid #eab308;
         }
-        .brand-logo-text {
-            font-size: 24px;
-            font-weight: 800;
-            color: #2b59ff;
-            text-decoration: none;
-            letter-spacing: -0.5px;
-        }
-        .brand-badge {
-            display: inline-block;
-            background: linear-gradient(135deg, #2b59ff 0%, #1d4ed8 100%);
-            color: #ffffff;
-            padding: 6px 16px;
-            border-radius: 9999px;
-            font-size: 14px;
-            font-weight: 700;
-            letter-spacing: 0.5px;
-        }
-
+        
         /* Body Content */
         .email-body {
             padding: 32px;
@@ -85,7 +68,7 @@
             margin-top: 0;
             margin-bottom: 20px;
         }
-
+ 
         /* Highlight & Info Box */
         .info-box {
             background-color: #f8fafc;
@@ -111,7 +94,7 @@
             font-weight: 700;
             color: #0f172a;
         }
-
+ 
         /* Buttons */
         .btn-container {
             text-align: center;
@@ -119,32 +102,39 @@
         }
         .btn-primary {
             display: inline-block;
-            background-color: #2b59ff;
+            background-color: #eab308;
             color: #ffffff !important;
             font-size: 15px;
-            font-weight: 600;
+            font-weight: 700;
             text-decoration: none;
             padding: 13px 32px;
             border-radius: 10px;
-            box-shadow: 0 4px 14px rgba(43, 89, 255, 0.3);
+            box-shadow: 0 4px 14px rgba(234, 179, 8, 0.3);
             transition: all 0.2s ease;
         }
-
+        .btn-primary:hover {
+            background-color: #ca8a04;
+        }
+ 
         /* Footer */
         .email-footer {
             background-color: #f8fafc;
             border-top: 1px solid #f1f5f9;
-            padding: 24px 32px;
+            padding: 28px 32px;
             text-align: center;
         }
         .email-footer p {
             font-size: 13px;
-            color: #94a3b8;
+            color: #64748b;
             margin-bottom: 6px;
         }
         .email-footer a {
-            color: #2b59ff;
+            color: #d97706;
             text-decoration: none;
+            font-weight: 600;
+        }
+        .email-footer a:hover {
+            text-decoration: underline;
         }
     </style>
     @yield('extra_css')
@@ -154,9 +144,15 @@
         <div class="email-card">
             <!-- Header -->
             <div class="email-header">
-                <a href="{{ config('app.url') }}" class="brand-logo-text">
-                    {{ config('app.name', 'App') }}
-                </a>
+                @if(!empty($logoUrl))
+                    <a href="{{ $resetUrl ?? '#' }}" style="display: inline-block; text-decoration: none;">
+                        <img src="{{ $logoUrl }}" alt="{{ $storeName ?? config('app.name') }}" style="height: 45px; width: auto; display: block; margin: 0 auto;" />
+                    </a>
+                @else
+                    <a href="{{ $resetUrl ?? '#' }}" style="font-size: 24px; font-weight: 800; color: #eab308; text-decoration: none; letter-spacing: -0.5px;">
+                        {{ $storeName ?? config('app.name') }}
+                    </a>
+                @endif
             </div>
 
             <!-- Main Body -->
@@ -166,8 +162,21 @@
 
             <!-- Footer -->
             <div class="email-footer">
-                <p>&copy; {{ date('Y') }} {{ config('app.name', 'App') }}. All rights reserved.</p>
-                <p>If you have any questions, feel free to <a href="mailto:support@{{ parse_url(config('app.url'), PHP_URL_HOST) ?? 'example.com' }}">contact support</a>.</p>
+                @if(!empty($storeAddress))
+                    <p style="margin-bottom: 5px;">{{ $storeAddress }}</p>
+                @endif
+                <p style="margin-bottom: 5px;">
+                    @if(!empty($supportPhone))
+                        Phone: {{ $supportPhone }}
+                    @endif
+                    @if(!empty($supportPhone) && !empty($supportEmail))
+                        &bull;
+                    @endif
+                    @if(!empty($supportEmail))
+                        Email: <a href="mailto:{{ $supportEmail }}">{{ $supportEmail }}</a>
+                    @endif
+                </p>
+                <p style="margin-top: 15px; font-size: 12px; color: #94a3b8;">&copy; {{ date('Y') }} {{ $storeName ?? config('app.name') }}. All rights reserved.</p>
             </div>
         </div>
     </div>
