@@ -72,6 +72,10 @@ class ProductController extends Controller
             $query->where('status', $status);
         }
 
+        if ($request->has('category_id') && $request->get('category_id') !== null && $request->get('category_id') !== '') {
+            $query->where('category_id', $request->get('category_id'));
+        }
+
         if ($search) {
             $query->where(function ($q) use ($search) {
                 $q->where('name', 'like', "%{$search}%")

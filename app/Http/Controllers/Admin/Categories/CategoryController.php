@@ -186,7 +186,32 @@ class CategoryController extends Controller
     public function destroy($id)
     {
         $category = Category::findOrFail($id);
-        $category->delete();
-        return response()->json(['status' => 'success', 'message' => 'Category deleted successfully']);
+
+        \Illuminate\Support\Facades\DB::transaction(function () use ($category) {
+            // 1. Get all descendant IDs
+            $descendantIds = $this->getAllDescendantIds($category->id);
+            $allIds = array_merge([$category->id], $descendantIds);
+
+            // 2. Set category references to null in products
+            \App\Models\Product::whereIn('category_id', $allIds)->update(['category_id' => null]);
+            \App\Models\Product::whereIn('sub_category_id', $allIds)->update(['sub_category_id' => null]);
+            \App\Models\Product::whereIn('sub_sub_category_id', $allIds)->update(['sub_sub_category_id' => null]);
+
+            // 3. Delete categories
+            Category::whereIn('id', $allIds)->delete();
+        });
+
+        return response()->json(['status' => 'success', 'message' => 'Category and its subcategories deleted successfully']);
+    }
+
+    private function getAllDescendantIds($parentId)
+    {
+        $ids = [];
+        $childrenIds = Category::where('parent_id', $parentId)->pluck('id')->toArray();
+        foreach ($childrenIds as $childId) {
+            $ids[] = (int) $childId;
+            $ids = array_merge($ids, $this->getAllDescendantIds($childId));
+        }
+        return $ids;
     }
 }
