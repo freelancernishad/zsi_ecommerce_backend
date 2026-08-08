@@ -11,6 +11,10 @@ class Review extends Model
 
     protected $fillable = ['user_id', 'product_id', 'rating', 'comment', 'images', 'status'];
     
+    protected $casts = [
+        'images' => 'array',
+    ];
+    
     protected static function booted()
     {
         static::saved(function ($review) {

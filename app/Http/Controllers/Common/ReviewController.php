@@ -36,7 +36,7 @@ class ReviewController extends Controller
         $validator = Validator::make($request->all(), [
             'product_id' => 'required|exists:products,id',
             'rating' => 'required|integer|min:1|max:5',
-            'comment' => 'required|string|max:1000',
+            'comment' => 'nullable|string|max:1000',
             'images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
         ]);
 
@@ -61,7 +61,7 @@ class ReviewController extends Controller
                 'rating' => $request->rating,
                 'comment' => $request->comment,
                 'images' => $imageUrls,
-                'status' => 'published', // Automatically publish for now, can add moderation later
+                'status' => 'active', // Automatically active for now, can add moderation later
             ]);
 
             return response()->json([
