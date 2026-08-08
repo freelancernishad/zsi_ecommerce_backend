@@ -55,12 +55,25 @@ class CategoryController extends Controller
             }
 
             // Recursive Product Count
-            $category->products_count = \App\Models\Product::whereIn('category_id', $allCategoryIds)->count();
+            $category->products_count = \App\Models\Product::where(function ($q) use ($allCategoryIds) {
+                $q->whereIn('category_id', $allCategoryIds)
+                  ->orWhereHas('categories', function ($sq) use ($allCategoryIds) {
+                      $sq->whereIn('categories.id', $allCategoryIds);
+                  });
+            })->count();
 
             // Recursive Total Sales
             $totalSale = \Illuminate\Support\Facades\DB::table('order_items')
                 ->join('products', 'order_items.product_id', '=', 'products.id')
-                ->whereIn('products.category_id', $allCategoryIds)
+                ->where(function ($q) use ($allCategoryIds) {
+                    $q->whereIn('products.category_id', $allCategoryIds)
+                      ->orWhereExists(function ($sq) use ($allCategoryIds) {
+                          $sq->select(\Illuminate\Support\Facades\DB::raw(1))
+                            ->from('category_product')
+                            ->whereColumn('category_product.product_id', 'products.id')
+                            ->whereIn('category_product.category_id', $allCategoryIds);
+                      });
+                })
                 ->sum(\Illuminate\Support\Facades\DB::raw('order_items.quantity * order_items.price'));
             
             $category->total_sales = $totalSale ?: 0;
@@ -109,8 +122,8 @@ class CategoryController extends Controller
     public function show($idOrSlug)
     {
         $query = Category::with(['children' => function($query) {
-            $query->withCount('products')->with(['children' => function($q) {
-                $q->withCount('products');
+            $query->withCount('allProducts as products_count')->with(['children' => function($q) {
+                $q->withCount('allProducts as products_count');
             }]);
         }]);
 
@@ -196,6 +209,9 @@ class CategoryController extends Controller
             \App\Models\Product::whereIn('category_id', $allIds)->update(['category_id' => null]);
             \App\Models\Product::whereIn('sub_category_id', $allIds)->update(['sub_category_id' => null]);
             \App\Models\Product::whereIn('sub_sub_category_id', $allIds)->update(['sub_sub_category_id' => null]);
+
+            // Clean up pivot table associations
+            \Illuminate\Support\Facades\DB::table('category_product')->whereIn('category_id', $allIds)->delete();
 
             // 3. Delete categories
             Category::whereIn('id', $allIds)->delete();
