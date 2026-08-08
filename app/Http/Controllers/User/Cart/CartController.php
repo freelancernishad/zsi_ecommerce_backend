@@ -12,6 +12,11 @@ class CartController extends Controller
 {
     public function index()
     {
+        // Automatically remove cart items where the corresponding product has been deleted
+        Cart::where('user_id', Auth::id())
+            ->whereDoesntHave('product')
+            ->delete();
+
         $cartItems = Cart::where('user_id', Auth::id())
             ->with(['product.images', 'product.category', 'variant'])
             ->get();

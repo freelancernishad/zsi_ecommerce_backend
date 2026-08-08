@@ -277,7 +277,14 @@ class ProductController extends Controller
     public function destroy($id)
     {
         $product = Product::findOrFail($id);
-        $product->delete(); // Cascades will handle images/variants if defined in migration
+        
+        DB::transaction(function () use ($product) {
+            // Delete related cart items
+            \App\Models\Cart::where('product_id', $product->id)->delete();
+            
+            $product->delete();
+        });
+
         return response()->json(['status' => 'success', 'message' => 'Product deleted successfully']);
     }
 
@@ -304,7 +311,12 @@ class ProductController extends Controller
             'product_ids.*' => 'integer|exists:products,id',
         ]);
 
-        Product::destroy($request->product_ids);
+        DB::transaction(function () use ($request) {
+            // Delete related cart items
+            \App\Models\Cart::whereIn('product_id', $request->product_ids)->delete();
+            
+            Product::destroy($request->product_ids);
+        });
 
         return response()->json([
             'status' => 'success',
