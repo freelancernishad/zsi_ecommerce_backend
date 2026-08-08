@@ -33,7 +33,13 @@ class ProductController extends Controller
                 foreach ($categories as $cat) {
                     $allCategoryIds = array_merge($allCategoryIds, $this->getCategoryIdsRecursive($cat));
                 }
-                $query->whereIn('category_id', array_unique($allCategoryIds));
+                $catIds = array_unique($allCategoryIds);
+                $query->where(function($q) use ($catIds) {
+                    $q->whereIn('category_id', $catIds)
+                      ->orWhereHas('categories', function($sq) use ($catIds) {
+                          $sq->whereIn('categories.id', $catIds);
+                      });
+                });
             } else {
                 $query->whereRaw('1 = 0');
             }

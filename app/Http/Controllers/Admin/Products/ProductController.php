@@ -73,7 +73,13 @@ class ProductController extends Controller
         }
 
         if ($request->has('category_id') && $request->get('category_id') !== null && $request->get('category_id') !== '') {
-            $query->where('category_id', $request->get('category_id'));
+            $catId = $request->get('category_id');
+            $query->where(function ($q) use ($catId) {
+                $q->where('category_id', $catId)
+                  ->orWhereHas('categories', function ($sq) use ($catId) {
+                      $sq->where('categories.id', $catId);
+                  });
+            });
         }
 
         if ($search) {
@@ -111,6 +117,8 @@ class ProductController extends Controller
             'size_guide' => 'nullable|string',
             'shipping_policy' => 'nullable|string',
             'return_policy' => 'nullable|string',
+            'category_ids' => 'nullable|array',
+            'category_ids.*' => 'integer|exists:categories,id',
         ]);
 
         return DB::transaction(function () use ($request) {
@@ -176,13 +184,25 @@ class ProductController extends Controller
                 }
             }
 
-            return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants'])]);
+            // Sync categories
+            $allCategoryIds = [];
+            if ($request->category_id) $allCategoryIds[] = (int)$request->category_id;
+            if ($request->sub_category_id) $allCategoryIds[] = (int)$request->sub_category_id;
+            if ($request->sub_sub_category_id) $allCategoryIds[] = (int)$request->sub_sub_category_id;
+            if ($request->has('category_ids') && is_array($request->category_ids)) {
+                $allCategoryIds = array_merge($allCategoryIds, array_map('intval', $request->category_ids));
+            }
+            $allCategoryIds = array_unique($allCategoryIds);
+            
+            $product->categories()->sync($allCategoryIds);
+
+            return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants', 'categories'])]);
         });
     }
 
     public function show($id)
     {
-        $product = Product::with(['category', 'images', 'variants', 'reviews.user'])->findOrFail($id);
+        $product = Product::with(['category', 'categories', 'images', 'variants', 'reviews.user'])->findOrFail($id);
         return response()->json(['status' => 'success', 'data' => $product]);
     }
 
@@ -270,7 +290,26 @@ class ProductController extends Controller
                 }
             }
 
-            return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants'])]);
+            // Sync categories on update
+            if ($request->has('category_ids') || $request->has('category_id') || $request->has('sub_category_id') || $request->has('sub_sub_category_id')) {
+                $allCategoryIds = [];
+                $primaryCatId = $request->has('category_id') ? $request->category_id : $product->category_id;
+                $subCatId = $request->has('sub_category_id') ? $request->sub_category_id : $product->sub_category_id;
+                $subSubCatId = $request->has('sub_sub_category_id') ? $request->sub_sub_category_id : $product->sub_sub_category_id;
+                
+                if ($primaryCatId) $allCategoryIds[] = (int)$primaryCatId;
+                if ($subCatId) $allCategoryIds[] = (int)$subCatId;
+                if ($subSubCatId) $allCategoryIds[] = (int)$subSubCatId;
+                
+                if ($request->has('category_ids') && is_array($request->category_ids)) {
+                    $allCategoryIds = array_merge($allCategoryIds, array_map('intval', $request->category_ids));
+                }
+                
+                $allCategoryIds = array_unique($allCategoryIds);
+                $product->categories()->sync($allCategoryIds);
+            }
+
+            return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants', 'categories'])]);
         });
     }
 
@@ -329,18 +368,45 @@ class ProductController extends Controller
         $request->validate([
             'product_ids' => 'required|array',
             'product_ids.*' => 'integer|exists:products,id',
-            'category_id' => 'required|integer|exists:categories,id',
+            'category_id' => 'nullable|integer|exists:categories,id',
+            'category_ids' => 'nullable|array',
+            'category_ids.*' => 'integer|exists:categories,id',
         ]);
 
-        Product::whereIn('id', $request->product_ids)->update([
-            'category_id' => $request->category_id,
-            'sub_category_id' => null,
-            'sub_sub_category_id' => null,
-        ]);
+        $categoryIds = [];
+        if ($request->has('category_ids') && is_array($request->category_ids)) {
+            $categoryIds = array_map('intval', $request->category_ids);
+        } elseif ($request->category_id) {
+            $categoryIds = [(int)$request->category_id];
+        }
+
+        if (empty($categoryIds)) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'No categories provided.'
+            ], 422);
+        }
+
+        $primaryCategoryId = $categoryIds[0];
+
+        DB::transaction(function () use ($request, $categoryIds, $primaryCategoryId) {
+            Product::whereIn('id', $request->product_ids)->update([
+                'category_id' => $primaryCategoryId,
+                'sub_category_id' => null,
+                'sub_sub_category_id' => null,
+            ]);
+
+            foreach ($request->product_ids as $productId) {
+                $product = Product::find($productId);
+                if ($product) {
+                    $product->categories()->sync($categoryIds);
+                }
+            }
+        });
 
         return response()->json([
             'status' => 'success',
-            'message' => count($request->product_ids) . ' products assigned to category successfully.'
+            'message' => count($request->product_ids) . ' products assigned to categories successfully.'
         ]);
     }
 }
