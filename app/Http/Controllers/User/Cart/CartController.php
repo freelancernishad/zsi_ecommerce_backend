@@ -19,7 +19,20 @@ class CartController extends Controller
 
         $cartItems = Cart::where('user_id', Auth::id())
             ->with(['product.images', 'product.category', 'variant'])
-            ->get();
+            ->get()
+            ->map(function ($item) {
+                $availableStock = 0;
+                if ($item->variant_id && $item->variant) {
+                    $availableStock = $item->variant->available_quantity;
+                } elseif ($item->product) {
+                    $availableStock = $item->product->stock_quantity;
+                }
+                
+                $item->available_stock = $availableStock;
+                $item->is_out_of_stock = $availableStock <= 0;
+                $item->has_insufficient_stock = $availableStock < $item->quantity;
+                return $item;
+            });
         
         return response()->json(['status' => 'success', 'data' => $cartItems]);
     }
