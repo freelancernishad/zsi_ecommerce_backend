@@ -224,14 +224,25 @@ class ProductImportController extends Controller
                     $rawQty     = $this->getValue($r, $headerMap, 'Variant Inventory Qty');
                     $sku        = $this->getValue($r, $headerMap, 'Variant SKU');
 
-                    $price = $rawPrice;
-                    if ($priceMarkup > 0 && $price > 0) {
-                        $price = round($price * (1 + ($priceMarkup / 100)), 2);
+                    $varSellingPrice = $rawPrice;
+                    if ($priceMarkup > 0 && $varSellingPrice > 0) {
+                        $varSellingPrice = round($varSellingPrice * (1 + ($priceMarkup / 100)), 2);
                     }
 
-                    $comparePrice = $rawCompare;
-                    if ($priceMarkup > 0 && $comparePrice > 0) {
-                        $comparePrice = round($comparePrice * (1 + ($priceMarkup / 100)), 2);
+                    $varComparePrice = $rawCompare;
+                    if ($priceMarkup > 0 && $varComparePrice > 0) {
+                        $varComparePrice = round($varComparePrice * (1 + ($priceMarkup / 100)), 2);
+                    }
+
+                    // Shopify Pricing Logic:
+                    // - 'Variant Compare At Price' is the higher original/regular price
+                    // - 'Variant Price' is the lower selling/sale price
+                    if ($varComparePrice > $varSellingPrice && $varSellingPrice > 0) {
+                        $regularPrice = $varComparePrice;
+                        $salePrice    = $varSellingPrice;
+                    } else {
+                        $regularPrice = $varSellingPrice;
+                        $salePrice    = null;
                     }
 
                     $qty = (is_numeric($rawQty) && (int)$rawQty > 0) ? (int)$rawQty : $defaultStock;
@@ -240,8 +251,8 @@ class ProductImportController extends Controller
                     if (!empty($rowOptValues) || $sku || $rawPrice > 0) {
                         $variantRows[] = [
                             'combination_label' => implode(' / ', $rowOptParts),
-                            'price'             => $price,
-                            'discount_price'    => $comparePrice > 0 ? $comparePrice : null,
+                            'price'             => $regularPrice,
+                            'discount_price'    => $salePrice,
                             'sku'               => $sku ?: ($key . '-' . (count($variantRows) + 1)),
                             'available_quantity'=> $qty,
                             'stock'             => $qty,
@@ -252,8 +263,9 @@ class ProductImportController extends Controller
                 }
 
                 // Base Product Price & Sale Price
-                $basePrice     = count($variantRows) > 0 ? $variantRows[0]['price'] : 0;
-                $baseSalePrice = count($variantRows) > 0 ? $variantRows[0]['discount_price'] : null;
+                $basePrice         = count($variantRows) > 0 ? $variantRows[0]['price'] : 0;
+                $baseSalePrice     = count($variantRows) > 0 ? $variantRows[0]['discount_price'] : null;
+                $baseOriginalPrice = $baseSalePrice ? $basePrice : null;
 
                 // Build variant_options JSON
                 $variantOptionsFormatted = [];
@@ -289,7 +301,7 @@ class ProductImportController extends Controller
                         'short_description' => Str::limit(strip_tags($bodyHtml), 150),
                         'price'             => $basePrice,
                         'sale_price'        => $baseSalePrice,
-                        'original_price'    => $baseSalePrice,
+                        'original_price'    => $baseOriginalPrice,
                         'stock_quantity'    => $totalStock,
                         'category_id'       => $categoryId ?: $product->category_id,
                         'status'            => $forcedStatus ?: ($published ? 'published' : 'draft'),
@@ -320,7 +332,7 @@ class ProductImportController extends Controller
                         'short_description' => Str::limit(strip_tags($bodyHtml), 150),
                         'price'             => $basePrice,
                         'sale_price'        => $baseSalePrice,
-                        'original_price'    => $baseSalePrice,
+                        'original_price'    => $baseOriginalPrice,
                         'stock_quantity'    => $totalStock,
                         'sku'               => $mainSku,
                         'category_id'       => $categoryId,
