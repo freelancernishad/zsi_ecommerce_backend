@@ -399,6 +399,44 @@ class ProductImportController extends Controller
         }
     }
 
+    public function fixInvertedPrices()
+    {
+        return DB::transaction(function () {
+            $products = Product::whereNotNull('sale_price')->whereColumn('sale_price', '>', 'price')->get();
+            $fixedProductsCount = 0;
+            foreach ($products as $p) {
+                $oldPrice = $p->price;
+                $oldSale  = $p->sale_price;
+                $p->price = $oldSale;
+                $p->sale_price = $oldPrice;
+                $p->original_price = $oldSale;
+                $p->save();
+                $fixedProductsCount++;
+            }
+
+            $variants = ProductVariant::whereNotNull('discount_price')->whereColumn('discount_price', '>', 'price')->get();
+            $fixedVariantsCount = 0;
+            foreach ($variants as $v) {
+                $oldPrice = $v->price;
+                $oldDiscount = $v->discount_price;
+                $v->price = $oldDiscount;
+                $v->discount_price = $oldPrice;
+                $v->save();
+                $fixedVariantsCount++;
+            }
+
+            return response()->json([
+                'isError' => false,
+                'status'  => 'success',
+                'message' => "Successfully fixed {$fixedProductsCount} products and {$fixedVariantsCount} variants pricing.",
+                'data'    => [
+                    'fixed_products' => $fixedProductsCount,
+                    'fixed_variants' => $fixedVariantsCount,
+                ],
+            ]);
+        });
+    }
+
     private function getValue(array $row, array $headerMap, string $columnName): ?string
     {
         if (isset($headerMap[$columnName])) {

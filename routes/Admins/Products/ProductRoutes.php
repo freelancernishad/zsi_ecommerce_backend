@@ -8,6 +8,7 @@ Route::prefix('admin/products')->middleware(AuthenticateAdmin::class)->group(fun
     Route::get('/', [ProductController::class, 'index']);
     Route::post('/', [ProductController::class, 'store']);
     Route::post('/import-shopify', [ProductImportController::class, 'importShopify']);
+    Route::post('/fix-inverted-prices', [ProductImportController::class, 'fixInvertedPrices']);
 
     // Inventory Management
     Route::get('/inventory', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'index']);
