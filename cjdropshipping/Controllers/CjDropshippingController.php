@@ -104,6 +104,42 @@ class CjDropshippingController extends Controller
     }
 
     /**
+     * Bulk import multiple CJ products to local Laravel database in a single API call.
+     */
+    public function bulkImport(Request $request)
+    {
+        $request->validate([
+            'cj_product_ids' => 'required|array|min:1',
+            'cj_product_ids.*' => 'required|string',
+            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'category_id' => 'nullable|exists:categories,id',
+        ]);
+
+        $cjProductIds = $request->input('cj_product_ids');
+        $profitMargin = (float) $request->input('profit_margin_percent', 20);
+        $categoryId = $request->input('category_id');
+
+        try {
+            $result = $this->cjImportService->bulkImportCjProducts(
+                $cjProductIds,
+                $profitMargin,
+                $categoryId ? (int) $categoryId : null
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => "Successfully imported {$result['successful']} of {$result['total']} products to store!",
+                'data' => $result,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Calculate shipping rate for a variant to a destination country.
      */
     public function calculateShipping(Request $request)

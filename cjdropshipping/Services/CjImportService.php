@@ -20,6 +20,41 @@ class CjImportService
     }
 
     /**
+     * Bulk import multiple CJ Products into Laravel MySQL Database in a single call.
+     */
+    public function bulkImportCjProducts(array $cjProductIds, float $profitMarginPercent = 20.0, ?int $categoryId = null): array
+    {
+        $importedProducts = [];
+        $errors = [];
+
+        foreach ($cjProductIds as $pid) {
+            try {
+                $product = $this->importCjProduct($pid, $profitMarginPercent, $categoryId);
+                $importedProducts[] = [
+                    'pid' => $pid,
+                    'product_id' => $product->id,
+                    'name' => $product->name,
+                    'sku' => $product->sku,
+                    'price' => $product->price,
+                ];
+            } catch (Exception $e) {
+                $errors[] = [
+                    'pid' => $pid,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        return [
+            'total' => count($cjProductIds),
+            'successful' => count($importedProducts),
+            'failed' => count($errors),
+            'imported_products' => $importedProducts,
+            'errors' => $errors,
+        ];
+    }
+
+    /**
      * Import or update a CJ Product into Laravel MySQL Database.
      */
     public function importCjProduct(string $cjProductId, float $profitMarginPercent = 20.0, ?int $categoryId = null): Product

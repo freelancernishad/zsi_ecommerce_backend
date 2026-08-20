@@ -8,6 +8,7 @@ Route::prefix('api/admin/cj')->middleware(AuthenticateAdmin::class)->group(funct
     Route::get('/search', [CjDropshippingController::class, 'search']);
     Route::get('/product/{pid}', [CjDropshippingController::class, 'detail']);
     Route::post('/import', [CjDropshippingController::class, 'import']);
+    Route::post('/bulk-import', [CjDropshippingController::class, 'bulkImport']);
     Route::post('/shipping-calculate', [CjDropshippingController::class, 'calculateShipping']);
     Route::post('/orders/{orderId}/fulfill', [CjDropshippingController::class, 'fulfillOrder']);
 });
