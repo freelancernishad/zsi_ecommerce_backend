@@ -51,6 +51,11 @@ class Product extends Model
         'size_guide',
         'shipping_policy',
         'return_policy',
+        'cj_product_id',
+        'cj_spu',
+        'is_cj_product',
+        'cj_delivery_cycle',
+        'cj_synced_at',
     ];
 
     public function brand()

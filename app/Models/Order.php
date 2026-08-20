@@ -19,7 +19,8 @@ class Order extends Model
         'shipping_phone', 'shipping_country', 'shipping_street_address', 
         'shipping_city', 'shipping_state', 'shipping_zip_code',
         'payment_status', 'fulfillment_status', 'delivery_status',
-        'courier_name', 'tracking_number', 'tracking_url', 'shipped_at'
+        'courier_name', 'tracking_number', 'tracking_url', 'shipped_at',
+        'cj_order_id', 'cj_order_status', 'cj_tracking_number'
     ];
 
     public function user()

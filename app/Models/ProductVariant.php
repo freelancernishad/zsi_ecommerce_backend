@@ -20,7 +20,10 @@ class ProductVariant extends Model
         'stock',
         'color', 
         'size', 
-        'price_adjustment'
+        'price_adjustment',
+        'cj_vid',
+        'cj_variant_sku',
+        'cj_weight'
     ];
 
     public function product()
