@@ -58,6 +58,9 @@ class CjImportService
                 }
             }
 
+            // Build JSON variant options array for storefront selectors
+            $variantOptions = $this->buildVariantOptions($cjData);
+
             // Create or Update Product
             $product = Product::updateOrCreate(
                 ['cj_product_id' => $cjData['pid']],
@@ -76,6 +79,7 @@ class CjImportService
                     'status' => 'published',
                     'weight' => (float) ($cjData['productWeight'] ?? 0),
                     'weight_unit' => $cjData['productUnit'] ?? 'g',
+                    'variant_options' => $variantOptions,
                     'is_physical' => true,
                     'is_cj_product' => true,
                     'cj_spu' => $cjData['productSku'] ?? null,
@@ -114,19 +118,37 @@ class CjImportService
                 // Delete previous variants
                 $product->variants()->delete();
 
+                $productName = trim($cjData['productNameEn'] ?? $cjData['productName'] ?? '');
+
                 foreach ($cjData['variants'] as $v) {
                     $variantCost = $this->parsePrice($v['variantSellPrice'] ?? 0);
                     $variantPrice = round($variantCost * (1 + ($profitMarginPercent / 100)), 2);
                     $vStock = (int) ($v['variantStandardQuantity'] ?? 10);
 
+                    $rawLabel = $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? 'Default Variant';
+                    $cleanLabel = $rawLabel;
+                    if (!empty($productName)) {
+                        $cleanLabel = trim(preg_replace('/^' . preg_quote($productName, '/') . '\s*/i', '', $rawLabel));
+                    }
+
+                    $colorVal = null;
+                    $sizeVal = null;
+
+                    if (preg_match('/^(.*?)\s+(XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $cleanLabel, $m)) {
+                        $colorVal = trim($m[1]);
+                        $sizeVal = strtoupper(trim($m[2]));
+                    }
+
                     ProductVariant::create([
                         'product_id' => $product->id,
-                        'combination_label' => $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? 'Default Variant',
+                        'combination_label' => $cleanLabel,
                         'price' => $variantPrice,
                         'discount_price' => null,
                         'sku' => $v['variantSku'] ?? ($product->sku . '-' . ($v['vid'] ?? Str::random(4))),
                         'stock' => $vStock,
                         'available_quantity' => $vStock,
+                        'color' => $colorVal,
+                        'size' => $sizeVal,
                         'cj_vid' => $v['vid'] ?? null,
                         'cj_variant_sku' => $v['variantSku'] ?? null,
                         'cj_weight' => (float) ($v['variantWeight'] ?? 0),
@@ -136,6 +158,84 @@ class CjImportService
 
             return $product;
         });
+    }
+
+    /**
+     * Build variant_options JSON structure for Product model from CJ API data.
+     */
+    protected function buildVariantOptions(array $cjData): ?array
+    {
+        if (empty($cjData['variants']) || !is_array($cjData['variants'])) {
+            return null;
+        }
+
+        $optionsCollector = [];
+        $productName = trim($cjData['productNameEn'] ?? $cjData['productName'] ?? '');
+
+        // Check if CJ provides explicit option keys, e.g. "Color,Size"
+        $rawKeys = $cjData['variantKeyEn'] ?? $cjData['productKeyEn'] ?? $cjData['variantKey'] ?? $cjData['productKey'] ?? null;
+        $keyNames = [];
+        if ($rawKeys && is_string($rawKeys)) {
+            $keyNames = array_map('trim', preg_split('/[,;\/-]+/', $rawKeys));
+        }
+
+        foreach ($cjData['variants'] as $v) {
+            $label = $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? $v['variantName'] ?? '';
+            if (empty($label)) continue;
+
+            // Strip leading product name if present
+            if (!empty($productName)) {
+                $cleanLabel = trim(preg_replace('/^' . preg_quote($productName, '/') . '\s*/i', '', $label));
+                if (!empty($cleanLabel)) {
+                    $label = $cleanLabel;
+                }
+            }
+
+            // Check if label has key-value pairs like "Color: Black, Size: M"
+            if (str_contains($label, ':')) {
+                $pairs = preg_split('/[,;\n]+/', $label);
+                foreach ($pairs as $p) {
+                    if (str_contains($p, ':')) {
+                        [$k, $val] = explode(':', $p, 2);
+                        $k = trim($k);
+                        $val = trim($val);
+                        if (!empty($k) && !empty($val)) {
+                            $optionsCollector[ucfirst($k)][$val] = true;
+                        }
+                    }
+                }
+            } else if (preg_match('/^(.*?)\s+(XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $label, $matches)) {
+                // Intelligent Color & Size Extractor
+                $color = trim($matches[1]);
+                $size = strtoupper(trim($matches[2]));
+                if (!empty($color)) {
+                    $optionsCollector['Color'][$color] = true;
+                }
+                $optionsCollector['Size'][$size] = true;
+            } else {
+                // Split label by ' / ', '-', ','
+                $parts = array_map('trim', preg_split('/[\/\-,]+/', $label));
+                foreach ($parts as $idx => $part) {
+                    if (empty($part)) continue;
+                    $optName = $keyNames[$idx] ?? (count($parts) === 1 ? 'Option' : ('Option ' . ($idx + 1)));
+                    $optionsCollector[ucfirst($optName)][$part] = true;
+                }
+            }
+        }
+
+        if (empty($optionsCollector)) {
+            return null;
+        }
+
+        $formatted = [];
+        foreach ($optionsCollector as $optName => $valsMap) {
+            $formatted[] = [
+                'name' => ucfirst($optName),
+                'values' => array_values(array_keys($valsMap)),
+            ];
+        }
+
+        return $formatted;
     }
 
     /**
