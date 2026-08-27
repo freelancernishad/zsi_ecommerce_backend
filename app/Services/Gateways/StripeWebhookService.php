@@ -266,7 +266,30 @@ class StripeWebhookService
                 'status' => 'paid', // Explicitly set to 'paid' instead of 'succeeded'
                 'payload' => array_merge($log->payload ?? [], ['webhook_event' => $eventType, 'intent_details' => $paymentIntent->toArray()]),
             ]);
-             Log::info("StripeLog updated for payment intent: {$paymentIntent->id}");
+            Log::info("StripeLog updated for payment intent: {$paymentIntent->id}");
+
+            // Auto sync payment method to DB if user checked saveForFuture
+            $paymentMethodId = is_string($paymentIntent->payment_method) 
+                ? $paymentIntent->payment_method 
+                : ($paymentIntent->payment_method->id ?? null);
+
+            if ($paymentMethodId) {
+                $userId = $log->user_id ?? null;
+                if (!$userId && !empty($paymentIntent->customer)) {
+                    $userId = \App\Models\User::where('stripe_id', $paymentIntent->customer)->value('id');
+                }
+                if ($userId) {
+                    $user = \App\Models\User::find($userId);
+                    if ($user) {
+                        try {
+                            app(StripeService::class)->syncPaymentMethod($user, $paymentMethodId);
+                            Log::info("Synced payment method {$paymentMethodId} for user {$user->id} via payment_intent.succeeded webhook.");
+                        } catch (\Exception $e) {
+                            Log::error("Failed to sync payment method in webhook: " . $e->getMessage());
+                        }
+                    }
+                }
+            }
              
              StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'success', $log->user_id);
         } else {
