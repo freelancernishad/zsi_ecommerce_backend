@@ -1,1 +1,6 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32"><rect width="48" height="32" fill="#fff" rx="4"/><path fill="#F47216" d="M8 12h8c4 0 7 2.5 7 7s-3 7-7 7H8V12zm3 11h5c2.5 0 4-1.5 4-4s-1.5-4-4-4h-5v8zM25 12h3v14h-3V12zM33 21c-.5-1-1.5-2-3-2V16c2.5 0 4.5 1.5 5 4h-2zm3 2v3h-3v-3h3z"/><circle cx="42" cy="19" r="6" fill="#F47216"/><circle cx="42" cy="19" r="4" fill="#FF6D00"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32">
+  <rect width="48" height="32" rx="4" fill="#FFFFFF" stroke="#E2E8F0" stroke-width="1.2"/>
+  <text x="17" y="19" text-anchor="middle" fill="#231F20" font-size="7.5" font-family="Arial, sans-serif" font-weight="900">DISC</text>
+  <circle cx="27.5" cy="16.5" r="3" fill="#F47216"/>
+  <text x="37.5" y="19" text-anchor="middle" fill="#231F20" font-size="7.5" font-family="Arial, sans-serif" font-weight="900">VER</text>
+</svg>

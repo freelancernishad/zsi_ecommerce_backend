@@ -1,1 +1,5 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32"><rect width="48" height="32" fill="#016fd0" rx="4"/><path fill="#fff" d="M12 25h4l.8-2h4.5l.8 2h4l-4.5-12h-5L12 25zm6.8-5l1.5-4 1.5 4h-3zM28 13v12h10.5v-2.5H31V20h6v-2.5h-6v-2h7.5V13H28zM40 13l2.5 4 2.5-4h4.5l-5 8 5 4h-4.5l-2.5-4-2.5 4H35l5-8-5-4h5z"/></svg>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 48 32">
+  <rect width="48" height="32" rx="4" fill="#006FCF"/>
+  <rect x="5" y="8" width="38" height="16" fill="none" stroke="#FFFFFF" stroke-width="1.2"/>
+  <text x="24" y="18.5" text-anchor="middle" fill="#FFFFFF" font-size="5" font-family="Arial, sans-serif" font-weight="900" letter-spacing="0.4">AMERICAN EXPRESS</text>
+</svg>
