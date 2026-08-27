@@ -16,7 +16,11 @@ class StripeService
 {
     public function __construct()
     {
-        Stripe::setApiKey(config('services.stripe.secret'));
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
+        if ($secretKey) {
+            Stripe::setApiKey($secretKey);
+        }
     }
 
     /**
@@ -238,45 +242,14 @@ class StripeService
      */
     public function createPaymentIntent(User $user, int $amount, string $currency = 'usd', array $metadata = [], bool $setupFutureUsage = false, string $paymentMethodId = null)
     {
-        $customer = $this->createOrGetCustomer($user);
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
 
-        // Check for existing PaymentIntent with status 'requires_payment_method'
-        // This prevents duplicate PaymentIntents if the user retries without refreshing or similar scenarios
-        try {
-            $existingIntents = PaymentIntent::all([
-                'customer' => $customer->id,
-                'limit' => 5, // Check the last 5 intents
-            ]);
-
-            foreach ($existingIntents->data as $existingIntent) {
-                if (
-                    $existingIntent->status === 'requires_payment_method' &&
-                    $existingIntent->amount === $amount &&
-                    strtolower($existingIntent->currency) === strtolower($currency)
-                ) {
-                    // Reuse this intent
-                    // Make sure it exists in DB (in case it was deleted manually)
-                    $existingLog = \App\Models\StripeLog::where('payment_intent_id', $existingIntent->id)->first();
-                    
-                    if (!$existingLog) {
-                        \App\Models\StripeLog::create([
-                            'user_id' => $user->id,
-                            'type' => 'payment_intent',
-                            'stripe_customer_id' => $customer->id,
-                            'payment_intent_id' => $existingIntent->id,
-                            'amount' => $existingIntent->amount / 100,
-                            'currency' => $existingIntent->currency,
-                            'status' => $existingIntent->status,
-                            'payload' => $existingIntent->toArray(),
-                        ]);
-                    }
-
-                    return $existingIntent;
-                }
-            }
-        } catch (Exception $e) {
-            // If listing fails, proceed to create new one safely
+        if (!$secretKey || (!str_starts_with($secretKey, 'sk_') && !str_starts_with($secretKey, 'rk_'))) {
+            throw new Exception("Stripe API Secret Key is unconfigured or invalid. Please configure it in Admin Settings.");
         }
+
+        $customer = $this->createOrGetCustomer($user);
 
         $params = [
             'amount' => $amount,
@@ -327,6 +300,13 @@ class StripeService
      */
     public function createSetupIntent(User $user)
     {
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
+
+        if (!$secretKey || (!str_starts_with($secretKey, 'sk_') && !str_starts_with($secretKey, 'rk_'))) {
+            throw new Exception("Stripe API Secret Key is unconfigured or invalid. Please configure it in Admin Settings.");
+        }
+
         $customer = $this->createOrGetCustomer($user);
 
         $intent = SetupIntent::create([

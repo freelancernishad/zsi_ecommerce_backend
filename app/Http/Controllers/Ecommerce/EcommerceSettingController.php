@@ -17,7 +17,25 @@ class EcommerceSettingController extends Controller
     {
         $settings = SiteSetting::where('group', $group)
             ->get()
-            ->pluck('value', 'key');
+            ->pluck('value', 'key')
+            ->toArray();
+
+        if ($group === 'payments') {
+            // NEVER expose sensitive secret keys in public API response
+            $sensitiveKeys = [
+                'stripe_secret_key',
+                'stripe_webhook_secret',
+                'bkash_app_key',
+                'bkash_app_secret',
+                'bkash_username',
+                'bkash_password',
+                'sslcommerz_store_id',
+                'sslcommerz_store_passwd',
+            ];
+            foreach ($sensitiveKeys as $key) {
+                unset($settings[$key]);
+            }
+        }
 
         return response()->json([
             'success' => true,

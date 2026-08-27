@@ -102,6 +102,14 @@ class StripeController extends Controller
                 'success_url' => $successUrl
             ]);
         } catch (\Exception $e) {
+            if ($paymentMethodId && (str_contains($e->getMessage(), 'No such payment_method') || str_contains($e->getMessage(), 'resource_missing'))) {
+                UserPaymentMethod::where('stripe_payment_method_id', $paymentMethodId)
+                    ->where('user_id', $user->id)
+                    ->delete();
+                return response()->json([
+                    'error' => 'The selected saved card is no longer valid for this Stripe account. Please re-enter your card details.'
+                ], 400);
+            }
             return response()->json(['error' => $e->getMessage()], 400);
         }
     }
@@ -109,12 +117,7 @@ class StripeController extends Controller
     public function updatePaymentIntent(Request $request)
     {
         $id = $request->input('payment_intent_id');
-        $saveCard = $request->boolean('save_card', false);
-        
-        $data = [];
-        if ($saveCard) {
-            $data['setup_future_usage'] = 'off_session';
-        }
+        $data = $request->input('data', []);
 
         try {
             if (!empty($data)) {
@@ -158,7 +161,7 @@ class StripeController extends Controller
             $paymentMethod = $this->stripeService->syncPaymentMethodFromSetupIntent($user, $setupIntentId);
             return response()->json(['data' => $paymentMethod, 'message' => 'Card confirmed and saved successfully']);
         } catch (\Exception $e) {
-            return response()->json(['error' => 'Confirmation failed: ' . $e->getMessage()], 400);
+            return response()->json(['error' => $e->getMessage()], 400);
         }
     }
 
@@ -169,13 +172,39 @@ class StripeController extends Controller
     {
         $user = Auth::user();
 
+        $stripeEnabled = \App\Models\SiteSetting::where('key', 'stripe_enabled')->value('value');
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
+
+        $isConfigured = ($stripeEnabled === '1' || $stripeEnabled === 1 || $stripeEnabled === true || $stripeEnabled === 'true')
+            && !empty($secretKey)
+            && (str_starts_with($secretKey, 'sk_') || str_starts_with($secretKey, 'rk_'));
+
+        if (!$isConfigured) {
+            return response()->json(['data' => []]);
+        }
+
         try {
             $cards = \App\Models\UserPaymentMethod::where('user_id', $user->id)
                 ->orderBy('is_default', 'desc')
                 ->orderBy('created_at', 'desc')
                 ->get();
+
+            $validCards = [];
+            foreach ($cards as $card) {
+                if (!empty($card->stripe_payment_method_id)) {
+                    try {
+                        // Verify if this card ID is valid on the currently configured Stripe Account
+                        \Stripe\PaymentMethod::retrieve($card->stripe_payment_method_id);
+                        $validCards[] = $card;
+                    } catch (\Exception $e) {
+                        // Card is invalid or belongs to an old/different Stripe account -> Auto Purge
+                        $card->delete();
+                    }
+                }
+            }
                 
-            return response()->json(['data' => $cards]);
+            return response()->json(['data' => array_values($validCards)]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 400);
         }
@@ -187,10 +216,14 @@ class StripeController extends Controller
     public function deleteCard($id)
     {
         try {
-            // Delete from Stripe
-            $this->stripeService->deleteCard($id);
+            // Delete from Stripe (ignore exception if card doesn't exist on current account)
+            try {
+                $this->stripeService->deleteCard($id);
+            } catch (\Exception $e) {
+                // Ignore
+            }
 
-            // Delete from Local Database
+            // Always delete from Local Database
             UserPaymentMethod::where('stripe_payment_method_id', $id)
                 ->where('user_id', Auth::id())
                 ->delete();

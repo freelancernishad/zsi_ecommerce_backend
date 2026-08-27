@@ -39,8 +39,13 @@ class StripeWebhookService
             'secret_configured' => $endpointSecret ? 'Yes (starts with ' . substr($endpointSecret, 0, 8) . '...)' : 'No'
         ]);
 
-        Stripe::setApiKey(config('services.stripe.secret'));
-        $endpointSecret = config('services.stripe.webhook');
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
+        if ($secretKey) {
+            Stripe::setApiKey($secretKey);
+        }
+        $endpointSecret = \App\Models\SiteSetting::where('key', 'stripe_webhook_secret')->value('value')
+            ?: config('services.stripe.webhook');
 
         try {
             $event = Webhook::constructEvent(
