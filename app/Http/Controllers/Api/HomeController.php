@@ -277,11 +277,13 @@ class HomeController extends Controller
         ]);
 
         $siteNavigation = SiteSetting::getValue('site_navigation', []);
+        $siteLogo = SiteSetting::getValue('site_logo', '/logo-new.png');
 
         return response()->json([
             'status' => 'success',
             'data' => [
                 'site_navigation' => $siteNavigation,
+                'site_logo' => $siteLogo,
                 'settings' => [
                     'pre_footer' => $preFooterConfig,
                     'footer' => $footerConfig
