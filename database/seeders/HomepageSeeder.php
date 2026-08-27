@@ -16,15 +16,41 @@ class HomepageSeeder extends Seeder
 
         // 1. Hero Section Settings
         SiteSetting::setValue('home_hero', [
-            'badge' => 'New Collection',
-            'title' => 'The Best Kids Style Choice For You',
-            'subtitle' => 'Unbeatable style for your little ones. Discover the latest trends in kids fashion.',
-            'button_text' => 'Shop Now',
-            'button_link' => '/category/kids-fashion',
-            'images' => [
-                'background' => 'https://via.placeholder.com/1920x1080?text=Hero+Background',
-                'line' => 'https://via.placeholder.com/500x50?text=Line',
-                'models' => 'https://via.placeholder.com/600x800?text=Kids+Model'
+            'slides' => [
+                [
+                    'title' => 'Kitchen & Living Essentials',
+                    'image' => '/banners/1.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'New Collection',
+                    'image' => '/banners/2.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'Special Deals',
+                    'image' => '/banners/3.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'Trending Items',
+                    'image' => '/banners/4.webp',
+                    'link' => '/products'
+                ]
+            ],
+            'side_banners' => [
+                [
+                    'mini_title' => 'SPECIAL OFFER',
+                    'title' => 'Featured Deals',
+                    'image' => '/banners/mini-1.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'mini_title' => 'SPECIAL OFFER',
+                    'title' => 'Smart Accessories',
+                    'image' => '/banners/mini-3.webp',
+                    'link' => '/products'
+                ]
             ]
         ], 'homepage', 'json');
 

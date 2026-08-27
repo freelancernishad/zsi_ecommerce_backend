@@ -17,7 +17,73 @@ class HomeController extends Controller
     public function index()
     {
         // 1. Fetch Dynamic Sections from SiteSettings
-        $hero = SiteSetting::getValue('home_hero');
+        $defaultHero = [
+            'slides' => [
+                [
+                    'title' => 'Kitchen & Living Essentials',
+                    'image' => '/banners/1.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'New Collection',
+                    'image' => '/banners/2.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'Special Deals',
+                    'image' => '/banners/3.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'title' => 'Trending Items',
+                    'image' => '/banners/4.webp',
+                    'link' => '/products'
+                ]
+            ],
+            'side_banners' => [
+                [
+                    'mini_title' => 'SPECIAL OFFER',
+                    'title' => 'Featured Deals',
+                    'image' => '/banners/mini-1.webp',
+                    'link' => '/products'
+                ],
+                [
+                    'mini_title' => 'SPECIAL OFFER',
+                    'title' => 'Smart Accessories',
+                    'image' => '/banners/mini-3.webp',
+                    'link' => '/products'
+                ]
+            ]
+        ];
+
+        $hero = SiteSetting::getValue('home_hero', $defaultHero);
+
+        if (!is_array($hero)) {
+            $hero = $defaultHero;
+        }
+
+        if (empty($hero['slides']) || !is_array($hero['slides'])) {
+            $hero['slides'] = $defaultHero['slides'];
+        }
+
+        if (empty($hero['side_banners']) || !is_array($hero['side_banners'])) {
+            $hero['side_banners'] = $defaultHero['side_banners'];
+        }
+
+        // Format image paths for slides and side_banners
+        foreach ($hero['slides'] as &$slide) {
+            if (isset($slide['image']) && !empty($slide['image']) && !str_starts_with($slide['image'], 'http') && !str_starts_with($slide['image'], '/')) {
+                $slide['image'] = asset('storage/' . $slide['image']);
+            }
+        }
+        unset($slide);
+
+        foreach ($hero['side_banners'] as &$card) {
+            if (isset($card['image']) && !empty($card['image']) && !str_starts_with($card['image'], 'http') && !str_starts_with($card['image'], '/')) {
+                $card['image'] = asset('storage/' . $card['image']);
+            }
+        }
+        unset($card);
         $springFlingConfig = SiteSetting::getValue('home_spring_fling', [
             'title' => 'Spring Fling Sale',
             'subtitle' => 'Refresh Your Wardrobe with Fresh Styles!',

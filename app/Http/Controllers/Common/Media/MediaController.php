@@ -309,6 +309,9 @@ public function show($id)
             case 'gif':
                 $src = imagecreatefromgif($filePath);
                 break;
+            case 'webp':
+                $src = imagecreatefromwebp($filePath);
+                break;
             default:
                 throw new \Exception("Unsupported image type: $extension");
         }
@@ -321,7 +324,7 @@ public function show($id)
 
         $tmp = imagecreatetruecolor($newWidth, $newHeight);
 
-        if ($extension === 'png' || $extension === 'gif') {
+        if ($extension === 'png' || $extension === 'gif' || $extension === 'webp') {
             imagecolortransparent($tmp, imagecolorallocatealpha($tmp, 0, 0, 0, 127));
             imagealphablending($tmp, false);
             imagesavealpha($tmp, true);
@@ -340,6 +343,9 @@ public function show($id)
                 break;
             case 'gif':
                 imagegif($tmp);
+                break;
+            case 'webp':
+                imagewebp($tmp, null, 90);
                 break;
         }
         $imageData = ob_get_clean();
@@ -364,13 +370,16 @@ public function show($id)
             case 'gif':
                 $src = imagecreatefromgif($filePath);
                 break;
+            case 'webp':
+                $src = imagecreatefromwebp($filePath);
+                break;
             default:
                 throw new \Exception("Unsupported image type: $extension");
         }
 
         $tmp = imagecreatetruecolor($size, $size);
 
-        if ($extension === 'png' || $extension === 'gif') {
+        if ($extension === 'png' || $extension === 'gif' || $extension === 'webp') {
             imagecolortransparent($tmp, imagecolorallocatealpha($tmp, 0, 0, 0, 127));
             imagealphablending($tmp, false);
             imagesavealpha($tmp, true);
@@ -397,6 +406,9 @@ public function show($id)
                 break;
             case 'gif':
                 imagegif($tmp);
+                break;
+            case 'webp':
+                imagewebp($tmp, null, 90);
                 break;
         }
         $imageData = ob_get_clean();
