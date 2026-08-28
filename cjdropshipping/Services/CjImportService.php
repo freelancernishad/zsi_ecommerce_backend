@@ -117,6 +117,7 @@ class CjImportService
                     'variant_options' => $variantOptions,
                     'is_physical' => true,
                     'is_cj_product' => true,
+                    'import_source' => 'cj',
                     'cj_spu' => $cjData['productSku'] ?? null,
                     'cj_delivery_cycle' => $cjData['deliveryCycle'] ?? null,
                     'cj_synced_at' => now(),

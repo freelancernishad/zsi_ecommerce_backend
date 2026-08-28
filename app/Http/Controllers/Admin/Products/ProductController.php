@@ -72,6 +72,44 @@ class ProductController extends Controller
             $query->where('status', $status);
         }
 
+        $importSource = $request->get('import_source') ?: $request->get('source');
+        if ($importSource && $importSource !== 'all') {
+            if ($importSource === 'cj' || $importSource === 'cjdropshipping') {
+                $query->where(function ($q) {
+                    $q->where('import_source', 'cj')
+                      ->orWhere('is_cj_product', 1)
+                      ->orWhereNotNull('cj_product_id');
+                });
+            } elseif ($importSource === 'shopify') {
+                $query->where(function ($q) {
+                    $q->where('import_source', 'shopify')
+                      ->orWhere(function ($sq) {
+                          $sq->whereNotNull('url_handle')
+                            ->where('url_handle', '!=', '')
+                            ->where(function ($qq) {
+                                $qq->where('is_cj_product', 0)
+                                  ->orWhereNull('is_cj_product');
+                            });
+                      });
+                });
+            } elseif ($importSource === 'manual' || $importSource === 'store') {
+                $query->where(function ($q) {
+                    $q->where('import_source', 'manual')
+                      ->orWhere(function ($sq) {
+                          $sq->whereNull('import_source')
+                            ->where(function ($c) {
+                                $c->where('is_cj_product', 0)
+                                  ->orWhereNull('is_cj_product');
+                            })
+                            ->where(function ($u) {
+                                $u->whereNull('url_handle')
+                                  ->orWhere('url_handle', '');
+                            });
+                      });
+                });
+            }
+        }
+
         if ($request->has('category_id') && $request->get('category_id') !== null && $request->get('category_id') !== '') {
             $catId = $request->get('category_id');
             $query->where(function ($q) use ($catId) {
@@ -156,6 +194,7 @@ class ProductController extends Controller
                 'size_guide'            => $request->size_guide,
                 'shipping_policy'       => $request->shipping_policy,
                 'return_policy'         => $request->return_policy,
+                'import_source'         => 'manual',
             ]);
 
             // Handle Images

@@ -307,6 +307,7 @@ class ProductImportController extends Controller
                         'status'            => $forcedStatus ?: ($published ? 'published' : 'draft'),
                         'tags'              => $tags,
                         'variant_options'   => !empty($variantOptionsFormatted) ? $variantOptionsFormatted : null,
+                        'import_source'     => 'shopify',
                     ]);
 
                     // Remove old images & variants before re-importing
@@ -342,6 +343,7 @@ class ProductImportController extends Controller
                         'variant_options'   => !empty($variantOptionsFormatted) ? $variantOptionsFormatted : null,
                         'is_physical'       => true,
                         'charge_tax'        => true,
+                        'import_source'     => 'shopify',
                     ]);
                 }
                 $importedProductsCount++;

@@ -56,6 +56,7 @@ class Product extends Model
         'is_cj_product',
         'cj_delivery_cycle',
         'cj_synced_at',
+        'import_source',
     ];
 
     public function brand()
