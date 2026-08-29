@@ -18,17 +18,50 @@ class SwitchTenantDatabase
      */
     public function handle(Request $request, Closure $next): Response
     {
-        $headerDomain = $request->header('X-Tenant-Domain');
-        $hostDomain   = $request->getHost();
+        $candidates = [];
 
-        $domainKey = $headerDomain ?: $hostDomain;
+        // 1. Explicit custom header
+        if ($header = $request->header('X-Tenant-Domain')) {
+            $candidates[] = trim($header);
+        }
+
+        // 2. HTTP Origin header (Frontend Domain calling API)
+        if ($origin = $request->header('Origin')) {
+            $originHost = parse_url($origin, PHP_URL_HOST);
+            if ($originHost) {
+                $candidates[] = $originHost;
+            }
+        }
+
+        // 3. HTTP Referer header
+        if ($referer = $request->header('Referer')) {
+            $refererHost = parse_url($referer, PHP_URL_HOST);
+            if ($refererHost) {
+                $candidates[] = $refererHost;
+            }
+        }
+
+        // 4. Request Host header
+        $host = $request->getHost();
+        $candidates[] = $host;
+
+        // 5. Host without 'api.' prefix (e.g., api.goldenmarkstore.com -> goldenmarkstore.com)
+        if (str_starts_with($host, 'api.')) {
+            $candidates[] = substr($host, 4);
+        }
+
         $tenantDomains = config('tenants.domains', []);
-        $fallbackDb    = config('tenants.fallback', config('database.connections.mysql.database'));
+        $databaseName = null;
 
-        if ($domainKey && array_key_exists($domainKey, $tenantDomains)) {
-            $databaseName = $tenantDomains[$domainKey];
-        } else {
-            $databaseName = $fallbackDb;
+        foreach ($candidates as $candidate) {
+            if (!empty($candidate) && array_key_exists($candidate, $tenantDomains)) {
+                $databaseName = $tenantDomains[$candidate];
+                break;
+            }
+        }
+
+        if (!$databaseName) {
+            $databaseName = config('tenants.fallback', config('database.connections.mysql.database'));
         }
 
         // Dynamically reconfigure database connection
