@@ -33,7 +33,7 @@ class AIController extends Controller
         // 1. Core Identity & Contacts
         $settings = \App\Models\SiteSetting::whereIn('key', ['site_name', 'site_description', 'site_email', 'site_phone', 'site_address', 'facebook_url', 'instagram_url', 'site_jurisdiction'])->get()->pluck('value', 'key');
 
-        $storeName = $settings['site_name'] ?? \App\Models\SystemSetting::getValue('site_name') ?? 'FlipShop';
+        $storeName = $settings['site_name'] ?? \App\Models\SystemSetting::getValue('site_name') ?? 'Online Store';
         
         // Clean storeName if it is an email (common with fresh admin setups like admin@admin.com)
         if (filter_var($storeName, FILTER_VALIDATE_EMAIL)) {

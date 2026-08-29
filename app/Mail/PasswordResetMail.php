@@ -38,10 +38,10 @@ class PasswordResetMail extends Mailable
         $this->otp = $otp;
 
         // Fetch settings from SiteSetting
-        $this->storeName = SiteSetting::getValue('store_name', 'Golden Mark');
-        $this->storeAddress = SiteSetting::getValue('store_address', 'Golden Mark Store Address');
-        $this->supportPhone = SiteSetting::getValue('support_phone', '+880 1234 567890');
-        $this->supportEmail = SiteSetting::getValue('support_email', 'support@goldenmark.com');
+        $this->storeName = SiteSetting::getValue('store_name', 'Online Store');
+        $this->storeAddress = SiteSetting::getValue('store_address', '');
+        $this->supportPhone = SiteSetting::getValue('support_phone', '');
+        $this->supportEmail = SiteSetting::getValue('support_email', '');
 
         // Extract frontend base URL from resetUrl
         $parsedUrl = parse_url($resetUrl);
