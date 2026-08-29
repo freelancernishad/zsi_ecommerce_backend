@@ -200,3 +200,80 @@ STRIPE_SECRET=sk_test_...
 STRIPE_WEBHOOK_SECRET=whsec_...
 ```
 
+---
+
+## 🌐 Dynamic Multi-Tenant Database Setup (Multi-Domain)
+
+This project supports dynamic database switching based on incoming request domain names or custom HTTP headers using a single codebase.
+
+### Supported Domains & Databases
+* **`goldenmarkstore.com`** / **`www.goldenmarkstore.com`** -> `DB_DATABASE_GOLDENMARK` (`goldenmarkstore_db`)
+* **`bismillahfashionusa.com`** / **`www.bismillahfashionusa.com`** -> `DB_DATABASE_BISMILLAH` (`bismillahfashionusa_db`)
+* Local Test Hostnames (`goldenmark.test`, `bismillah.test`)
+
+### Configuration (`.env`)
+Add target database names to your `.env` file:
+```env
+DB_CONNECTION=mysql
+DB_HOST=127.0.0.1
+DB_PORT=3306
+DB_USERNAME=root
+DB_PASSWORD=
+
+# Tenant Databases
+DB_DATABASE_GOLDENMARK=goldenmarkstore_db
+DB_DATABASE_BISMILLAH=bismillahfashionusa_db
+```
+
+### Key Components
+* **[`config/tenants.php`](file:///d:/zsi.ai/Ecommerce/ecommerce_backend/config/tenants.php)**: Hostname-to-Database mapping configuration.
+* **[`app/Http/Middleware/SwitchTenantDatabase.php`](file:///d:/zsi.ai/Ecommerce/ecommerce_backend/app/Http/Middleware/SwitchTenantDatabase.php)**: Intercepts requests, detects host/header, and dynamically switches MySQL connection.
+* **[`bootstrap/app.php`](file:///d:/zsi.ai/Ecommerce/ecommerce_backend/bootstrap/app.php)**: Prepends `SwitchTenantDatabase` to the request middleware pipeline.
+* **[`routes/console.php`](file:///d:/zsi.ai/Ecommerce/ecommerce_backend/routes/console.php)**: Custom Artisan command for multi-tenant database migrations.
+
+### Commands & Testing Guide
+
+#### 1. Migrate All Tenant Databases Together
+Run migrations across all configured tenant databases automatically:
+```bash
+php artisan tenants:migrate
+```
+
+To run migrations and seeders across all tenant databases:
+```bash
+php artisan tenants:migrate --seed
+```
+
+#### 2. Migrate Specific / Individual Tenant Database Only
+If you want to run migration for **only one specific database**:
+
+* **Goldenmark Store Database only:**
+  ```bash
+  php artisan tenants:migrate --tenant=goldenmarkstore_db
+  ```
+
+* **Bismillah Fashion USA Database only:**
+  ```bash
+  php artisan tenants:migrate --tenant=bismillahfashionusa_db
+  ```
+
+* **With Seeder for a single tenant:**
+  ```bash
+  php artisan tenants:migrate --tenant=goldenmarkstore_db --seed
+  ```
+
+> *Alternative native Laravel way:*
+> ```bash
+> DB_DATABASE=goldenmarkstore_db php artisan migrate
+> ```
+
+#### 3. Local API Testing (Postman / Frontend)
+When testing on `localhost:8000` or local dev servers, pass the `X-Tenant-Domain` header in your HTTP requests:
+
+* **Goldenmark Store:**
+  `X-Tenant-Domain: goldenmarkstore.com`
+* **Bismillah Fashion USA:**
+  `X-Tenant-Domain: bismillahfashionusa.com`
+
+
+
