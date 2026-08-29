@@ -236,44 +236,31 @@ class HomeController extends Controller
 
         // Fetch Global Configs for Footer/PreFooter 
         $preFooterConfig = SiteSetting::getValue('home_pre_footer', [
-            'title' => 'Shop with Ease: The Ultimate Shopping Experience - Discounts, Support and Security!',
-            'image' => 'https://via.placeholder.com/400x300/1c64d4/ffffff?text=App+Mockup',
+            'title' => 'Shop with Ease: The Ultimate Shopping Experience',
+            'image' => null,
             'features' => [
-                ['text' => 'Enjoy free shipping on all orders over $1000!', 'icon_type' => 'shipping'],
+                ['text' => 'Enjoy free shipping on all eligible orders!', 'icon_type' => 'shipping'],
                 ['text' => 'Quality support with 24/7 online assistance!', 'icon_type' => 'support'],
                 ['text' => 'Hassle-free returns & refunds within 30 days!', 'icon_type' => 'returns'],
-                ['text' => 'Gift voucher – get 20% off when you shop online!', 'icon_type' => 'gift'],
+                ['text' => 'Special discounts when you shop online!', 'icon_type' => 'gift'],
             ]
         ]);
 
         $footerConfig = SiteSetting::getValue('site_footer', [
-            'brand_name' => 'FlipShop.',
-            'tagline' => 'SELECTIONS',
-            'phone' => '+880 1700000000',
-            'email' => 'contact@flipshopselections.com',
-            'website' => 'www.flipshopselections.com',
-            'copyright' => '© 2025 FlipShopSelections. Developed by ZSI.Ai',
+            'brand_name' => '',
+            'tagline' => '',
+            'phone' => '',
+            'email' => '',
+            'website' => '',
+            'copyright' => '',
             'socials' => [
-                'facebook' => 'https://facebook.com',
-                'pinterest' => 'https://pinterest.com',
-                'linkedin' => 'https://linkedin.com',
-                'twitter' => 'https://twitter.com'
+                'facebook' => '',
+                'pinterest' => '',
+                'linkedin' => '',
+                'twitter' => ''
             ],
-            'quick_links' => [
-                ['name' => 'Deal Of The Day', 'url' => '#'],
-                ['name' => 'New Arrival', 'url' => '#'],
-                ['name' => 'Featured Products', 'url' => '#'],
-                ['name' => 'Trending Now', 'url' => '#'],
-                ['name' => 'On Sale', 'url' => '#'],
-            ],
-            'customer_services' => [
-                ['name' => 'My Orders', 'url' => '#'],
-                ['name' => 'My Account', 'url' => '#'],
-                ['name' => 'Track My Order', 'url' => '#'],
-                ['name' => 'Return Policy', 'url' => '#'],
-                ['name' => 'Privacy Policy', 'url' => '#'],
-                ['name' => 'Help Center', 'url' => '#'],
-            ]
+            'quick_links' => [],
+            'customer_services' => []
         ]);
 
         $siteNavigation = SiteSetting::getValue('site_navigation', []);
