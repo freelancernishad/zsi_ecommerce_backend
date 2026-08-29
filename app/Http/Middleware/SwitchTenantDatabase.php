@@ -28,21 +28,34 @@ class SwitchTenantDatabase
         // 2. HTTP Origin header (Frontend Domain calling API)
         if ($origin = $request->header('Origin')) {
             $originHost = parse_url($origin, PHP_URL_HOST);
+            $originPort = parse_url($origin, PHP_URL_PORT);
+
+            if ($originHost && $originPort) {
+                $candidates[] = $originHost . ':' . $originPort; // e.g. localhost:3001
+            }
             if ($originHost) {
-                $candidates[] = $originHost;
+                $candidates[] = $originHost; // e.g. localhost
             }
         }
 
         // 3. HTTP Referer header
         if ($referer = $request->header('Referer')) {
             $refererHost = parse_url($referer, PHP_URL_HOST);
+            $refererPort = parse_url($referer, PHP_URL_PORT);
+
+            if ($refererHost && $refererPort) {
+                $candidates[] = $refererHost . ':' . $refererPort;
+            }
             if ($refererHost) {
                 $candidates[] = $refererHost;
             }
         }
 
-        // 4. Request Host header
-        $host = $request->getHost();
+        // 4. Request Host header (including port if present)
+        $httpHost = $request->getHttpHost(); // e.g., localhost:8000 or localhost:3001
+        $candidates[] = $httpHost;
+
+        $host = $request->getHost(); // e.g., localhost
         $candidates[] = $host;
 
         // 5. Host without 'api.' prefix (e.g., api.goldenmarkstore.com -> goldenmarkstore.com)
