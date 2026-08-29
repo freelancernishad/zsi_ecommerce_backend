@@ -25,6 +25,11 @@ class SwitchTenantDatabase
             $candidates[] = trim($header);
         }
 
+        // 2. X-Forwarded-Host header (sent by proxies or SSR Next.js requests)
+        if ($forwardedHost = $request->header('X-Forwarded-Host')) {
+            $candidates[] = trim($forwardedHost);
+        }
+
         // 2. HTTP Origin header (Frontend Domain calling API)
         if ($origin = $request->header('Origin')) {
             $originHost = parse_url($origin, PHP_URL_HOST);
