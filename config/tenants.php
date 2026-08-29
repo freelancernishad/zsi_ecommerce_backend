@@ -15,16 +15,19 @@ return [
         // GoldenMark Store
         'goldenmarkstore.com'        => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
         'www.goldenmarkstore.com'    => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
+        'admin.goldenmarkstore.com'    => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
 
         // Bismillah Fashion USA
         'bismillahfashionusa.com'    => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
         'www.bismillahfashionusa.com'=> env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
+        'admin.bismillahfashionusa.com'=> env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
 
 
         
         // Bismillah Fashion USA
         'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
         'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
+        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
 
 
         // Local development hostnames
