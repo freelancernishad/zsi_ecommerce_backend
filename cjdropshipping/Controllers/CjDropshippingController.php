@@ -23,15 +23,33 @@ class CjDropshippingController extends Controller
     /**
      * Search products live on CJ Dropshipping.
      */
+    /**
+     * Search products live on CJ Dropshipping.
+     */
     public function search(Request $request)
     {
         $keyword = $request->query('keyword', 'hoodie');
         $page = (int) $request->query('page', 1);
         $size = (int) $request->query('size', 20);
         $categoryId = $request->query('category_id');
+        $countryCode = $request->query('country_code');
+        $minPrice = $request->has('min_price') && $request->query('min_price') !== null ? (float) $request->query('min_price') : null;
+        $maxPrice = $request->has('max_price') && $request->query('max_price') !== null ? (float) $request->query('max_price') : null;
+        $freeShipping = $request->has('free_shipping') && $request->query('free_shipping') !== null ? (int) $request->query('free_shipping') : null;
+        $videoOnly = $request->has('video_only') && (int)$request->query('video_only') === 1 ? 10 : null;
 
         try {
-            $result = $this->cjService->searchProducts($keyword, $page, $size, $categoryId);
+            $result = $this->cjService->searchProducts(
+                $keyword,
+                $page,
+                $size,
+                $categoryId,
+                $countryCode,
+                $minPrice,
+                $maxPrice,
+                $freeShipping,
+                $videoOnly
+            );
             return response()->json($result);
         } catch (Exception $e) {
             return response()->json([

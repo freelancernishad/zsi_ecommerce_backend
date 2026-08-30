@@ -46,10 +46,19 @@ class CjDropshippingService
     }
 
     /**
-     * Search products on CJ Dropshipping by keyword or category.
+     * Search products on CJ Dropshipping by keyword, category, country, price range, free shipping, video availability.
      */
-    public function searchProducts(string $keyword = 'hoodie', int $page = 1, int $size = 20, ?string $categoryId = null): array
-    {
+    public function searchProducts(
+        string $keyword = 'hoodie',
+        int $page = 1,
+        int $size = 20,
+        ?string $categoryId = null,
+        ?string $countryCode = null,
+        ?float $minPrice = null,
+        ?float $maxPrice = null,
+        ?int $freeShipping = null,
+        ?int $productType = null
+    ): array {
         $token = $this->getAccessToken();
 
         $queryParams = [
@@ -62,6 +71,26 @@ class CjDropshippingService
 
         if ($categoryId) {
             $queryParams['categoryId'] = $categoryId;
+        }
+
+        if ($countryCode) {
+            $queryParams['countryCode'] = strtoupper($countryCode);
+        }
+
+        if ($minPrice !== null && $minPrice > 0) {
+            $queryParams['startSellPrice'] = $minPrice;
+        }
+
+        if ($maxPrice !== null && $maxPrice > 0) {
+            $queryParams['endSellPrice'] = $maxPrice;
+        }
+
+        if ($freeShipping !== null) {
+            $queryParams['addMarkStatus'] = $freeShipping;
+        }
+
+        if ($productType !== null) {
+            $queryParams['productType'] = $productType;
         }
 
         $response = Http::withHeaders([
@@ -80,12 +109,70 @@ class CjDropshippingService
                 }
             }
 
+            // Extract dynamic facets from products
+            $availableCountries = [];
+            $availableCategories = [];
+            $minPriceFound = null;
+            $maxPriceFound = null;
+            $freeShippingCount = 0;
+            $videoCount = 0;
+
+            foreach ($products as $p) {
+                // Country Code
+                $country = $p['countryCode'] ?? $p['sourceFrom'] ?? $p['countryName'] ?? null;
+                if ($country && !in_array(strtoupper($country), $availableCountries)) {
+                    $availableCountries[] = strtoupper($country);
+                }
+
+                // Category
+                $catId = $p['categoryId'] ?? null;
+                $catName = $p['categoryName'] ?? $p['entryName'] ?? null;
+                if ($catId || $catName) {
+                    $key = $catId ?? $catName;
+                    if (!isset($availableCategories[$key])) {
+                        $availableCategories[$key] = [
+                            'id' => $catId,
+                            'name' => $catName ?? $catId,
+                        ];
+                    }
+                }
+
+                // Price
+                $price = isset($p['sellPrice']) ? (float)$p['sellPrice'] : (isset($p['productPrice']) ? (float)$p['productPrice'] : null);
+                if ($price !== null && $price > 0) {
+                    if ($minPriceFound === null || $price < $minPriceFound) {
+                        $minPriceFound = $price;
+                    }
+                    if ($maxPriceFound === null || $price > $maxPriceFound) {
+                        $maxPriceFound = $price;
+                    }
+                }
+
+                // Free Shipping
+                if ((isset($p['addMarkStatus']) && $p['addMarkStatus'] == 1) || (!empty($p['isFreeShipping']))) {
+                    $freeShippingCount++;
+                }
+
+                // Video
+                if ((isset($p['productType']) && $p['productType'] == 10) || (!empty($p['isVideo'])) || !empty($p['productVideo'])) {
+                    $videoCount++;
+                }
+            }
+
             return [
                 'success' => true,
                 'products' => $products,
                 'total' => count($products),
                 'page' => $page,
                 'size' => $size,
+                'facets' => [
+                    'countries' => $availableCountries,
+                    'categories' => array_values($availableCategories),
+                    'min_price' => $minPriceFound !== null ? round($minPriceFound, 2) : 0,
+                    'max_price' => $maxPriceFound !== null ? round($maxPriceFound, 2) : 0,
+                    'free_shipping_count' => $freeShippingCount,
+                    'video_count' => $videoCount,
+                ],
             ];
         }
 
@@ -93,6 +180,14 @@ class CjDropshippingService
             'success' => false,
             'message' => $response->json()['message'] ?? 'Failed to fetch CJ products',
             'products' => [],
+            'facets' => [
+                'countries' => [],
+                'categories' => [],
+                'min_price' => 0,
+                'max_price' => 0,
+                'free_shipping_count' => 0,
+                'video_count' => 0,
+            ],
         ];
     }
 
