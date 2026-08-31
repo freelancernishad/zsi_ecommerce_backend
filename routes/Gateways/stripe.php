@@ -14,6 +14,7 @@ use Illuminate\Support\Facades\Route;
 // stripe trigger payment_intent.succeeded
 
 Route::post('/webhook', [StripeWebhookController::class, 'handle']); 
+Route::post('/calculate-tax', [StripeController::class, 'calculateTax']);
 
 Route::middleware([AuthenticateUser::class])->group(function () {
     Route::post('/checkout', [StripeController::class, 'checkout']);

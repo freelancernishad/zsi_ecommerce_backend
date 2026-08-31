@@ -500,4 +500,196 @@ class StripeService
 
         return $this->syncPaymentMethod($user, $setupIntent->payment_method);
     }
+
+    /**
+     * Calculate Tax using Stripe Tax API, falling back to local database tax rates.
+     */
+    public function calculateTax(array $addressData, float $amount, array $lineItems = [])
+    {
+        $country = trim($addressData['country'] ?? '');
+        $state = trim($addressData['state'] ?? '');
+        $city = trim($addressData['city'] ?? '');
+        $postalCode = trim($addressData['postalCode'] ?? $addressData['zip_code'] ?? '');
+        $line1 = trim($addressData['addressLine1'] ?? $addressData['street_address'] ?? '');
+
+        // Convert common country names to 2-letter ISO country codes
+        $isoCountry = $this->getCountryIsoCode($country);
+
+        $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+            ?: config('services.stripe.secret');
+
+        if ($secretKey && !empty($isoCountry)) {
+            try {
+                Stripe::setApiKey($secretKey);
+
+                $items = [];
+                if (!empty($lineItems)) {
+                    foreach ($lineItems as $idx => $item) {
+                        $itemPrice = (float) ($item['price'] ?? 0);
+                        $itemQty = (int) ($item['quantity'] ?? 1);
+                        $itemAmount = round($itemPrice * $itemQty * 100);
+                        if ($itemAmount > 0) {
+                            $items[] = [
+                                'amount' => (int) $itemAmount,
+                                'reference' => 'Item_' . ($idx + 1),
+                                'tax_behavior' => 'exclusive',
+                                'tax_code' => 'txcd_99999999',
+                            ];
+                        }
+                    }
+                }
+
+                if (empty($items) && $amount > 0) {
+                    $items[] = [
+                        'amount' => (int) round($amount * 100),
+                        'reference' => 'Subtotal',
+                        'tax_behavior' => 'exclusive',
+                        'tax_code' => 'txcd_99999999',
+                    ];
+                }
+
+                if (!empty($items)) {
+                    $customerDetails = [
+                        'address' => array_filter([
+                            'country' => $isoCountry,
+                            'state' => $state,
+                            'city' => $city,
+                            'postal_code' => $postalCode,
+                            'line1' => $line1,
+                        ]),
+                        'address_source' => 'shipping',
+                    ];
+
+                    $calculation = \Stripe\Tax\Calculation::create([
+                        'currency' => 'usd',
+                        'line_items' => $items,
+                        'customer_details' => $customerDetails,
+                    ]);
+
+                    $taxCents = $calculation->tax_amount_exclusive ?? 0;
+                    $taxAmount = round($taxCents / 100, 2);
+
+                    return [
+                        'success' => true,
+                        'tax_amount' => $taxAmount,
+                        'source' => 'stripe',
+                        'stripe_calculation_id' => $calculation->id ?? null,
+                    ];
+                }
+            } catch (Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Stripe Tax calculation failed: " . $e->getMessage());
+            }
+        }
+
+        // Local fallback calculation
+        $taxRate = 0;
+        if ($country && $state) {
+            $countryVariants = array_values(array_unique(array_filter([
+                strtolower(trim($country)),
+                strtolower($isoCountry),
+                ($isoCountry === 'US') ? 'united states' : null
+            ])));
+
+            $stateVariants = $this->getStateVariants($state);
+
+            $taxRecord = \Illuminate\Support\Facades\DB::table('taxes')
+                ->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(country))'), $countryVariants)
+                ->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(state))'), $stateVariants)
+                ->first();
+
+            if (!$taxRecord) {
+                $taxRecord = \Illuminate\Support\Facades\DB::table('taxes')
+                    ->where(function($q) use ($countryVariants) {
+                        $q->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(country))'), $countryVariants)
+                          ->orWhere('country', '*')->orWhere('country', 'All');
+                    })
+                    ->where(function($q) use ($stateVariants) {
+                        $q->whereIn(\Illuminate\Support\Facades\DB::raw('LOWER(TRIM(state))'), $stateVariants)
+                          ->orWhere('state', '*')->orWhere('state', 'All');
+                    })
+                    ->first();
+            }
+
+            if ($taxRecord) {
+                $taxRate = (float) $taxRecord->tax_rate;
+            }
+        }
+
+        $taxAmount = round(($amount * $taxRate) / 100, 2);
+
+        return [
+            'success' => true,
+            'tax_amount' => $taxAmount,
+            'tax_rate' => $taxRate,
+            'source' => 'local',
+        ];
+    }
+
+    private function getCountryIsoCode($countryName)
+    {
+        if (empty($countryName)) return '';
+        $c = strtoupper(trim($countryName));
+        if (strlen($c) === 2) return $c;
+
+        $map = [
+            'UNITED STATES' => 'US',
+            'UNITED STATES OF AMERICA' => 'US',
+            'USA' => 'US',
+            'CANADA' => 'CA',
+            'UNITED KINGDOM' => 'GB',
+            'UK' => 'GB',
+            'GREAT BRITAIN' => 'GB',
+            'AUSTRALIA' => 'AU',
+            'GERMANY' => 'DE',
+            'FRANCE' => 'FR',
+            'BANGLADESH' => 'BD',
+            'INDIA' => 'IN',
+            'ITALY' => 'IT',
+            'SPAIN' => 'ES',
+            'MEXICO' => 'MX',
+            'BRAZIL' => 'BR',
+            'JAPAN' => 'JP',
+            'CHINA' => 'CN',
+            'NETHERLANDS' => 'NL',
+            'SWITZERLAND' => 'CH',
+            'SWEDEN' => 'SE',
+            'NORWAY' => 'NO',
+            'DENMARK' => 'DK',
+            'SINGAPORE' => 'SG',
+            'UNITED ARAB EMIRATES' => 'AE',
+            'UAE' => 'AE',
+            'SAUDI ARABIA' => 'SA',
+        ];
+
+        return $map[$c] ?? '';
+    }
+
+    private function getStateVariants($stateName)
+    {
+        if (empty($stateName)) return [];
+        $s = strtolower(trim($stateName));
+        $map = [
+            'alabama' => 'al', 'alaska' => 'ak', 'arizona' => 'az', 'arkansas' => 'ar', 'california' => 'ca',
+            'colorado' => 'co', 'connecticut' => 'ct', 'delaware' => 'de', 'florida' => 'fl', 'georgia' => 'ga',
+            'hawaii' => 'hi', 'idaho' => 'id', 'illinois' => 'il', 'indiana' => 'in', 'iowa' => 'ia',
+            'kansas' => 'ks', 'kentucky' => 'ky', 'louisiana' => 'la', 'maine' => 'me', 'maryland' => 'md',
+            'massachusetts' => 'ma', 'michigan' => 'mi', 'minnesota' => 'mn', 'mississippi' => 'ms', 'missouri' => 'mo',
+            'montana' => 'mt', 'nebraska' => 'ne', 'nevada' => 'nv', 'new hampshire' => 'nh', 'new jersey' => 'nj',
+            'new mexico' => 'nm', 'new york' => 'ny', 'north carolina' => 'nc', 'north dakota' => 'nd', 'ohio' => 'oh',
+            'oklahoma' => 'ok', 'oregon' => 'or', 'pennsylvania' => 'pa', 'rhode island' => 'ri', 'south carolina' => 'sc',
+            'south dakota' => 'sd', 'tennessee' => 'tn', 'texas' => 'tx', 'utah' => 'ut', 'vermont' => 'vt',
+            'virginia' => 'va', 'washington' => 'wa', 'west virginia' => 'wv', 'wisconsin' => 'wi', 'wyoming' => 'wy'
+        ];
+
+        $variants = [$s];
+        if (isset($map[$s])) {
+            $variants[] = $map[$s];
+        } else {
+            $flipped = array_flip($map);
+            if (isset($flipped[$s])) {
+                $variants[] = $flipped[$s];
+            }
+        }
+        return array_values(array_unique($variants));
+    }
 }

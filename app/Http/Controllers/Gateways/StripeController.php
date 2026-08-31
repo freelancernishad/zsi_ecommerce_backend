@@ -296,4 +296,25 @@ class StripeController extends Controller
             return response()->json(['error' => $e->getMessage()], 400);
         }
     }
+
+    /**
+     * Calculate Tax via Stripe Tax API or local fallback.
+     */
+    public function calculateTax(Request $request)
+    {
+        $addressData = $request->input('address_data', []);
+        $amount = (float) $request->input('amount', 0);
+        $lineItems = $request->input('items', []);
+
+        try {
+            $result = $this->stripeService->calculateTax($addressData, $amount, $lineItems);
+            return response()->json($result);
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'tax_amount' => 0,
+                'error' => $e->getMessage()
+            ], 400);
+        }
+    }
 }
