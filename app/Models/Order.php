@@ -12,7 +12,7 @@ class Order extends Model
     protected $fillable = [
         'order_number', 'user_id', 'original_subtotal', 'subtotal', 'discount', 
         'coupon_code', 'coupon_type', 'coupon_value',
-        'shipping_cost', 'tax', 'total', 'status', 
+        'shipping_cost', 'tax', 'tax_rate', 'tax_details', 'total', 'status', 
         'payment_method', 'payment_method_name', 'payment_gateway', 'transaction_id', 'payment_details',
         'shipping_method', 'shipping_address_id',
         'shipping_first_name', 'shipping_last_name', 'shipping_email', 
@@ -21,6 +21,12 @@ class Order extends Model
         'payment_status', 'fulfillment_status', 'delivery_status',
         'courier_name', 'tracking_number', 'tracking_url', 'shipped_at',
         'cj_order_id', 'cj_order_status', 'cj_tracking_number'
+    ];
+
+    protected $casts = [
+        'tax_details' => 'array',
+        'tax_rate' => 'float',
+        'tax' => 'float',
     ];
 
     public function user()

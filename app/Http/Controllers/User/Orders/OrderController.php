@@ -89,16 +89,23 @@ class OrderController extends Controller
                 }
 
 
-                $taxAmount = $request->tax;
+                $taxAmount = (float) ($request->tax ?? 0);
+                $taxRate = (float) ($request->tax_rate ?? 0);
+                $taxDetails = $request->tax_details ?? null;
+
+                if ($taxAmount > 0 && $taxRate == 0 && $request->subtotal > 0) {
+                    $subtotalAfterDiscount = max(0.01, $request->subtotal - ($request->discount ?? 0));
+                    $taxRate = round(($taxAmount / $subtotalAfterDiscount) * 100, 4);
+                }
+
                 if ($taxAmount === null || $taxAmount === '') {
-                    $taxRate = 0;
                     if ($address && $address->country && $address->state) {
                         $taxRecord = DB::table('taxes')
                             ->whereRaw('LOWER(TRIM(country)) = ?', [strtolower(trim($address->country))])
                             ->whereRaw('LOWER(TRIM(state)) = ?', [strtolower(trim($address->state))])
                             ->first();
                         if ($taxRecord) {
-                            $taxRate = $taxRecord->tax_rate;
+                            $taxRate = (float) $taxRecord->tax_rate;
                         }
                     }
                     $subtotalAfterDiscount = max(0, $request->subtotal - ($request->discount ?? 0));
@@ -115,6 +122,8 @@ class OrderController extends Controller
                     'coupon_type' => $request->coupon_type,
                     'coupon_value' => $request->coupon_value,
                     'tax' => $taxAmount,
+                    'tax_rate' => $taxRate,
+                    'tax_details' => $taxDetails,
                     'shipping_cost' => $request->shipping_cost ?? 0,
                     'total' => $request->total,
                     'status' => 'pending',

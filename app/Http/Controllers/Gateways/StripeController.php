@@ -24,12 +24,57 @@ class StripeController extends Controller
     {
         $user = Auth::user();
         $items = $request->input('items', []); // Format: [['price_data' => [...], 'quantity' => 1]]
+        $shippingCost = (float) $request->input('shipping_cost', 0);
+        $taxAmount = (float) $request->input('tax', $request->input('tax_amount', 0));
+        $discountAmount = (float) $request->input('discount', 0);
+
+        if ($shippingCost > 0) {
+            $items[] = [
+                'price_data' => [
+                    'currency' => 'usd',
+                    'product_data' => [
+                        'name' => 'Shipping Fee',
+                    ],
+                    'unit_amount' => (int) round($shippingCost * 100),
+                ],
+                'quantity' => 1,
+            ];
+        }
+
+        if ($taxAmount > 0) {
+            $items[] = [
+                'price_data' => [
+                    'currency' => 'usd',
+                    'product_data' => [
+                        'name' => 'Sales Tax',
+                    ],
+                    'unit_amount' => (int) round($taxAmount * 100),
+                ],
+                'quantity' => 1,
+            ];
+        }
+
+        $extraParams = [];
+        if ($discountAmount > 0) {
+            try {
+                $coupon = \Stripe\Coupon::create([
+                    'amount_off' => (int) round($discountAmount * 100),
+                    'currency' => 'usd',
+                    'duration' => 'once',
+                    'name' => 'Order Discount',
+                ]);
+                $extraParams['discounts'] = [['coupon' => $coupon->id]];
+            } catch (\Exception $e) {
+                \Illuminate\Support\Facades\Log::warning("Stripe Checkout coupon creation failed: " . $e->getMessage());
+            }
+        }
+
         $successUrl = $request->input('success_url', url('/payment/success'));
         $cancelUrl = $request->input('cancel_url', url('/payment/cancel'));
         $saveCard = $request->boolean('save_card', false);
 
         try {
-            $session = $this->stripeService->createCheckoutSession($user, $items, $successUrl, $cancelUrl, $saveCard);
+            $session = $this->stripeService->createCheckoutSession($user, $items, $successUrl, $cancelUrl, $saveCard, [], $extraParams);
             return response()->json(['id' => $session->id, 'url' => $session->url]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 400);

@@ -514,6 +514,7 @@ class StripeService
 
         // Convert common country names to 2-letter ISO country codes
         $isoCountry = $this->getCountryIsoCode($country);
+        $isoState = $this->getStateIsoCode($state, $isoCountry);
 
         $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
             ?: config('services.stripe.secret');
@@ -552,7 +553,7 @@ class StripeService
                     $customerDetails = [
                         'address' => array_filter([
                             'country' => $isoCountry,
-                            'state' => $state,
+                            'state' => $isoState ?: $state,
                             'city' => $city,
                             'postal_code' => $postalCode,
                             'line1' => $line1,
@@ -566,14 +567,43 @@ class StripeService
                         'customer_details' => $customerDetails,
                     ]);
 
+                    \Illuminate\Support\Facades\Log::info("Stripe Tax Calculation Response", $calculation->toArray());
+
                     $taxCents = $calculation->tax_amount_exclusive ?? 0;
                     $taxAmount = round($taxCents / 100, 2);
+
+                    $taxBreakdown = [];
+                    $taxRatePercentage = 0;
+                    $taxabilityReason = null;
+
+                    if (!empty($calculation->tax_breakdown)) {
+                        foreach ($calculation->tax_breakdown as $breakdown) {
+                            $rate = (float) ($breakdown['tax_rate_details']['percentage_decimal'] ?? 0);
+                            $taxRatePercentage = $rate;
+                            $taxabilityReason = $breakdown['taxability_reason'] ?? null;
+                            $taxBreakdown[] = [
+                                'taxable_amount' => round(($breakdown['taxable_amount'] ?? 0) / 100, 2),
+                                'tax_amount' => round(($breakdown['amount'] ?? 0) / 100, 2),
+                                'tax_rate_percentage' => $rate,
+                                'taxability_reason' => $breakdown['taxability_reason'] ?? null,
+                                'tax_type' => $breakdown['tax_rate_details']['tax_type'] ?? null,
+                                'state' => $breakdown['tax_rate_details']['state'] ?? null,
+                                'country' => $breakdown['tax_rate_details']['country'] ?? null,
+                            ];
+                        }
+                    }
 
                     return [
                         'success' => true,
                         'tax_amount' => $taxAmount,
+                        'subtotal_amount' => $amount,
+                        'tax_rate' => $taxRatePercentage,
+                        'taxability_reason' => $taxabilityReason,
+                        'tax_breakdown' => $taxBreakdown,
                         'source' => 'stripe',
                         'stripe_calculation_id' => $calculation->id ?? null,
+                        'calculation_summary' => "Subtotal: \${$amount}, Tax Rate: {$taxRatePercentage}%, Tax Amount: \${$taxAmount}" . ($taxabilityReason ? " (Reason: {$taxabilityReason})" : ""),
+                        'raw_stripe_calculation' => $calculation->toArray(),
                     ];
                 }
             } catch (Exception $e) {
@@ -662,6 +692,31 @@ class StripeService
         ];
 
         return $map[$c] ?? '';
+    }
+
+    private function getStateIsoCode($stateName, $countryIso = 'US')
+    {
+        if (empty($stateName)) return '';
+        $s = strtolower(trim($stateName));
+        if (strlen($s) === 2) return strtoupper($s);
+
+        if ($countryIso === 'US') {
+            $map = [
+                'alabama' => 'AL', 'alaska' => 'AK', 'arizona' => 'AZ', 'arkansas' => 'AR', 'california' => 'CA',
+                'colorado' => 'CO', 'connecticut' => 'CT', 'delaware' => 'DE', 'florida' => 'FL', 'georgia' => 'GA',
+                'hawaii' => 'HI', 'idaho' => 'ID', 'illinois' => 'IL', 'indiana' => 'IN', 'iowa' => 'IA',
+                'kansas' => 'KS', 'kentucky' => 'KY', 'louisiana' => 'LA', 'maine' => 'ME', 'maryland' => 'MD',
+                'massachusetts' => 'MA', 'michigan' => 'MI', 'minnesota' => 'MN', 'mississippi' => 'MS', 'missouri' => 'MO',
+                'montana' => 'MT', 'nebraska' => 'NE', 'nevada' => 'NV', 'new hampshire' => 'NH', 'new jersey' => 'NJ',
+                'new mexico' => 'NM', 'new york' => 'NY', 'north carolina' => 'NC', 'north dakota' => 'ND', 'ohio' => 'OH',
+                'oklahoma' => 'OK', 'oregon' => 'OR', 'pennsylvania' => 'PA', 'rhode island' => 'RI', 'south carolina' => 'SC',
+                'south dakota' => 'SD', 'tennessee' => 'TN', 'texas' => 'TX', 'utah' => 'UT', 'vermont' => 'VT',
+                'virginia' => 'VA', 'washington' => 'WA', 'west virginia' => 'WV', 'wisconsin' => 'WI', 'wyoming' => 'WY',
+                'district of columbia' => 'DC'
+            ];
+            return $map[$s] ?? strtoupper($stateName);
+        }
+        return strtoupper($stateName);
     }
 
     private function getStateVariants($stateName)

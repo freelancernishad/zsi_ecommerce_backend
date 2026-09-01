@@ -4,6 +4,7 @@ use App\Http\Middleware\AuthenticateAdmin;
 use App\Http\Controllers\Admin\Orders\OrderController;
 
 Route::prefix('admin/orders')->middleware(AuthenticateAdmin::class)->group(function () {
+    Route::get('/tax-reports', [\App\Http\Controllers\Admin\Reports\AdminTaxReportController::class, 'index']);
     Route::get('/stats', [OrderController::class, 'stats']);
     Route::get('/', [OrderController::class, 'index']);
     Route::post('/', [OrderController::class, 'store']);
