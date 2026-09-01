@@ -11,6 +11,11 @@ Route::prefix('admin/settings')->group(function () {
     Route::get('/taxes/{id}', [TaxController::class, 'show']);
     Route::delete('/taxes/{id}', [TaxController::class, 'destroy']);
 
+    // Stripe Tax Registrations (API Sync)
+    Route::get('/stripe-tax-registrations', [\App\Http\Controllers\Admin\Settings\AdminStripeTaxRegistrationController::class, 'index']);
+    Route::post('/stripe-tax-registrations', [\App\Http\Controllers\Admin\Settings\AdminStripeTaxRegistrationController::class, 'store']);
+    Route::post('/stripe-tax-registrations/bulk', [\App\Http\Controllers\Admin\Settings\AdminStripeTaxRegistrationController::class, 'bulkAdd']);
+
     // Shipping Method Routes
     Route::get('/shipping-methods', [ShippingMethodController::class, 'index']);
     Route::post('/shipping-methods', [ShippingMethodController::class, 'store']);
