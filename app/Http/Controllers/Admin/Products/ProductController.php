@@ -167,7 +167,7 @@ class ProductController extends Controller
                 'short_description'      => $request->short_description,
                 'price'                 => $request->price,
                 'sale_price'            => $request->sale_price,
-                'original_price'        => $request->original_price,
+                'original_price'        => $request->original_price ?? ($request->sale_price && $request->sale_price < $request->price ? $request->price : null),
                 'cost_per_item'         => $request->cost_per_item,
                 'stock_quantity'        => $request->has('quantity') ? $request->quantity : ($request->stock_quantity ?? 0),
                 'sku'                   => $request->sku,

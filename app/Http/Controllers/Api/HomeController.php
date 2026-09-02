@@ -198,10 +198,21 @@ class HomeController extends Controller
             return $product;
         };
 
-        // 3. Fetch Deal Of The Day (Products with highest discount percentage)
+        // 3. Fetch Deal Of The Day / On Sale (Products with highest discount percentage)
         $dealOfTheDay = Product::with(['images', 'variants'])
-            ->whereColumn('original_price', '>', 'price')
-            ->orderByRaw('(original_price - price) / original_price DESC')
+            ->where('status', 'published')
+            ->where(function($query) {
+                $query->whereColumn('original_price', '>', 'price')
+                      ->orWhere(function($q) {
+                          $q->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('price', '>', 'sale_price');
+                      });
+            })
+            ->orderByRaw('CASE 
+                WHEN original_price > price THEN (original_price - price) / original_price 
+                WHEN price > sale_price AND sale_price > 0 THEN (price - sale_price) / price 
+                ELSE 0 END DESC')
             ->limit(10)
             ->get()
             ->map($formatProduct);
@@ -228,8 +239,18 @@ class HomeController extends Controller
         // Fetch Exclusive Deals (Products with highest absolute discount amount)
         $exclusiveDeals = Product::with(['images', 'variants'])
             ->where('status', 'published')
-            ->whereColumn('original_price', '>', 'price')
-            ->orderByRaw('(original_price - price) DESC')
+            ->where(function($query) {
+                $query->whereColumn('original_price', '>', 'price')
+                      ->orWhere(function($q) {
+                          $q->whereNotNull('sale_price')
+                            ->where('sale_price', '>', 0)
+                            ->whereColumn('price', '>', 'sale_price');
+                      });
+            })
+            ->orderByRaw('CASE 
+                WHEN original_price > price THEN (original_price - price) 
+                WHEN price > sale_price AND sale_price > 0 THEN (price - sale_price) 
+                ELSE 0 END DESC')
             ->limit(6)
             ->get()
             ->map($formatProduct);
