@@ -138,6 +138,16 @@ class StripeWebhookService
 
             $log->update($updateData);
             Log::info("StripeLog updated for session: {$session->id}");
+
+            // Clear database cart items for the user upon successful payment
+            if ($log->user_id) {
+                try {
+                    \App\Models\Cart::where('user_id', $log->user_id)->delete();
+                    Log::info("Backend Cart cleared for user_id {$log->user_id} via checkout.session.completed webhook.");
+                } catch (\Exception $e) {
+                    Log::error("Failed to clear backend cart in webhook: " . $e->getMessage());
+                }
+            }
             
             // Dispatch generic event
             StripePaymentEvent::dispatch($eventType, $session->toArray(), 'success', $log->user_id);
@@ -279,6 +289,13 @@ class StripeWebhookService
                     $userId = \App\Models\User::where('stripe_id', $paymentIntent->customer)->value('id');
                 }
                 if ($userId) {
+                    try {
+                        \App\Models\Cart::where('user_id', $userId)->delete();
+                        Log::info("Backend Cart cleared for user_id {$userId} via payment_intent.succeeded webhook.");
+                    } catch (\Exception $e) {
+                        Log::error("Failed to clear backend cart in webhook: " . $e->getMessage());
+                    }
+
                     $user = \App\Models\User::find($userId);
                     if ($user) {
                         try {
