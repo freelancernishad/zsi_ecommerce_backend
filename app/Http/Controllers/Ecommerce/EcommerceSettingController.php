@@ -63,9 +63,21 @@ class EcommerceSettingController extends Controller
     {
         $taxes = Tax::all();
 
+        $rawSources = SiteSetting::where('group', 'tax_sources')
+            ->pluck('value', 'key')
+            ->toArray();
+
+        $taxSources = [
+            'tax_source_manual' => filter_var($rawSources['tax_source_manual'] ?? true, FILTER_VALIDATE_BOOLEAN),
+            'tax_source_cj' => filter_var($rawSources['tax_source_cj'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            'tax_source_shopify' => filter_var($rawSources['tax_source_shopify'] ?? false, FILTER_VALIDATE_BOOLEAN),
+            'tax_source_amazon' => filter_var($rawSources['tax_source_amazon'] ?? false, FILTER_VALIDATE_BOOLEAN),
+        ];
+
         return response()->json([
             'success' => true,
-            'data' => $taxes
+            'data' => $taxes,
+            'tax_sources' => $taxSources
         ]);
     }
 }

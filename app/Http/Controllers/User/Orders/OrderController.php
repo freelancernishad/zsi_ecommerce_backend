@@ -108,8 +108,21 @@ class OrderController extends Controller
                             $taxRate = (float) $taxRecord->tax_rate;
                         }
                     }
-                    $subtotalAfterDiscount = max(0, $request->subtotal - ($request->discount ?? 0));
-                    $taxAmount = round(($subtotalAfterDiscount * $taxRate) / 100, 2);
+                    $stripeService = app(\App\Services\Gateways\StripeService::class);
+                    $taxableSubtotal = 0;
+                    if (!empty($request->items)) {
+                        foreach ($request->items as $item) {
+                            $pId = $item['product_id'] ?? null;
+                            if ($stripeService->isProductTaxable($pId, $item)) {
+                                $price = (float) ($item['price'] ?? 0);
+                                $qty = (int) ($item['quantity'] ?? 1);
+                                $taxableSubtotal += ($price * $qty);
+                            }
+                        }
+                    } else {
+                        $taxableSubtotal = max(0, $request->subtotal - ($request->discount ?? 0));
+                    }
+                    $taxAmount = round(($taxableSubtotal * $taxRate) / 100, 2);
                 }
 
                 $order = Order::create([

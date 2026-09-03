@@ -502,6 +502,47 @@ class StripeService
     }
 
     /**
+     * Helper to check if a product should be charged tax based on individual flag and import source rules.
+     */
+    public function isProductTaxable($productId, array $item = [])
+    {
+        $product = null;
+        if ($productId) {
+            $product = \App\Models\Product::find($productId);
+        }
+
+        if ($product) {
+            if (isset($product->charge_tax) && !$product->charge_tax) {
+                return false;
+            }
+
+            $source = 'manual';
+            if (!empty($product->is_cj_product) || strtolower($product->import_source ?? '') === 'cj') {
+                $source = 'cj';
+            } else if (!empty($product->import_source)) {
+                $source = strtolower(trim($product->import_source));
+            }
+        } else {
+            if (isset($item['charge_tax']) && !$item['charge_tax']) {
+                return false;
+            }
+
+            $source = 'manual';
+            if (!empty($item['is_cj_product']) || strtolower($item['import_source'] ?? '') === 'cj') {
+                $source = 'cj';
+            } else if (!empty($item['import_source'])) {
+                $source = strtolower(trim($item['import_source']));
+            }
+        }
+
+        $default = ($source === 'manual') ? '1' : '0';
+        $settingKey = 'tax_source_' . $source;
+        $val = \App\Models\SiteSetting::getValue($settingKey, $default);
+
+        return filter_var($val, FILTER_VALIDATE_BOOLEAN) || $val === '1' || $val === 1 || $val === true;
+    }
+
+    /**
      * Calculate Tax using Stripe Tax API, falling back to local database tax rates.
      */
     public function calculateTax(array $addressData, float $amount, array $lineItems = [])
@@ -516,6 +557,55 @@ class StripeService
         $isoCountry = $this->getCountryIsoCode($country);
         $isoState = $this->getStateIsoCode($state, $isoCountry);
 
+        // Filter line items based on taxability
+        $items = [];
+        $taxableSubtotal = 0;
+
+        if (!empty($lineItems)) {
+            foreach ($lineItems as $idx => $item) {
+                $productId = $item['product_id'] ?? null;
+                $isTaxable = $this->isProductTaxable($productId, $item);
+
+                $itemPrice = (float) ($item['price'] ?? 0);
+                $itemQty = (int) ($item['quantity'] ?? 1);
+                $itemAmount = round($itemPrice * $itemQty * 100);
+
+                if ($isTaxable && $itemAmount > 0) {
+                    $taxableSubtotal += ($itemPrice * $itemQty);
+                    $items[] = [
+                        'amount' => (int) $itemAmount,
+                        'reference' => 'Item_' . ($idx + 1),
+                        'tax_behavior' => 'exclusive',
+                        'tax_code' => 'txcd_99999999',
+                    ];
+                }
+            }
+        }
+
+        // If no line items passed or none are taxable, but overall amount passed
+        if (empty($lineItems) && empty($items) && $amount > 0) {
+            $taxableSubtotal = $amount;
+            $items[] = [
+                'amount' => (int) round($amount * 100),
+                'reference' => 'Subtotal',
+                'tax_behavior' => 'exclusive',
+                'tax_code' => 'txcd_99999999',
+            ];
+        }
+
+        // If there are no taxable line items, return 0 tax immediately
+        if (empty($items)) {
+            return [
+                'success' => true,
+                'tax_amount' => 0,
+                'taxable_subtotal' => 0,
+                'subtotal_amount' => $amount,
+                'tax_rate' => 0,
+                'source' => 'rules',
+                'calculation_summary' => "No taxable products in cart.",
+            ];
+        }
+
         $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
             ?: config('services.stripe.secret');
 
@@ -523,89 +613,62 @@ class StripeService
             try {
                 Stripe::setApiKey($secretKey);
 
-                $items = [];
-                if (!empty($lineItems)) {
-                    foreach ($lineItems as $idx => $item) {
-                        $itemPrice = (float) ($item['price'] ?? 0);
-                        $itemQty = (int) ($item['quantity'] ?? 1);
-                        $itemAmount = round($itemPrice * $itemQty * 100);
-                        if ($itemAmount > 0) {
-                            $items[] = [
-                                'amount' => (int) $itemAmount,
-                                'reference' => 'Item_' . ($idx + 1),
-                                'tax_behavior' => 'exclusive',
-                                'tax_code' => 'txcd_99999999',
-                            ];
-                        }
+                $customerDetails = [
+                    'address' => array_filter([
+                        'country' => $isoCountry,
+                        'state' => $isoState ?: $state,
+                        'city' => $city,
+                        'postal_code' => $postalCode,
+                        'line1' => $line1,
+                    ]),
+                    'address_source' => 'shipping',
+                ];
+
+                $calculation = \Stripe\Tax\Calculation::create([
+                    'currency' => 'usd',
+                    'line_items' => $items,
+                    'customer_details' => $customerDetails,
+                ]);
+
+                \Illuminate\Support\Facades\Log::info("Stripe Tax Calculation Response", $calculation->toArray());
+
+                $taxCents = $calculation->tax_amount_exclusive ?? 0;
+                $taxAmount = round($taxCents / 100, 2);
+
+                $taxBreakdown = [];
+                $taxRatePercentage = 0;
+                $taxabilityReason = null;
+
+                if (!empty($calculation->tax_breakdown)) {
+                    foreach ($calculation->tax_breakdown as $breakdown) {
+                        $rate = (float) ($breakdown['tax_rate_details']['percentage_decimal'] ?? 0);
+                        $taxRatePercentage = $rate;
+                        $taxabilityReason = $breakdown['taxability_reason'] ?? null;
+                        $taxBreakdown[] = [
+                            'taxable_amount' => round(($breakdown['taxable_amount'] ?? 0) / 100, 2),
+                            'tax_amount' => round(($breakdown['amount'] ?? 0) / 100, 2),
+                            'tax_rate_percentage' => $rate,
+                            'taxability_reason' => $breakdown['taxability_reason'] ?? null,
+                            'tax_type' => $breakdown['tax_rate_details']['tax_type'] ?? null,
+                            'state' => $breakdown['tax_rate_details']['state'] ?? null,
+                            'country' => $breakdown['tax_rate_details']['country'] ?? null,
+                        ];
                     }
                 }
 
-                if (empty($items) && $amount > 0) {
-                    $items[] = [
-                        'amount' => (int) round($amount * 100),
-                        'reference' => 'Subtotal',
-                        'tax_behavior' => 'exclusive',
-                        'tax_code' => 'txcd_99999999',
-                    ];
-                }
-
-                if (!empty($items)) {
-                    $customerDetails = [
-                        'address' => array_filter([
-                            'country' => $isoCountry,
-                            'state' => $isoState ?: $state,
-                            'city' => $city,
-                            'postal_code' => $postalCode,
-                            'line1' => $line1,
-                        ]),
-                        'address_source' => 'shipping',
-                    ];
-
-                    $calculation = \Stripe\Tax\Calculation::create([
-                        'currency' => 'usd',
-                        'line_items' => $items,
-                        'customer_details' => $customerDetails,
-                    ]);
-
-                    \Illuminate\Support\Facades\Log::info("Stripe Tax Calculation Response", $calculation->toArray());
-
-                    $taxCents = $calculation->tax_amount_exclusive ?? 0;
-                    $taxAmount = round($taxCents / 100, 2);
-
-                    $taxBreakdown = [];
-                    $taxRatePercentage = 0;
-                    $taxabilityReason = null;
-
-                    if (!empty($calculation->tax_breakdown)) {
-                        foreach ($calculation->tax_breakdown as $breakdown) {
-                            $rate = (float) ($breakdown['tax_rate_details']['percentage_decimal'] ?? 0);
-                            $taxRatePercentage = $rate;
-                            $taxabilityReason = $breakdown['taxability_reason'] ?? null;
-                            $taxBreakdown[] = [
-                                'taxable_amount' => round(($breakdown['taxable_amount'] ?? 0) / 100, 2),
-                                'tax_amount' => round(($breakdown['amount'] ?? 0) / 100, 2),
-                                'tax_rate_percentage' => $rate,
-                                'taxability_reason' => $breakdown['taxability_reason'] ?? null,
-                                'tax_type' => $breakdown['tax_rate_details']['tax_type'] ?? null,
-                                'state' => $breakdown['tax_rate_details']['state'] ?? null,
-                                'country' => $breakdown['tax_rate_details']['country'] ?? null,
-                            ];
-                        }
-                    }
-
-                    return [
-                        'success' => true,
-                        'tax_amount' => $taxAmount,
-                        'subtotal_amount' => $amount,
-                        'tax_rate' => $taxRatePercentage,
-                        'taxability_reason' => $taxabilityReason,
-                        'tax_breakdown' => $taxBreakdown,
-                        'source' => 'stripe',
-                        'stripe_calculation_id' => $calculation->id ?? null,
-                        'calculation_summary' => "Subtotal: \${$amount}, Tax Rate: {$taxRatePercentage}%, Tax Amount: \${$taxAmount}" . ($taxabilityReason ? " (Reason: {$taxabilityReason})" : ""),
-                        'raw_stripe_calculation' => $calculation->toArray(),
-                    ];
-                }
+                return [
+                    'success' => true,
+                    'tax_amount' => $taxAmount,
+                    'taxable_subtotal' => $taxableSubtotal,
+                    'subtotal_amount' => $amount,
+                    'tax_rate' => $taxRatePercentage,
+                    'taxability_reason' => $taxabilityReason,
+                    'tax_breakdown' => $taxBreakdown,
+                    'source' => 'stripe',
+                    'stripe_calculation_id' => $calculation->id ?? null,
+                    'calculation_summary' => "Taxable Subtotal: \${$taxableSubtotal}, Tax Rate: {$taxRatePercentage}%, Tax Amount: \${$taxAmount}" . ($taxabilityReason ? " (Reason: {$taxabilityReason})" : ""),
+                    'raw_stripe_calculation' => $calculation->toArray(),
+                ];
             } catch (Exception $e) {
                 \Illuminate\Support\Facades\Log::warning("Stripe Tax calculation failed: " . $e->getMessage());
             }
@@ -645,11 +708,12 @@ class StripeService
             }
         }
 
-        $taxAmount = round(($amount * $taxRate) / 100, 2);
+        $taxAmount = round(($taxableSubtotal * $taxRate) / 100, 2);
 
         return [
             'success' => true,
             'tax_amount' => $taxAmount,
+            'taxable_subtotal' => $taxableSubtotal,
             'tax_rate' => $taxRate,
             'source' => 'local',
         ];
