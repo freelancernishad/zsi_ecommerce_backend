@@ -355,12 +355,27 @@ class PosController extends Controller
             $orderNumber = "POS-{$dateCode}-{$randomCode}";
             $receiptNumber = "RCPT-" . rand(100000, 999999);
 
+            $cashierId = optional($request->user())->id ?: 1;
+            $targetUserId = null;
+
+            if (!empty($validated['customer_email'])) {
+                $matchedUser = \App\Models\User::where('email', $validated['customer_email'])->first();
+                if ($matchedUser) {
+                    $targetUserId = $matchedUser->id;
+                }
+            }
+
+            if (!$targetUserId) {
+                $defaultUser = \App\Models\User::find($cashierId) ?? \App\Models\User::first();
+                $targetUserId = $defaultUser ? $defaultUser->id : null;
+            }
+
             $order = Order::create([
                 'order_number' => $orderNumber,
                 'order_type' => 'pos',
                 'pos_receipt_number' => $receiptNumber,
-                'pos_cashier_id' => optional($request->user())->id ?: 1,
-                'user_id' => null,
+                'pos_cashier_id' => $cashierId,
+                'user_id' => $targetUserId,
                 'original_subtotal' => $subtotal,
                 'subtotal' => $subtotal,
                 'discount' => $discount,
