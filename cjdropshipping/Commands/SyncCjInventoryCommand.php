@@ -46,7 +46,11 @@ class SyncCjInventoryCommand extends Command
         $successCount = 0;
         $failCount = 0;
 
-        foreach ($products as $product) {
+        foreach ($products as $index => $product) {
+            if ($index > 0) {
+                usleep(1200000); // Respect CJ 1 QPS rate limit
+            }
+
             try {
                 $this->output->write("Syncing PID {$product->cj_product_id} ('{$product->name}')... ");
                 

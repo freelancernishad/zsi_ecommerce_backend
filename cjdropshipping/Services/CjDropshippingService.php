@@ -194,21 +194,40 @@ class CjDropshippingService
     /**
      * Fetch full product details including variants from CJ.
      */
-    public function getProductDetail(string $cjProductId): ?array
+    public function getProductDetail(string $cjProductId, int $maxRetries = 3): ?array
     {
         $token = $this->getAccessToken();
+        $attempt = 0;
 
-        $response = Http::withHeaders([
-            'CJ-Access-Token' => $token,
-        ])->get("{$this->getBaseUrl()}/product/query", [
-            'pid' => $cjProductId,
-        ]);
+        while ($attempt < $maxRetries) {
+            $attempt++;
 
-        if ($response->successful() && ($response->json()['code'] ?? 0) === 200) {
-            return $response->json()['data'] ?? null;
+            $response = Http::withHeaders([
+                'CJ-Access-Token' => $token,
+            ])->get("{$this->getBaseUrl()}/product/query", [
+                'pid' => $cjProductId,
+            ]);
+
+            $json = $response->json() ?? [];
+            $code = $json['code'] ?? 0;
+
+            if ($response->successful() && $code === 200) {
+                return $json['data'] ?? null;
+            }
+
+            // Check if rate limited (1600200 or Too Many Requests)
+            $message = $json['message'] ?? '';
+            if ($code === 1600200 || str_contains(strtolower($message), 'too many requests') || str_contains(strtolower($message), 'qps limit')) {
+                if ($attempt < $maxRetries) {
+                    usleep(1500000); // 1.5s delay before retry
+                    continue;
+                }
+            }
+
+            Log::error('CJ Product Detail Error:', ['pid' => $cjProductId, 'response' => $json]);
+            break;
         }
 
-        Log::error('CJ Product Detail Error:', ['pid' => $cjProductId, 'response' => $response->json()]);
         return null;
     }
 

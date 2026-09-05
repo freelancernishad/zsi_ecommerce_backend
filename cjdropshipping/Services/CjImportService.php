@@ -22,31 +22,54 @@ class CjImportService
     /**
      * Bulk import multiple CJ Products into Laravel MySQL Database in a single call.
      */
-    public function bulkImportCjProducts(array $cjProductIds, float $profitMarginPercent = 20.0, ?int $categoryId = null): array
-    {
+    public function bulkImportCjProducts(
+        array $cjProductIds,
+        float $profitMarginPercent = 20.0,
+        ?int $categoryId = null,
+        ?callable $onProgress = null
+    ): array {
+        @set_time_limit(600);
+
         $importedProducts = [];
         $errors = [];
+        $total = count($cjProductIds);
 
-        foreach ($cjProductIds as $pid) {
+        foreach ($cjProductIds as $index => $pid) {
+            if ($index > 0) {
+                usleep(1200000); // 1.2s delay to satisfy CJ API 1 QPS rate limit
+            }
+
             try {
                 $product = $this->importCjProduct($pid, $profitMarginPercent, $categoryId);
-                $importedProducts[] = [
+                $itemResult = [
                     'pid' => $pid,
+                    'status' => 'completed',
                     'product_id' => $product->id,
                     'name' => $product->name,
                     'sku' => $product->sku,
                     'price' => $product->price,
                 ];
+                $importedProducts[] = $itemResult;
+
+                if (is_callable($onProgress)) {
+                    $onProgress($index + 1, $total, $itemResult);
+                }
             } catch (Exception $e) {
-                $errors[] = [
+                $itemError = [
                     'pid' => $pid,
+                    'status' => 'failed',
                     'error' => $e->getMessage(),
                 ];
+                $errors[] = $itemError;
+
+                if (is_callable($onProgress)) {
+                    $onProgress($index + 1, $total, $itemError);
+                }
             }
         }
 
         return [
-            'total' => count($cjProductIds),
+            'total' => $total,
             'successful' => count($importedProducts),
             'failed' => count($errors),
             'imported_products' => $importedProducts,

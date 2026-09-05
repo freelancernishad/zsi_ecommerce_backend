@@ -9,6 +9,9 @@ use App\Models\Order;
 use Illuminate\Http\Request;
 use Exception;
 
+use Illuminate\Support\Facades\Storage;
+use CjDropshipping\Jobs\ProcessCjBulkImportJob;
+
 class CjDropshippingController extends Controller
 {
     protected CjDropshippingService $cjService;
@@ -20,9 +23,6 @@ class CjDropshippingController extends Controller
         $this->cjImportService = $cjImportService;
     }
 
-    /**
-     * Search products live on CJ Dropshipping.
-     */
     /**
      * Search products live on CJ Dropshipping.
      */
@@ -122,7 +122,7 @@ class CjDropshippingController extends Controller
     }
 
     /**
-     * Bulk import multiple CJ products to local Laravel database in a single API call.
+     * Bulk import multiple CJ products. Spawns an asynchronous background CLI process without cron job or queue workers.
      */
     public function bulkImport(Request $request)
     {
@@ -131,29 +131,126 @@ class CjDropshippingController extends Controller
             'cj_product_ids.*' => 'required|string',
             'profit_margin_percent' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|exists:categories,id',
+            'sync' => 'nullable|boolean',
         ]);
 
         $cjProductIds = $request->input('cj_product_ids');
         $profitMargin = (float) $request->input('profit_margin_percent', 20);
         $categoryId = $request->input('category_id');
+        $isSync = $request->boolean('sync', false);
 
-        try {
-            $result = $this->cjImportService->bulkImportCjProducts(
-                $cjProductIds,
-                $profitMargin,
-                $categoryId ? (int) $categoryId : null
-            );
+        // If sync flag explicitly requested and single item, process synchronously
+        if ($isSync && count($cjProductIds) === 1) {
+            @set_time_limit(300);
+            try {
+                $result = $this->cjImportService->bulkImportCjProducts(
+                    $cjProductIds,
+                    $profitMargin,
+                    $categoryId ? (int) $categoryId : null
+                );
 
-            return response()->json([
-                'success' => true,
-                'message' => "Successfully imported {$result['successful']} of {$result['total']} products to store!",
-                'data' => $result,
-            ]);
-        } catch (Exception $e) {
+                return response()->json([
+                    'success' => true,
+                    'message' => "Successfully imported {$result['successful']} of {$result['total']} products to store!",
+                    'data' => $result,
+                ]);
+            } catch (Exception $e) {
+                return response()->json([
+                    'success' => false,
+                    'message' => $e->getMessage(),
+                ], 500);
+            }
+        }
+
+        // Automatic Zero-Cron Background Execution: Save batch payload & spawn CLI process asynchronously
+        $batchId = 'cj_batch_' . uniqid() . '_' . time();
+        $batchPayload = [
+            'batch_id' => $batchId,
+            'status' => 'pending',
+            'created_at' => now()->toDateTimeString(),
+            'pids' => $cjProductIds,
+            'profit_margin_percent' => $profitMargin,
+            'category_id' => $categoryId ? (int) $categoryId : null,
+            'total' => count($cjProductIds),
+        ];
+
+        Storage::disk('local')->put("cj_imports/{$batchId}.json", json_encode($batchPayload, JSON_PRETTY_PRINT));
+
+        // Spawn background CLI process (works on both Windows & Linux without cron job or queue workers)
+        $phpBinary = PHP_BINARY;
+        $artisanPath = base_path('artisan');
+        $cmd = "{$phpBinary} \"{$artisanPath}\" cj:process-bulk-import {$batchId}";
+
+        $this->spawnBackgroundProcess($cmd);
+
+        return response()->json([
+            'success' => true,
+            'background' => true,
+            'batch_id' => $batchId,
+            'total' => count($cjProductIds),
+            'message' => "Bulk import of " . count($cjProductIds) . " products started in the background! You can safely navigate away.",
+        ]);
+    }
+
+    /**
+     * Check status of a background bulk import batch.
+     */
+    public function getBulkImportStatus($batchId)
+    {
+        $filePath = "cj_imports/{$batchId}.json";
+
+        if (!Storage::disk('local')->exists($filePath)) {
             return response()->json([
                 'success' => false,
-                'message' => $e->getMessage(),
-            ], 500);
+                'message' => 'Batch file not found',
+            ], 404);
+        }
+
+        $data = json_decode(Storage::disk('local')->get($filePath), true);
+
+        return response()->json([
+            'success' => true,
+            'data' => $data,
+        ])->header('Cache-Control', 'no-cache, no-store, max-age=0, must-revalidate');
+    }
+
+    /**
+     * Get list of all CJ bulk import batches history.
+     */
+    public function getBulkImportBatches()
+    {
+        $files = Storage::disk('local')->files('cj_imports');
+        $batches = [];
+
+        foreach ($files as $file) {
+            if (str_ends_with($file, '.json')) {
+                $content = Storage::disk('local')->get($file);
+                $data = json_decode($content, true);
+                if ($data && isset($data['batch_id'])) {
+                    $batches[] = $data;
+                }
+            }
+        }
+
+        usort($batches, function ($a, $b) {
+            return strcmp($b['created_at'] ?? '', $a['created_at'] ?? '');
+        });
+
+        return response()->json([
+            'success' => true,
+            'data' => array_slice($batches, 0, 50),
+        ])->header('Cache-Control', 'no-cache, no-store, max-age=0, must-revalidate');
+    }
+
+    /**
+     * Cross-platform helper to launch asynchronous background CLI command.
+     */
+    protected function spawnBackgroundProcess(string $cmd): void
+    {
+        if (str_starts_with(strtoupper(PHP_OS), 'WIN')) {
+            pclose(popen("start \"\" /B {$cmd}", "r"));
+        } else {
+            exec("{$cmd} > /dev/null 2>&1 &");
         }
     }
 

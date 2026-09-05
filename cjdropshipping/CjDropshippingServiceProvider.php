@@ -4,6 +4,7 @@ namespace CjDropshipping;
 
 use Illuminate\Support\ServiceProvider;
 use CjDropshipping\Commands\SyncCjInventoryCommand;
+use CjDropshipping\Commands\ProcessBulkImportCommand;
 
 class CjDropshippingServiceProvider extends ServiceProvider
 {
@@ -43,6 +44,7 @@ class CjDropshippingServiceProvider extends ServiceProvider
         if ($this->app->runningInConsole()) {
             $this->commands([
                 SyncCjInventoryCommand::class,
+                ProcessBulkImportCommand::class,
             ]);
         }
     }
