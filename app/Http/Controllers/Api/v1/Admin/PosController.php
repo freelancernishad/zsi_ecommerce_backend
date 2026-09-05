@@ -89,32 +89,15 @@ class PosController extends Controller
     /**
      * Get products & variants list for POS Touch Screen Grid.
      */
+    /**
+     * Get products & variants list for POS Touch Screen Grid.
+     */
     public function getProducts(Request $request)
     {
         $search = trim($request->input('search', ''));
         $categoryId = $request->input('category_id');
-
-        $query = Product::with(['variants', 'category', 'images'])
-            ->withCount('orderItems');
-
-        if ($search) {
-            $query->where(function ($q) use ($search) {
-                $q->where('name', 'LIKE', "%{$search}%")
-                  ->orWhere('sku', 'LIKE', "%{$search}%")
-                  ->orWhereHas('variants', function ($vq) use ($search) {
-                      $vq->where('sku', 'LIKE', "%{$search}%")
-                         ->orWhere('combination_label', 'LIKE', "%{$search}%");
-                  });
-            });
-        }
-
-        if ($categoryId) {
-            $query->where('category_id', $categoryId);
-        }
-
-        $products = $query->orderBy('order_items_count', 'desc')
-            ->orderBy('id', 'desc')
-            ->paginate($request->input('per_page', 24));
+        $perPage = (int) $request->input('per_page', 24);
+        $page = (int) $request->input('page', 1);
 
         $getImageUrl = function ($product) {
             if (!$product || !$product->images) return null;
@@ -129,85 +112,165 @@ class PosController extends Controller
             return config('app.url') . '/storage/' . ltrim($path, '/');
         };
 
-        $items = [];
-        foreach ($products as $prod) {
-            $prodImg = $getImageUrl($prod);
+        if ($search !== '') {
+            // SEARCH MODE: Return direct matching variant cards
+            $variantQuery = ProductVariant::with(['product.category', 'product.images'])
+                ->where(function ($q) use ($search) {
+                    $q->where('sku', 'LIKE', "%{$search}%")
+                      ->orWhere('combination_label', 'LIKE', "%{$search}%")
+                      ->orWhere('id', $search)
+                      ->orWhereHas('product', function ($pq) use ($search) {
+                          $pq->where('name', 'LIKE', "%{$search}%")
+                             ->orWhere('sku', 'LIKE', "%{$search}%");
+                      });
+                });
 
-            if ($prod->variants->count() > 0) {
-                $variantsList = [];
-                $totalQty = 0;
-                $minPrice = null;
+            if ($categoryId) {
+                $variantQuery->whereHas('product', function ($pq) use ($categoryId) {
+                    $pq->where('category_id', $categoryId);
+                });
+            }
 
-                foreach ($prod->variants as $var) {
-                    $vPrice = (float) ($var->discount_price > 0 ? $var->discount_price : ($var->price > 0 ? $var->price : $prod->price));
-                    $vRegPrice = (float) ($var->price > 0 ? $var->price : $prod->price);
-                    $vQty = (int) $var->available_quantity;
-                    $totalQty += $vQty;
+            $variants = $variantQuery->orderBy('id', 'desc')
+                ->paginate($perPage, ['*'], 'page', $page);
 
-                    if ($minPrice === null || $vPrice < $minPrice) {
-                        $minPrice = $vPrice;
-                    }
-
-                    $variantsList[] = [
-                        'variant_id' => $var->id,
-                        'product_id' => $prod->id,
-                        'product_name' => $prod->name,
-                        'combination_label' => $var->combination_label,
-                        'color' => $var->color ?? null,
-                        'size' => $var->size ?? null,
-                        'sku' => $var->sku ?: "VAR-{$var->id}",
-                        'barcode' => isset($var->barcode) && $var->barcode ? $var->barcode : ($var->sku ?: "BAR-{$var->id}"),
-                        'price' => $vPrice,
-                        'regular_price' => $vRegPrice,
-                        'available_quantity' => $vQty,
-                        'image' => $prodImg,
-                        'category' => $prod->category ? $prod->category->name : 'Uncategorized',
-                    ];
-                }
-
-                $firstVar = $variantsList[0];
+            $items = [];
+            foreach ($variants as $var) {
+                $prod = $var->product;
+                $prodImg = $getImageUrl($prod);
+                $vPrice = (float) ($var->discount_price > 0 ? $var->discount_price : ($var->price > 0 ? $var->price : ($prod ? $prod->price : 0)));
+                $vRegPrice = (float) ($var->price > 0 ? $var->price : ($prod ? $prod->price : 0));
 
                 $items[] = [
-                    'variant_id' => $firstVar['variant_id'],
-                    'product_id' => $prod->id,
-                    'product_name' => $prod->name,
-                    'combination_label' => count($variantsList) === 1 ? $firstVar['combination_label'] : null,
-                    'sku' => $prod->sku ?: $firstVar['sku'],
-                    'barcode' => $prod->sku ?: $firstVar['barcode'],
-                    'price' => $minPrice,
-                    'regular_price' => (float) $prod->price,
-                    'available_quantity' => $totalQty,
+                    'variant_id' => $var->id,
+                    'product_id' => $var->product_id,
+                    'product_name' => $prod ? $prod->name : 'Product',
+                    'combination_label' => $var->combination_label,
+                    'color' => $var->color ?? null,
+                    'size' => $var->size ?? null,
+                    'sku' => $var->sku ?: "VAR-{$var->id}",
+                    'barcode' => isset($var->barcode) && $var->barcode ? $var->barcode : ($var->sku ?: "BAR-{$var->id}"),
+                    'price' => $vPrice,
+                    'regular_price' => $vRegPrice,
+                    'available_quantity' => (int) $var->available_quantity,
                     'image' => $prodImg,
-                    'category' => $prod->category ? $prod->category->name : 'Uncategorized',
-                    'variant_options' => $prod->variant_options,
-                    'variants' => $variantsList,
-                ];
-            } else {
-                $items[] = [
-                    'variant_id' => 0,
-                    'product_id' => $prod->id,
-                    'product_name' => $prod->name,
-                    'combination_label' => null,
-                    'sku' => $prod->sku ?: "PROD-{$prod->id}",
-                    'barcode' => "PROD-{$prod->id}",
-                    'price' => (float) ($prod->sale_price > 0 ? $prod->sale_price : $prod->price),
-                    'regular_price' => (float) $prod->price,
-                    'available_quantity' => (int) $prod->quantity,
-                    'image' => $prodImg,
-                    'category' => $prod->category ? $prod->category->name : 'Uncategorized',
-                    'variants' => [],
+                    'category' => ($prod && $prod->category) ? $prod->category->name : 'Uncategorized',
+                    'variants' => [], // Empty so frontend treats it as a single direct variant item!
                 ];
             }
+
+            $currentPage = $variants->currentPage();
+            $lastPage = $variants->lastPage();
+            $perPageVal = $variants->perPage();
+            $totalVal = $variants->total();
+        } else {
+            // BROWSE MODE: Group products by main product
+            $query = Product::with(['variants', 'category', 'images'])
+                ->withCount('orderItems');
+
+            if ($categoryId) {
+                $query->where('category_id', $categoryId);
+            }
+
+            $products = $query->orderBy('order_items_count', 'desc')
+                ->orderBy('id', 'desc')
+                ->paginate($perPage, ['*'], 'page', $page);
+
+            $items = [];
+            foreach ($products as $prod) {
+                $prodImg = $getImageUrl($prod);
+
+                if ($prod->variants->count() > 0) {
+                    $variantsList = [];
+                    $totalQty = 0;
+                    $minPrice = null;
+
+                    foreach ($prod->variants as $var) {
+                        $vPrice = (float) ($var->discount_price > 0 ? $var->discount_price : ($var->price > 0 ? $var->price : $prod->price));
+                        $vRegPrice = (float) ($var->price > 0 ? $var->price : $prod->price);
+                        $vQty = (int) $var->available_quantity;
+                        $totalQty += $vQty;
+
+                        if ($minPrice === null || $vPrice < $minPrice) {
+                            $minPrice = $vPrice;
+                        }
+
+                        $variantsList[] = [
+                            'variant_id' => $var->id,
+                            'product_id' => $prod->id,
+                            'product_name' => $prod->name,
+                            'combination_label' => $var->combination_label,
+                            'color' => $var->color ?? null,
+                            'size' => $var->size ?? null,
+                            'sku' => $var->sku ?: "VAR-{$var->id}",
+                            'barcode' => isset($var->barcode) && $var->barcode ? $var->barcode : ($var->sku ?: "BAR-{$var->id}"),
+                            'price' => $vPrice,
+                            'regular_price' => $vRegPrice,
+                            'available_quantity' => $vQty,
+                            'image' => $prodImg,
+                            'category' => $prod->category ? $prod->category->name : 'Uncategorized',
+                        ];
+                    }
+
+                    $firstVar = $variantsList[0];
+
+                    $items[] = [
+                        'variant_id' => $firstVar['variant_id'],
+                        'product_id' => $prod->id,
+                        'product_name' => $prod->name,
+                        'combination_label' => count($variantsList) === 1 ? $firstVar['combination_label'] : null,
+                        'sku' => $prod->sku ?: $firstVar['sku'],
+                        'barcode' => $prod->sku ?: $firstVar['barcode'],
+                        'price' => $minPrice,
+                        'regular_price' => (float) $prod->price,
+                        'available_quantity' => $totalQty,
+                        'image' => $prodImg,
+                        'category' => $prod->category ? $prod->category->name : 'Uncategorized',
+                        'variant_options' => $prod->variant_options,
+                        'variants' => $variantsList,
+                    ];
+                } else {
+                    $items[] = [
+                        'variant_id' => 0,
+                        'product_id' => $prod->id,
+                        'product_name' => $prod->name,
+                        'combination_label' => null,
+                        'sku' => $prod->sku ?: "PROD-{$prod->id}",
+                        'barcode' => "PROD-{$prod->id}",
+                        'price' => (float) ($prod->sale_price > 0 ? $prod->sale_price : $prod->price),
+                        'regular_price' => (float) $prod->price,
+                        'available_quantity' => (int) $prod->quantity,
+                        'image' => $prodImg,
+                        'category' => $prod->category ? $prod->category->name : 'Uncategorized',
+                        'variants' => [],
+                    ];
+                }
+            }
+
+            $currentPage = $products->currentPage();
+            $lastPage = $products->lastPage();
+            $perPageVal = $products->perPage();
+            $totalVal = $products->total();
         }
 
         return response()->json([
             'success' => true,
             'data' => $items,
+            'current_page' => $currentPage,
+            'last_page' => $lastPage,
+            'per_page' => $perPageVal,
+            'total' => $totalVal,
             'pagination' => [
-                'total' => $products->total(),
-                'per_page' => $products->perPage(),
-                'current_page' => $products->currentPage(),
-                'last_page' => $products->lastPage(),
+                'total' => $totalVal,
+                'per_page' => $perPageVal,
+                'current_page' => $currentPage,
+                'last_page' => $lastPage,
+            ],
+            'meta' => [
+                'total' => $totalVal,
+                'per_page' => $perPageVal,
+                'current_page' => $currentPage,
+                'last_page' => $lastPage,
             ]
         ]);
     }
