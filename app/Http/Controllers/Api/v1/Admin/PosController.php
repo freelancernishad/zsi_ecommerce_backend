@@ -417,6 +417,8 @@ class PosController extends Controller
                     'change_amount' => (float) $order->change_amount,
                     'payment_method' => $order->payment_method,
                     'customer_name' => $order->shipping_first_name,
+                    'customer_phone' => $order->shipping_phone,
+                    'customer_email' => $order->shipping_email,
                     'created_at' => $order->created_at->format('Y-m-d H:i:s'),
                     'items' => $itemsToCreate,
                 ]

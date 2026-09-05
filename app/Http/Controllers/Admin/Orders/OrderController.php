@@ -21,6 +21,21 @@ class OrderController extends Controller
             $query->where('user_id', $request->user_id);
         }
 
+        // Filter by Order Type / Sales Channel (e.g. 'pos', 'online')
+        if ($request->has('order_type') && $request->order_type !== 'all') {
+            $type = $request->order_type;
+            if ($type === 'pos') {
+                $query->where('order_type', 'pos');
+            } elseif ($type === 'online') {
+                $query->where(function($q) {
+                    $q->whereNull('order_type')
+                      ->orWhere('order_type', '!=', 'pos');
+                });
+            } else {
+                $query->where('order_type', $type);
+            }
+        }
+
         // Filter by Status (Combined mapping for delivery_status or general status)
         if ($request->has('status') && $request->status !== 'all') {
             $status = $request->status;
@@ -32,11 +47,13 @@ class OrderController extends Controller
             }
         }
 
-        // Search by Order Number or Customer Name
+        // Search by Order Number, POS Receipt Number, or Customer Name
         if ($request->has('search')) {
             $search = $request->search;
             $query->where(function($q) use ($search) {
                 $q->where('order_number', 'like', "%{$search}%")
+                  ->orWhere('pos_receipt_number', 'like', "%{$search}%")
+                  ->orWhere('shipping_first_name', 'like', "%{$search}%")
                   ->orWhereHas('user', function($uq) use ($search) {
                       $uq->where('name', 'like', "%{$search}%");
                   });
