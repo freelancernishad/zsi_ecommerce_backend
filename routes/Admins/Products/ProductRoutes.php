@@ -13,6 +13,9 @@ Route::prefix('admin/products')->middleware(AuthenticateAdmin::class)->group(fun
     // Inventory Management
     Route::get('/inventory', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'index']);
     Route::put('/inventory/{id}/quantity', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'updateQuantity']);
+    Route::post('/inventory/bulk-update', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'bulkUpdateQuantity']);
+    Route::get('/inventory/export', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'exportCsv']);
+    Route::post('/inventory/import-csv', [\App\Http\Controllers\Admin\Products\InventoryController::class, 'importCsv']);
 
     // Individual actions
     Route::get('/{id}', [ProductController::class, 'show']);
