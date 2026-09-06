@@ -74,7 +74,13 @@ class ProductController extends Controller
 
         $importSource = $request->get('import_source') ?: $request->get('source');
         if ($importSource && $importSource !== 'all') {
-            if ($importSource === 'cj' || $importSource === 'cjdropshipping') {
+            if ($importSource === 'amazon') {
+                $query->where(function ($q) {
+                    $q->where('import_source', 'amazon')
+                      ->orWhere('is_amazon_product', 1)
+                      ->orWhereNotNull('amazon_asin');
+                });
+            } elseif ($importSource === 'cj' || $importSource === 'cjdropshipping') {
                 $query->where(function ($q) {
                     $q->where('import_source', 'cj')
                       ->orWhere('is_cj_product', 1)
@@ -100,6 +106,10 @@ class ProductController extends Controller
                             ->where(function ($c) {
                                 $c->where('is_cj_product', 0)
                                   ->orWhereNull('is_cj_product');
+                            })
+                            ->where(function ($a) {
+                                $a->where('is_amazon_product', 0)
+                                  ->orWhereNull('is_amazon_product');
                             })
                             ->where(function ($u) {
                                 $u->whereNull('url_handle')

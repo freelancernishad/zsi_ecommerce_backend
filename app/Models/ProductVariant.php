@@ -23,7 +23,9 @@ class ProductVariant extends Model
         'price_adjustment',
         'cj_vid',
         'cj_variant_sku',
-        'cj_weight'
+        'cj_weight',
+        'amazon_asin',
+        'amazon_variant_sku'
     ];
 
     public function product()

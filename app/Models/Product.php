@@ -56,6 +56,10 @@ class Product extends Model
         'is_cj_product',
         'cj_delivery_cycle',
         'cj_synced_at',
+        'amazon_asin',
+        'amazon_url',
+        'is_amazon_product',
+        'amazon_synced_at',
         'import_source',
     ];
 
