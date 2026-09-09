@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Common\SystemSettings;
 
 use Illuminate\Http\Request;
+use App\Models\SiteSetting;
 use App\Models\SystemSetting;
 use App\Jobs\RefreshConfigCache;
 use App\Http\Controllers\Controller;
@@ -72,7 +73,10 @@ class SystemSettingController extends Controller
             'support_email'
         ];
 
-        $settings = SystemSetting::whereIn('key', $safeKeys)->pluck('value', 'key');
+        $systemSettings = SystemSetting::whereIn('key', $safeKeys)->pluck('value', 'key')->toArray();
+        $siteSettings = SiteSetting::whereIn('key', $safeKeys)->pluck('value', 'key')->toArray();
+
+        $settings = array_merge($systemSettings, $siteSettings);
 
         return response()->json($settings);
     }
