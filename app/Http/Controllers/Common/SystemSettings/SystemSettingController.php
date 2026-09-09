@@ -62,8 +62,10 @@ class SystemSettingController extends Controller
         $safeKeys = [
             'google_client_id',
             'google_login_flow',
+            'apple_auth_enabled',
             'apple_client_id',
             'apple_login_flow',
+            'apple_redirect_uri',
             'app_name',
             'app_logo',
             'primary_color',
