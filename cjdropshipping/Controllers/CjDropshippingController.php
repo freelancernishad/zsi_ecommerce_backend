@@ -259,6 +259,17 @@ class CjDropshippingController extends Controller
     public function processBatch($batchId)
     {
         try {
+            $filePath = "cj_imports/{$batchId}.json";
+            if (Storage::disk('local')->exists($filePath)) {
+                $batchData = json_decode(Storage::disk('local')->get($filePath), true);
+                if ($batchData) {
+                    $batchData['status'] = 'pending';
+                    unset($batchData['completed_at']);
+                    unset($batchData['result']);
+                    Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+                }
+            }
+
             $phpBinary = $this->getPhpCliBinary();
             $artisanPath = base_path('artisan');
             $cmd = "{$phpBinary} \"{$artisanPath}\" cj:process-bulk-import {$batchId}";
