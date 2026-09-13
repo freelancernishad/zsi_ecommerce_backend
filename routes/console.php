@@ -43,4 +43,37 @@ Artisan::command('tenants:migrate {--tenant= : Specific tenant database name (e.
     }
 })->purpose('Run database migrations across all or specific configured tenant databases');
 
+// Schedule automatic processing of pending CJ & Amazon bulk imports
+use Illuminate\Support\Facades\Schedule;
+use Illuminate\Support\Facades\Storage;
+
+Schedule::call(function () {
+    // Process pending CJ imports
+    $cjFiles = Storage::disk('local')->files('cj_imports');
+    foreach ($cjFiles as $file) {
+        if (str_ends_with($file, '.json')) {
+            $content = Storage::disk('local')->get($file);
+            $data = json_decode($content, true);
+            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+                Artisan::call('cj:process-bulk-import', ['batchId' => $data['batch_id']]);
+                break;
+            }
+        }
+    }
+
+    // Process pending Amazon imports
+    $amzFiles = Storage::disk('local')->files('amazon_imports');
+    foreach ($amzFiles as $file) {
+        if (str_ends_with($file, '.json')) {
+            $content = Storage::disk('local')->get($file);
+            $data = json_decode($content, true);
+            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+                Artisan::call('amazon:process-bulk-import', ['batchId' => $data['batch_id']]);
+                break;
+            }
+        }
+    }
+})->everyMinute()->name('process-pending-bulk-imports')->withoutOverlapping();
+
+
 
