@@ -149,30 +149,38 @@ class AmazonImportService
             }
 
             // Create or Update Product in DB
-            $product = Product::updateOrCreate(
-                ['amazon_asin' => $asin],
-                [
-                    'name' => $amazonData['title'],
-                    'slug' => $slug,
-                    'description' => $amazonData['description'] ?? '',
-                    'short_description' => Str::limit(strip_tags($amazonData['description'] ?? ''), 160),
-                    'price' => $salePrice,
-                    'original_price' => $salePrice,
-                    'cost_per_item' => $costPrice,
-                    'sku' => $amazonData['sku'] ?? ("AMZ-" . $asin),
-                    'stock_quantity' => $defaultStock,
-                    'category_id' => $targetCategoryId,
-                    'brand_id' => null,
-                    'status' => in_array($status, ['published', 'draft']) ? $status : 'published',
-                    'variant_options' => $variantOptions,
-                    'is_physical' => true,
-                    'is_amazon_product' => true,
-                    'import_source' => 'amazon',
-                    'amazon_asin' => $asin,
-                    'amazon_url' => $amazonUrl,
-                    'amazon_synced_at' => now(),
-                ]
-            );
+            $productPayload = [
+                'name' => $amazonData['title'],
+                'slug' => $slug,
+                'description' => $amazonData['description'] ?? '',
+                'short_description' => Str::limit(strip_tags($amazonData['description'] ?? ''), 160),
+                'price' => $salePrice,
+                'original_price' => $salePrice,
+                'cost_per_item' => $costPrice,
+                'sku' => $amazonData['sku'] ?? ("AMZ-" . $asin),
+                'stock_quantity' => $defaultStock,
+                'category_id' => $targetCategoryId,
+                'brand_id' => null,
+                'status' => in_array($status, ['published', 'draft']) ? $status : 'published',
+                'variant_options' => $variantOptions,
+                'is_physical' => true,
+                'is_amazon_product' => true,
+                'import_source' => 'amazon',
+                'amazon_asin' => $asin,
+                'amazon_url' => $amazonUrl,
+                'amazon_synced_at' => now(),
+            ];
+
+            try {
+                $product = Product::updateOrCreate(['amazon_asin' => $asin], $productPayload);
+            } catch (\Illuminate\Database\QueryException $e) {
+                if (str_contains($e->getMessage(), 'products_slug_unique')) {
+                    $productPayload['slug'] = Str::limit($slug, 100, '') . '-' . uniqid();
+                    $product = Product::updateOrCreate(['amazon_asin' => $asin], $productPayload);
+                } else {
+                    throw $e;
+                }
+            }
 
             // Import Product Images
             if (!empty($amazonData['images']) && is_array($amazonData['images'])) {

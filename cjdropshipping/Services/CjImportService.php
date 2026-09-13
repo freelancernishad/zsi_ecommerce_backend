@@ -121,32 +121,40 @@ class CjImportService
             $variantOptions = $this->buildVariantOptions($cjData);
 
             // Create or Update Product
-            $product = Product::updateOrCreate(
-                ['cj_product_id' => $cjData['pid']],
-                [
-                    'name' => $cjData['productNameEn'] ?? $cjData['productName'] ?? 'CJ Product',
-                    'slug' => $slug,
-                    'description' => $cjData['description'] ?? '',
-                    'short_description' => Str::limit(strip_tags($cjData['description'] ?? ''), 160),
-                    'price' => $salePrice,
-                    'original_price' => $salePrice,
-                    'cost_per_item' => $costPrice,
-                    'sku' => $cjData['productSku'] ?? ('CJ-' . $cjData['pid']),
-                    'stock_quantity' => $totalStock,
-                    'category_id' => $targetCategoryId,
-                    'brand_id' => null,
-                    'status' => 'published',
-                    'weight' => (float) ($cjData['productWeight'] ?? 0),
-                    'weight_unit' => $cjData['productUnit'] ?? 'g',
-                    'variant_options' => $variantOptions,
-                    'is_physical' => true,
-                    'is_cj_product' => true,
-                    'import_source' => 'cj',
-                    'cj_spu' => $cjData['productSku'] ?? null,
-                    'cj_delivery_cycle' => $cjData['deliveryCycle'] ?? null,
-                    'cj_synced_at' => now(),
-                ]
-            );
+            $cjPayload = [
+                'name' => $cjData['productNameEn'] ?? $cjData['productName'] ?? 'CJ Product',
+                'slug' => $slug,
+                'description' => $cjData['description'] ?? '',
+                'short_description' => Str::limit(strip_tags($cjData['description'] ?? ''), 160),
+                'price' => $salePrice,
+                'original_price' => $salePrice,
+                'cost_per_item' => $costPrice,
+                'sku' => $cjData['productSku'] ?? ('CJ-' . $cjData['pid']),
+                'stock_quantity' => $totalStock,
+                'category_id' => $targetCategoryId,
+                'brand_id' => null,
+                'status' => 'published',
+                'weight' => (float) ($cjData['productWeight'] ?? 0),
+                'weight_unit' => $cjData['productUnit'] ?? 'g',
+                'variant_options' => $variantOptions,
+                'is_physical' => true,
+                'is_cj_product' => true,
+                'import_source' => 'cj',
+                'cj_spu' => $cjData['productSku'] ?? null,
+                'cj_delivery_cycle' => $cjData['deliveryCycle'] ?? null,
+                'cj_synced_at' => now(),
+            ];
+
+            try {
+                $product = Product::updateOrCreate(['cj_product_id' => $cjData['pid']], $cjPayload);
+            } catch (\Illuminate\Database\QueryException $e) {
+                if (str_contains($e->getMessage(), 'products_slug_unique')) {
+                    $cjPayload['slug'] = Str::limit($slug, 100, '') . '-' . uniqid();
+                    $product = Product::updateOrCreate(['cj_product_id' => $cjData['pid']], $cjPayload);
+                } else {
+                    throw $e;
+                }
+            }
 
             // Import Product Images with JSON & Array parsing
             $rawMainImg = $cjData['productImage'] ?? $cjData['bigImage'] ?? null;
