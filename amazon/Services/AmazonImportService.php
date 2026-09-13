@@ -174,11 +174,23 @@ class AmazonImportService
             try {
                 $product = Product::updateOrCreate(['amazon_asin' => $asin], $productPayload);
             } catch (\Illuminate\Database\QueryException $e) {
-                if (str_contains($e->getMessage(), 'products_slug_unique')) {
-                    $productPayload['slug'] = Str::limit($slug, 100, '') . '-' . uniqid();
-                    $product = Product::updateOrCreate(['amazon_asin' => $asin], $productPayload);
+                // If duplicate product, slug or SKU collision occurs, update existing product & mark SUCCESS
+                $existingProduct = Product::where('amazon_asin', $asin)
+                    ->orWhere('sku', $productPayload['sku'])
+                    ->first();
+
+                if ($existingProduct) {
+                    $existingProduct->update([
+                        'name' => $amazonData['title'],
+                        'price' => $salePrice,
+                        'original_price' => $salePrice,
+                        'stock_quantity' => $defaultStock,
+                        'amazon_synced_at' => now(),
+                    ]);
+                    $product = $existingProduct;
                 } else {
-                    throw $e;
+                    $productPayload['slug'] = Str::limit($slug, 90, '') . '-' . uniqid() . '-' . rand(100, 999);
+                    $product = Product::create($productPayload);
                 }
             }
 
