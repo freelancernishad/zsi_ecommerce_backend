@@ -92,14 +92,15 @@ class CjImportService
             $costPrice = $this->parsePrice($cjData['sellPrice'] ?? 0);
             $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
 
-            $slug = Str::slug($cjData['productNameEn'] ?? $cjData['productName'] ?? ('cj-product-' . $cjData['pid']));
-            
-            // Ensure unique slug
-            $existingSlugCount = Product::where('slug', $slug)
-                ->where('cj_product_id', '!=', $cjData['pid'])
-                ->count();
-            if ($existingSlugCount > 0) {
-                $slug = $slug . '-' . Str::random(5);
+            $pid = $cjData['pid'] ?? '';
+            $productName = $cjData['productNameEn'] ?? $cjData['productName'] ?? ('cj-product-' . $pid);
+
+            // Generate safe & unique slug (limited to 120 chars to prevent MySQL VARCHAR truncation duplicate key errors)
+            $baseSlug = Str::limit(Str::slug($productName), 120, '');
+            $slug = $baseSlug;
+
+            while (Product::where('slug', $slug)->where('cj_product_id', '!=', $pid)->exists()) {
+                $slug = $baseSlug . '-' . Str::random(6);
             }
 
             // Fallback category if none specified (prevents NOT NULL constraint error)

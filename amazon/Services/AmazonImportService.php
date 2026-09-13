@@ -123,14 +123,14 @@ class AmazonImportService
             }
 
             $asin = $amazonData['asin'] ?? $this->scraperService->extractAsin($asinOrUrl);
-            $slug = Str::slug($amazonData['title']);
+            
+            // Generate safe & unique slug (limited to 120 chars to prevent MySQL VARCHAR truncation duplicate key errors)
+            $titleName = $amazonData['title'] ?? ('amazon-product-' . $asin);
+            $baseSlug = Str::limit(Str::slug($titleName), 120, '');
+            $slug = $baseSlug;
 
-            // Ensure unique slug for products
-            $existingSlugCount = Product::where('slug', $slug)
-                ->where('amazon_asin', '!=', $asin)
-                ->count();
-            if ($existingSlugCount > 0) {
-                $slug = $slug . '-' . Str::random(5);
+            while (Product::where('slug', $slug)->where('amazon_asin', '!=', $asin)->exists()) {
+                $slug = $baseSlug . '-' . Str::random(6);
             }
 
             // Fallback category if none specified
