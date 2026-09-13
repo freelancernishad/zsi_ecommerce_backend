@@ -10,6 +10,8 @@ use Illuminate\Http\Request;
 use Exception;
 
 use Illuminate\Support\Facades\Storage;
+use Illuminate\Support\Facades\Artisan;
+use Illuminate\Support\Facades\Log;
 use CjDropshipping\Jobs\ProcessCjBulkImportJob;
 
 class CjDropshippingController extends Controller
@@ -177,11 +179,20 @@ class CjDropshippingController extends Controller
         Storage::disk('local')->put("cj_imports/{$batchId}.json", json_encode($batchPayload, JSON_PRETTY_PRINT));
 
         // Spawn background CLI process (works on both Windows & Linux without cron job or queue workers)
-        $phpBinary = PHP_BINARY;
+        $phpBinary = $this->getPhpCliBinary();
         $artisanPath = base_path('artisan');
         $cmd = "{$phpBinary} \"{$artisanPath}\" cj:process-bulk-import {$batchId}";
 
-        $this->spawnBackgroundProcess($cmd);
+        $spawned = $this->spawnBackgroundProcess($cmd);
+
+        if (!$spawned) {
+            // Fallback to queue if background process spawn failed or exec disabled on live server
+            try {
+                Artisan::queue('cj:process-bulk-import', ['batchId' => $batchId]);
+            } catch (Exception $e) {
+                Log::error("Failed to queue CJ bulk import batch {$batchId}: " . $e->getMessage());
+            }
+        }
 
         return response()->json([
             'success' => true,
@@ -243,15 +254,98 @@ class CjDropshippingController extends Controller
     }
 
     /**
+     * Manually trigger processing of a pending batch.
+     */
+    public function processBatch($batchId)
+    {
+        try {
+            $phpBinary = $this->getPhpCliBinary();
+            $artisanPath = base_path('artisan');
+            $cmd = "{$phpBinary} \"{$artisanPath}\" cj:process-bulk-import {$batchId}";
+
+            $spawned = $this->spawnBackgroundProcess($cmd);
+
+            if (!$spawned) {
+                Artisan::call('cj:process-bulk-import', ['batchId' => $batchId]);
+            }
+
+            return response()->json([
+                'success' => true,
+                'message' => "Triggered processing for CJ batch {$batchId}",
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Cross-platform helper to launch asynchronous background CLI command.
      */
-    protected function spawnBackgroundProcess(string $cmd): void
+    protected function spawnBackgroundProcess(string $cmd): bool
     {
-        if (str_starts_with(strtoupper(PHP_OS), 'WIN')) {
-            pclose(popen("start \"\" /B {$cmd}", "r"));
-        } else {
-            exec("{$cmd} > /dev/null 2>&1 &");
+        $disabled = array_map('trim', explode(',', ini_get('disable_functions') ?: ''));
+
+        try {
+            if (str_starts_with(strtoupper(PHP_OS), 'WIN')) {
+                if (!in_array('popen', $disabled) && function_exists('popen')) {
+                    pclose(popen("start \"\" /B {$cmd}", "r"));
+                    return true;
+                }
+            } else {
+                if (!in_array('exec', $disabled) && function_exists('exec')) {
+                    exec("{$cmd} > /dev/null 2>&1 &");
+                    return true;
+                } elseif (!in_array('shell_exec', $disabled) && function_exists('shell_exec')) {
+                    shell_exec("{$cmd} > /dev/null 2>&1 &");
+                    return true;
+                } elseif (!in_array('popen', $disabled) && function_exists('popen')) {
+                    pclose(popen("{$cmd} > /dev/null 2>&1 &", "r"));
+                    return true;
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning("spawnBackgroundProcess failed: " . $e->getMessage());
         }
+
+        return false;
+    }
+
+    /**
+     * Resolve the proper PHP CLI binary executable (fixes PHP-FPM / CGI issues on live servers).
+     */
+    protected function getPhpCliBinary(): string
+    {
+        $phpBinary = PHP_BINARY;
+
+        // If running under FPM/CGI webserver, PHP_BINARY is php-fpm which cannot run artisan commands
+        if (preg_match('/fpm|cgi/i', $phpBinary)) {
+            if (defined('PHP_BINDIR') && file_exists(PHP_BINDIR . '/php') && is_executable(PHP_BINDIR . '/php')) {
+                return PHP_BINDIR . '/php';
+            }
+
+            $candidates = [
+                '/usr/local/bin/php',
+                '/usr/bin/php',
+                '/usr/local/bin/ea-php83',
+                '/usr/local/bin/ea-php82',
+                '/usr/local/bin/ea-php81',
+                '/usr/local/bin/ea-php80',
+                '/usr/bin/env php',
+            ];
+
+            foreach ($candidates as $candidate) {
+                if (file_exists($candidate) && is_executable($candidate)) {
+                    return $candidate;
+                }
+            }
+
+            return 'php';
+        }
+
+        return $phpBinary;
     }
 
     /**

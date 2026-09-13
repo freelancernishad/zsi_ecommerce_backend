@@ -12,4 +12,5 @@ Route::prefix('api/admin/amazon')->middleware(AuthenticateAdmin::class)->group(f
     Route::post('/bulk-import', [AmazonController::class, 'bulkImport']);
     Route::get('/bulk-import-batches', [AmazonController::class, 'getBulkImportBatches']);
     Route::get('/bulk-import-status/{batchId}', [AmazonController::class, 'getBulkImportStatus']);
+    Route::post('/process-batch/{batchId}', [AmazonController::class, 'processBatch']);
 });
