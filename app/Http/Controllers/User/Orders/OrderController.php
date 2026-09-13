@@ -24,17 +24,32 @@ class OrderController extends Controller
         return response()->json(['status' => 'success', 'data' => $orders]);
     }
 
-    public function show($id)
+    public function show(Request $request, $id)
     {
-        $order = Order::where('user_id', Auth::id())
-            ->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories'])
-            ->findOrFail($id);
+        $user = auth('api')->user() ?? Auth::user();
+        if ($user) {
+            $query = Order::where(function($q) use ($user) {
+                $q->where('user_id', $user->id)->orWhereNull('user_id');
+            })->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
+        } else {
+            // Guest user: strictly restrict to guest orders where user_id IS NULL
+            $query = Order::whereNull('user_id')
+                ->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
+        }
+
+        if (is_numeric($id)) {
+            $order = $query->where('id', $id)->firstOrFail();
+        } else {
+            $order = $query->where('order_number', $id)->firstOrFail();
+        }
         
         return response()->json(['status' => 'success', 'data' => $order]);
     }
 
     public function placeOrder(Request $request)
     {
+        $user = auth('api')->user() ?? Auth::user();
+
         $request->validate([
             'items' => 'required|array',
             'items.*.product_id' => 'required|exists:products,id',
@@ -62,32 +77,58 @@ class OrderController extends Controller
             'transaction_id' => 'nullable|string',
         ]);
 
-
         try {
-            return DB::transaction(function () use ($request) {
-                if ($request->shipping_address_id) {
-                    $address = Auth::user()->addresses()->findOrFail($request->shipping_address_id);
-                } else {
-                    // Handle manual address entry
-                    $nameParts = explode(' ', $request->address_data['fullName'], 2);
-                    $firstName = $nameParts[0];
-                    $lastName = $nameParts[1] ?? '';
+            return DB::transaction(function () use ($request, $user) {
+                $address = null;
+                $shippingFirstName = '';
+                $shippingLastName = '';
+                $shippingEmail = '';
+                $shippingPhone = '';
+                $shippingCountry = '';
+                $shippingStreetAddress = '';
+                $shippingCity = '';
+                $shippingState = '';
+                $shippingZipCode = '';
 
-                    $address = Auth::user()->addresses()->create([
-                        'first_name' => $firstName,
-                        'last_name' => $lastName,
-                        'email' => Auth::user()->email,
-                        'phone' => $request->address_data['phone'],
-                        'country' => $request->address_data['country'],
-                        'street_address' => $request->address_data['addressLine1'],
-                        'city' => $request->address_data['city'],
-                        'state' => $request->address_data['state'],
-                        'zip_code' => $request->address_data['postalCode'],
-                        'type' => 'shipping',
-                        'is_default' => $request->address_data['isDefault'] ?? false,
-                    ]);
+                if ($request->shipping_address_id && $user) {
+                    $address = $user->addresses()->findOrFail($request->shipping_address_id);
+                    $shippingFirstName = $address->first_name;
+                    $shippingLastName = $address->last_name;
+                    $shippingEmail = $address->email;
+                    $shippingPhone = $address->phone;
+                    $shippingCountry = $address->country;
+                    $shippingStreetAddress = $address->street_address;
+                    $shippingCity = $address->city;
+                    $shippingState = $address->state;
+                    $shippingZipCode = $address->zip_code ?? $address->postal_code;
+                } else if ($request->address_data) {
+                    $nameParts = explode(' ', $request->address_data['fullName'] ?? '', 2);
+                    $shippingFirstName = $nameParts[0] ?? '';
+                    $shippingLastName = $nameParts[1] ?? '';
+                    $shippingEmail = $request->address_data['email'] ?? $request->email ?? ($user ? $user->email : '');
+                    $shippingPhone = $request->address_data['phone'] ?? '';
+                    $shippingCountry = $request->address_data['country'] ?? '';
+                    $shippingStreetAddress = $request->address_data['addressLine1'] ?? '';
+                    $shippingCity = $request->address_data['city'] ?? '';
+                    $shippingState = $request->address_data['state'] ?? '';
+                    $shippingZipCode = $request->address_data['postalCode'] ?? '';
+
+                    if ($user) {
+                        $address = $user->addresses()->create([
+                            'first_name' => $shippingFirstName,
+                            'last_name' => $shippingLastName,
+                            'email' => $shippingEmail ?: $user->email,
+                            'phone' => $shippingPhone,
+                            'country' => $shippingCountry,
+                            'street_address' => $shippingStreetAddress,
+                            'city' => $shippingCity,
+                            'state' => $shippingState,
+                            'zip_code' => $shippingZipCode,
+                            'type' => 'shipping',
+                            'is_default' => $request->address_data['isDefault'] ?? false,
+                        ]);
+                    }
                 }
-
 
                 $taxAmount = (float) ($request->tax ?? 0);
                 $taxRate = (float) ($request->tax_rate ?? 0);
@@ -99,10 +140,12 @@ class OrderController extends Controller
                 }
 
                 if ($taxAmount === null || $taxAmount === '') {
-                    if ($address && $address->country && $address->state) {
+                    $countryToMatch = $address ? $address->country : $shippingCountry;
+                    $stateToMatch = $address ? $address->state : $shippingState;
+                    if ($countryToMatch && $stateToMatch) {
                         $taxRecord = DB::table('taxes')
-                            ->whereRaw('LOWER(TRIM(country)) = ?', [strtolower(trim($address->country))])
-                            ->whereRaw('LOWER(TRIM(state)) = ?', [strtolower(trim($address->state))])
+                            ->whereRaw('LOWER(TRIM(country)) = ?', [strtolower(trim($countryToMatch))])
+                            ->whereRaw('LOWER(TRIM(state)) = ?', [strtolower(trim($stateToMatch))])
                             ->first();
                         if ($taxRecord) {
                             $taxRate = (float) $taxRecord->tax_rate;
@@ -127,7 +170,7 @@ class OrderController extends Controller
 
                 $order = Order::create([
                     'order_number' => 'ORD-' . strtoupper(Str::random(10)),
-                    'user_id' => Auth::id(),
+                    'user_id' => $user ? $user->id : null,
                     'original_subtotal' => $request->original_subtotal,
                     'subtotal' => $request->subtotal,
                     'discount' => $request->discount ?? 0,
@@ -144,18 +187,18 @@ class OrderController extends Controller
                     'payment_status' => $request->transaction_id ? 'paid' : 'pending',
                     'transaction_id' => $request->transaction_id,
                     'shipping_method' => $request->shipping_method,
-                    'shipping_address_id' => $address->id,
+                    'shipping_address_id' => $address ? $address->id : null,
                     
                     // Address snapshot
-                    'shipping_first_name' => $address->first_name,
-                    'shipping_last_name' => $address->last_name,
-                    'shipping_email' => $address->email,
-                    'shipping_phone' => $address->phone,
-                    'shipping_country' => $address->country,
-                    'shipping_street_address' => $address->street_address,
-                    'shipping_city' => $address->city,
-                    'shipping_state' => $address->state,
-                    'shipping_zip_code' => $address->postal_code ?? $address->zip_code,
+                    'shipping_first_name' => $shippingFirstName,
+                    'shipping_last_name' => $shippingLastName,
+                    'shipping_email' => $shippingEmail,
+                    'shipping_phone' => $shippingPhone,
+                    'shipping_country' => $shippingCountry,
+                    'shipping_street_address' => $shippingStreetAddress,
+                    'shipping_city' => $shippingCity,
+                    'shipping_state' => $shippingState,
+                    'shipping_zip_code' => $shippingZipCode,
                 ]);
 
                 foreach ($request->items as $item) {
@@ -190,8 +233,10 @@ class OrderController extends Controller
                     ]);
                 }
 
-                // Clear user's cart on successful order placement
-                Cart::where('user_id', Auth::id())->delete();
+                // Clear user's cart on successful order placement if logged in
+                if ($user) {
+                    Cart::where('user_id', $user->id)->delete();
+                }
 
                 return response()->json([
                     'status' => 'success', 

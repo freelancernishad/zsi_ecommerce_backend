@@ -22,7 +22,7 @@ class StripeController extends Controller
      */
     public function checkout(Request $request)
     {
-        $user = Auth::user();
+        $user = auth('api')->user() ?? Auth::user();
         $items = $request->input('items', []); // Format: [['price_data' => [...], 'quantity' => 1]]
         $shippingCost = (float) $request->input('shipping_cost', 0);
         $taxAmount = (float) $request->input('tax', $request->input('tax_amount', 0));
@@ -132,7 +132,7 @@ class StripeController extends Controller
      */
     public function paymentIntent(Request $request)
     {
-        $user = Auth::user();
+        $user = auth('api')->user() ?? Auth::user();
         $amount = $request->input('amount');
         $currency = $request->input('currency', 'usd');
         $metadata = $request->input('metadata', []);

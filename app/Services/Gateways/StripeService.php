@@ -24,11 +24,11 @@ class StripeService
     }
 
     /**
-     * Create or retrieve a Stripe customer for a user.
+     * Create or retrieve a Stripe customer for a user or guest.
      */
-    public function createOrGetCustomer(User $user)
+    public function createOrGetCustomer(?User $user = null, ?string $email = null, ?string $name = null)
     {
-        if ($user->stripe_id) {
+        if ($user && $user->stripe_id) {
             try {
                 return Customer::retrieve($user->stripe_id);
             } catch (Exception $e) {
@@ -36,15 +36,27 @@ class StripeService
             }
         }
 
-        $customer = Customer::create([
-            'email' => $user->email,
-            'name' => $user->name,
-            'metadata' => [
-                'user_id' => $user->id,
-            ],
-        ]);
+        $customerData = [];
+        $customerEmail = $user ? $user->email : $email;
+        $customerName = $user ? $user->name : ($name ?? 'Guest Customer');
 
-        $user->update(['stripe_id' => $customer->id]);
+        if ($customerEmail) {
+            $customerData['email'] = $customerEmail;
+        }
+        if ($customerName) {
+            $customerData['name'] = $customerName;
+        }
+        if ($user) {
+            $customerData['metadata'] = [
+                'user_id' => $user->id,
+            ];
+        }
+
+        $customer = Customer::create($customerData);
+
+        if ($user) {
+            $user->update(['stripe_id' => $customer->id]);
+        }
 
         return $customer;
     }
@@ -52,9 +64,9 @@ class StripeService
     /**
      * Create a Checkout Session for one-time payments.
      */
-    public function createCheckoutSession(User $user, array $items, string $successUrl, string $cancelUrl, bool $saveCard = false, array $metadata = [], array $extra_params = [])
+    public function createCheckoutSession(?User $user, array $items, string $successUrl, string $cancelUrl, bool $saveCard = false, array $metadata = [], array $extra_params = [])
     {
-        $customer = $this->createOrGetCustomer($user);
+        $customer = $this->createOrGetCustomer($user, $metadata['email'] ?? null, $metadata['name'] ?? null);
 
         $params = [
             'customer' => $customer->id,
@@ -73,7 +85,7 @@ class StripeService
             unset($params['allow_promotion_codes']);
         }
 
-        if ($saveCard) {
+        if ($saveCard && $user) {
             $params['payment_intent_data'] = [
                 'setup_future_usage' => 'off_session', 
             ];
@@ -82,7 +94,7 @@ class StripeService
         $session = CheckoutSession::create($params);
 
         \App\Models\StripeLog::create([
-            'user_id' => $user->id,
+            'user_id' => $user?->id,
             'plan_id' => $metadata['plan_id'] ?? null,
             'type' => 'checkout',
             'stripe_customer_id' => $customer->id,
@@ -240,7 +252,7 @@ class StripeService
     /**
      * Create a Payment Intent.
      */
-    public function createPaymentIntent(User $user, int $amount, string $currency = 'usd', array $metadata = [], bool $setupFutureUsage = false, string $paymentMethodId = null)
+    public function createPaymentIntent(?User $user, int $amount, string $currency = 'usd', array $metadata = [], bool $setupFutureUsage = false, string $paymentMethodId = null)
     {
         $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
             ?: config('services.stripe.secret');
@@ -249,7 +261,7 @@ class StripeService
             throw new Exception("Stripe API Secret Key is unconfigured or invalid. Please configure it in Admin Settings.");
         }
 
-        $customer = $this->createOrGetCustomer($user);
+        $customer = $this->createOrGetCustomer($user, $metadata['email'] ?? null, $metadata['name'] ?? null);
 
         $params = [
             'amount' => $amount,
@@ -267,14 +279,14 @@ class StripeService
             // Usually for saved cards we want to confirm it.
         }
 
-        if ($setupFutureUsage) {
+        if ($setupFutureUsage && $user) {
             $params['setup_future_usage'] = 'off_session';
         }
 
         $intent = PaymentIntent::create($params);
 
         \App\Models\StripeLog::create([
-            'user_id' => $user->id,
+            'user_id' => $user?->id,
             'type' => 'payment_intent',
             'stripe_customer_id' => $customer->id,
             'payment_intent_id' => $intent->id,

@@ -196,6 +196,12 @@ class OrderController extends Controller
             'courier_name', 'tracking_number', 'tracking_url', 'shipped_at'
         ]);
 
+        if ($request->has('status') && !$request->has('delivery_status')) {
+            $updateData['delivery_status'] = $request->status;
+        } elseif ($request->has('delivery_status') && !$request->has('status')) {
+            $updateData['status'] = $request->delivery_status;
+        }
+
         // Auto-set shipped_at if delivery_status is 'shipped' and not already set
         if (($request->delivery_status === 'shipped' || $request->status === 'shipped') && !$order->shipped_at) {
             $updateData['shipped_at'] = now();
@@ -230,6 +236,31 @@ class OrderController extends Controller
             'location' => $request->location,
             'description' => $request->description,
         ]);
+
+        // Auto-advance order status based on timeline activity
+        $stLower = strtolower($request->status);
+        $orderUpdates = [];
+
+        if (str_contains($stLower, 'deliver')) {
+            $orderUpdates['status'] = 'delivered';
+            $orderUpdates['delivery_status'] = 'delivered';
+            $orderUpdates['fulfillment_status'] = 'fulfilled';
+        } elseif (str_contains($stLower, 'ship') || str_contains($stLower, 'dispatch') || str_contains($stLower, 'transit')) {
+            $orderUpdates['status'] = 'shipped';
+            $orderUpdates['delivery_status'] = 'shipped';
+            if (!$order->shipped_at) {
+                $orderUpdates['shipped_at'] = now();
+            }
+        } elseif (str_contains($stLower, 'process') || str_contains($stLower, 'packag') || str_contains($stLower, 'confirm') || str_contains($stLower, 'ready')) {
+            if ($order->status === 'pending' || $order->delivery_status === 'pending') {
+                $orderUpdates['status'] = 'processing';
+                $orderUpdates['delivery_status'] = 'processing';
+            }
+        }
+
+        if (!empty($orderUpdates)) {
+            $order->update($orderUpdates);
+        }
 
         LogAction::record($order->user_id, 'order_history_added', "New tracking log added for Order #{$order->order_number}: {$request->status}", ['order_id' => $order->id, 'status' => $request->status]);
 
