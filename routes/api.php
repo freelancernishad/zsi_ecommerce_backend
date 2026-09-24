@@ -235,3 +235,14 @@ Route::get('/admin/dashboard/overview', [\App\Http\Controllers\Admin\AdminEcomme
 Route::get('/admin/dashboard/category-analytics', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'categoryAnalytics']);
 Route::get('/admin/dashboard/full-best-selling', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestSellingProductsFull']);
 Route::get('/admin/dashboard/full-top-rated', [\App\Http\Controllers\Admin\AdminEcommerceDashboardController::class, 'bestRatedProductsFull']);
+
+// Quick Payments API (Public, Verification, Webhook, Invoice & Admin)
+Route::post('/quick-payments', [\App\Http\Controllers\QuickPaymentController::class, 'store']);
+Route::get('/quick-payments/verify-session', [\App\Http\Controllers\QuickPaymentController::class, 'verifySession']);
+Route::post('/quick-payments/webhook', [\App\Http\Controllers\QuickPaymentController::class, 'webhook']);
+Route::get('/quick-payments/invoice/{id}', [\App\Http\Controllers\QuickPaymentController::class, 'showInvoice']);
+Route::get('/quick-payments/invoice/{id}/pdf', [\App\Http\Controllers\QuickPaymentController::class, 'downloadPdf']);
+Route::get('/admin/quick-payments', [\App\Http\Controllers\QuickPaymentController::class, 'adminIndex']);
+Route::get('/admin/quick-payments/export', [\App\Http\Controllers\QuickPaymentController::class, 'exportCsv']);
+Route::delete('/admin/quick-payments/{id}', [\App\Http\Controllers\QuickPaymentController::class, 'destroy']);
+

@@ -10,6 +10,9 @@ use App\Http\Controllers\Admin\Auth\AdminAuthController as AdminViewAuthControll
 use App\Http\Controllers\Admin\AdminDashboardController;
 
 
+Route::get('/quick-payments/invoice/{id}', [\App\Http\Controllers\QuickPaymentController::class, 'showInvoice']);
+Route::get('/quick-payments/invoice/{id}/pdf', [\App\Http\Controllers\QuickPaymentController::class, 'downloadPdf']);
+
 Route::get('/', function () {
     $dbConnected = false;
     $dbName = 'Unknown';
