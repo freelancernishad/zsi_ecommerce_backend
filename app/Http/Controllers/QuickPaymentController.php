@@ -30,7 +30,7 @@ class QuickPaymentController extends Controller
     {
         $validated = $request->validate([
             'name' => 'required|string|max:255',
-            'email' => 'required|email|max:255',
+            'email' => 'nullable|string|max:255',
             'reason' => 'required|string|max:2000',
             'amount' => 'required|numeric|min:1|max:1000000',
             'payment_method' => 'nullable|string|max:50',
@@ -63,7 +63,7 @@ class QuickPaymentController extends Controller
         // 1. Create initial payment record
         $payment = QuickPayment::create([
             'name' => $validated['name'],
-            'email' => $validated['email'],
+            'email' => !empty($validated['email']) ? $validated['email'] : 'N/A',
             'reason' => $validated['reason'],
             'amount' => $validated['amount'],
             'currency' => $currency,
@@ -80,7 +80,7 @@ class QuickPaymentController extends Controller
             try {
                 Stripe::setApiKey($secretKey);
 
-                $session = StripeSession::create([
+                $sessionData = [
                     'payment_method_types' => ['card'],
                     'line_items' => [[
                         'price_data' => [
@@ -94,7 +94,6 @@ class QuickPaymentController extends Controller
                         'quantity' => 1,
                     ]],
                     'mode' => 'payment',
-                    'customer_email' => $validated['email'],
                     'success_url' => $frontendUrl . '/payment?success=true&session_id={CHECKOUT_SESSION_ID}&payment_id=' . $payment->id,
                     'cancel_url' => $frontendUrl . '/payment?canceled=true',
                     'metadata' => [
@@ -102,7 +101,13 @@ class QuickPaymentController extends Controller
                         'type' => 'quick_payment',
                         'customer_name' => $validated['name'],
                     ],
-                ]);
+                ];
+
+                if (!empty($validated['email']) && filter_var($validated['email'], FILTER_VALIDATE_EMAIL)) {
+                    $sessionData['customer_email'] = $validated['email'];
+                }
+
+                $session = StripeSession::create($sessionData);
 
                 $payment->update(['transaction_id' => $session->id]);
 
