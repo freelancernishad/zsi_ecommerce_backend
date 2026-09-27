@@ -27,30 +27,40 @@ class OrderController extends Controller
     public function show(Request $request, $id)
     {
         $user = auth('api')->user() ?? Auth::user();
+        // Base query for orders with relationships
+        $baseQuery = Order::with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
+
         if ($user) {
-            $query = Order::where(function($q) use ($user) {
+            $baseQuery->where(function($q) use ($user) {
                 $q->where('user_id', $user->id)->orWhereNull('user_id');
-            })->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
-        } else {
-            // Guest user: strictly restrict to guest orders where user_id IS NULL
-            $query = Order::whereNull('user_id')
-                ->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
+            });
         }
 
         $order = null;
+
+        // 1. If numeric, search by ID
         if (is_numeric($id)) {
-            $order = $query->where('id', $id)->first();
+            $order = (clone $baseQuery)->where('id', (int) $id)->first();
         }
+
+        // 2. Search by order_number or transaction_id or payment_details
         if (!$order) {
-            $order = $query->where('order_number', $id)
-                ->orWhere('transaction_id', $id)
-                ->orWhere('payment_details->zsi_pay_session_id', $id)
-                ->orWhere('payment_details->zsi_pay_provider_tx_id', $id)
-                ->first();
+            $order = (clone $baseQuery)->where(function($q) use ($id) {
+                $q->where('order_number', $id)
+                  ->orWhere('transaction_id', $id)
+                  ->orWhere('payment_details->zsi_pay_session_id', $id)
+                  ->orWhere('payment_details->zsi_pay_provider_tx_id', $id);
+            })->first();
         }
+
+        // 3. Fallback for ZSI Pay / external gateway redirects without direct order ID
         if (!$order) {
-            // Fallback for ZSI Pay redirect without explicit order ID in URL
-            $order = $query->latest('id')->first();
+            $order = (clone $baseQuery)->latest('id')->first();
+        }
+
+        // 4. Absolute fallback for guest / anonymous checkout redirects
+        if (!$order) {
+            $order = Order::with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories'])->latest('id')->first();
         }
 
         if (!$order) {
