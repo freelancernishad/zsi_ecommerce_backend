@@ -31,6 +31,8 @@ class EcommerceSettingController extends Controller
                 'bkash_password',
                 'sslcommerz_store_id',
                 'sslcommerz_store_passwd',
+                'zsi_pay_api_secret',
+                'zsi_pay_webhook_secret',
             ];
             foreach ($sensitiveKeys as $key) {
                 unset($settings[$key]);

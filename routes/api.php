@@ -146,6 +146,13 @@ if (file_exists($StripeRoutes = __DIR__.'/Gateways/stripe.php')) {
     });
 }
 
+// Load ZsiPayRoutes
+if (file_exists($ZsiPayRoutes = __DIR__.'/Gateways/zsipay.php')) {
+    Route::prefix('payment/zsipay')->group(function () use ($ZsiPayRoutes) {
+        require $ZsiPayRoutes;
+    });
+}
+
 // Load EcommerceCommonRoutes
 if (file_exists($EcommerceCommonRoutes = __DIR__.'/Common/EcommerceCommonRoutes.php')) {
     require $EcommerceCommonRoutes;
