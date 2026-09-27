@@ -37,10 +37,24 @@ class OrderController extends Controller
                 ->with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
         }
 
+        $order = null;
         if (is_numeric($id)) {
-            $order = $query->where('id', $id)->firstOrFail();
-        } else {
-            $order = $query->where('order_number', $id)->firstOrFail();
+            $order = $query->where('id', $id)->first();
+        }
+        if (!$order) {
+            $order = $query->where('order_number', $id)
+                ->orWhere('transaction_id', $id)
+                ->orWhere('payment_details->zsi_pay_session_id', $id)
+                ->orWhere('payment_details->zsi_pay_provider_tx_id', $id)
+                ->first();
+        }
+        if (!$order) {
+            // Fallback for ZSI Pay redirect without explicit order ID in URL
+            $order = $query->latest('id')->first();
+        }
+
+        if (!$order) {
+            return response()->json(['status' => 'error', 'message' => 'Order not found'], 404);
         }
         
         return response()->json(['status' => 'success', 'data' => $order]);
