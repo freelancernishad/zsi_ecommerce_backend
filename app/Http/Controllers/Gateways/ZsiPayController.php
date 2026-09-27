@@ -120,7 +120,97 @@ class ZsiPayController extends Controller
      */
     public function webhook(Request $request)
     {
-        Log::info("ZSI Pay Webhook Received: ", $request->all());
-        return response()->json(['success' => true, 'message' => 'Webhook received']);
+        $payload = $request->all();
+        Log::info("ZSI Pay Webhook Received: ", $payload);
+
+        try {
+            $eventType = $payload['type'] ?? $request->input('event_type') ?? null;
+            $data = $payload['data'] ?? [];
+            $paymentStatus = strtolower($data['payment_status'] ?? $payload['payment_status'] ?? '');
+
+            $metadata = $data['metadata'] ?? $payload['metadata'] ?? [];
+            $orderId = $metadata['order_id'] ?? $payload['order_id'] ?? null;
+            $orderNumber = $metadata['order_number'] ?? $payload['order_number'] ?? null;
+            $transactionId = $data['provider_transaction_id'] 
+                ?? $data['session_token'] 
+                ?? $data['session_id'] 
+                ?? $data['invoice_id'] 
+                ?? null;
+
+            if (!$orderId && !$orderNumber) {
+                Log::warning("ZSI Pay Webhook Missing Order Identifiers in metadata.");
+                return response()->json(['success' => false, 'message' => 'Missing order identifiers'], 400);
+            }
+
+            // Find matching Order by order_id or order_number
+            $order = \App\Models\Order::where(function ($query) use ($orderId, $orderNumber) {
+                if ($orderId) {
+                    $query->where('id', $orderId);
+                }
+                if ($orderNumber) {
+                    $query->orWhere('order_number', $orderNumber);
+                }
+            })->first();
+
+            if (!$order) {
+                Log::warning("ZSI Pay Webhook: Order not found for order_id: {$orderId}, order_number: {$orderNumber}");
+                return response()->json(['success' => false, 'message' => 'Order not found'], 404);
+            }
+
+            // Check if event is payment.succeeded or payment_status is succeeded
+            if ($eventType === 'payment.succeeded' || $paymentStatus === 'succeeded' || $paymentStatus === 'paid') {
+                $order->update([
+                    'payment_status' => 'paid',
+                    'status' => 'processing',
+                    'transaction_id' => $transactionId ?: ($order->transaction_id ?: $orderNumber),
+                    'payment_details' => array_merge($order->payment_details ?? [], [
+                        'zsi_pay_webhook_event' => $eventType,
+                        'zsi_pay_session_id' => $data['session_id'] ?? null,
+                        'zsi_pay_provider_tx_id' => $data['provider_transaction_id'] ?? null,
+                        'paid_at' => $data['paid_at'] ?? now()->toIso8601String(),
+                    ])
+                ]);
+
+                // Create status history record if OrderStatusHistory exists
+                if (class_exists(\App\Models\OrderStatusHistory::class)) {
+                    try {
+                        \App\Models\OrderStatusHistory::create([
+                            'order_id' => $order->id,
+                            'status' => 'processing',
+                            'comment' => 'Payment succeeded via Golden Mark Money Gateway (ZSI Pay).'
+                        ]);
+                    } catch (\Exception $historyErr) {
+                        Log::warning("Failed to create OrderStatusHistory: " . $historyErr->getMessage());
+                    }
+                }
+
+                // Clear user cart if user_id is set
+                if ($order->user_id) {
+                    try {
+                        \App\Models\Cart::where('user_id', $order->user_id)->delete();
+                        Log::info("Cart cleared for user_id {$order->user_id} via ZSI Pay webhook.");
+                    } catch (\Exception $cartErr) {
+                        Log::warning("Failed to clear cart: " . $cartErr->getMessage());
+                    }
+                }
+
+                Log::info("Order #{$order->id} ({$order->order_number}) successfully marked as PAID via ZSI Pay Webhook!");
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Payment successfully recorded for Order #' . $order->order_number
+                ]);
+            }
+
+            Log::info("ZSI Pay Webhook event '{$eventType}' / status '{$paymentStatus}' logged for Order #{$order->id}.");
+            return response()->json(['success' => true, 'message' => 'Webhook logged']);
+
+        } catch (\Exception $e) {
+            Log::error("ZSI Pay Webhook Exception: " . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
+            return response()->json([
+                'success' => false,
+                'message' => 'Error processing webhook: ' . $e->getMessage()
+            ], 500);
+        }
     }
 }
