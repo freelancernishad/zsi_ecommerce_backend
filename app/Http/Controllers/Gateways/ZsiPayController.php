@@ -47,16 +47,67 @@ class ZsiPayController extends Controller
             $orderId = $request->input('order_id');
             $orderNumber = $request->input('order_number');
             $totalAmount = (float) $request->input('total', 0);
+            $subtotalAmount = (float) $request->input('subtotal', 0);
+            $shippingCost = (float) $request->input('shipping_cost', 0);
+            $taxAmount = (float) $request->input('tax', 0);
+            $discountAmount = (float) $request->input('discount', 0);
 
             // Format items for ZSI Pay API payload
             $formattedItems = [];
+            $itemsSum = 0;
             if (!empty($items) && is_array($items)) {
                 foreach ($items as $item) {
+                    $itemPrice = (float) ($item['price'] ?? 1.00);
+                    $itemQty = (int) ($item['quantity'] ?? 1);
+                    $itemsSum += ($itemPrice * $itemQty);
+
                     $formattedItems[] = [
                         'name' => substr($item['name'] ?? $item['product_name'] ?? 'Product Item', 0, 150),
-                        'quantity' => (int) ($item['quantity'] ?? 1),
-                        'price' => (float) ($item['price'] ?? 1.00),
+                        'quantity' => $itemQty,
+                        'price' => $itemPrice,
                     ];
+                }
+
+                // Add Shipping Fee line item so ZSI Pay total includes shipping
+                if ($shippingCost > 0) {
+                    $formattedItems[] = [
+                        'name' => 'Shipping Fee',
+                        'quantity' => 1,
+                        'price' => (float) $shippingCost,
+                    ];
+                    $itemsSum += (float) $shippingCost;
+                }
+
+                // Add Tax line item so ZSI Pay total includes tax
+                if ($taxAmount > 0) {
+                    $formattedItems[] = [
+                        'name' => 'Estimated Tax',
+                        'quantity' => 1,
+                        'price' => (float) $taxAmount,
+                    ];
+                    $itemsSum += (float) $taxAmount;
+                }
+
+                // Add Discount line item if discount applied
+                if ($discountAmount > 0) {
+                    $formattedItems[] = [
+                        'name' => 'Discount',
+                        'quantity' => 1,
+                        'price' => - (float) $discountAmount,
+                    ];
+                    $itemsSum -= (float) $discountAmount;
+                }
+
+                // Safety check: if totalAmount > 0 and differs from items sum, add adjustment line item
+                if ($totalAmount > 0 && abs($totalAmount - $itemsSum) > 0.01) {
+                    $diff = round($totalAmount - $itemsSum, 2);
+                    if ($diff != 0) {
+                        $formattedItems[] = [
+                            'name' => $diff > 0 ? 'Fee / Adjustment' : 'Discount / Adjustment',
+                            'quantity' => 1,
+                            'price' => $diff,
+                        ];
+                    }
                 }
             } else {
                 $formattedItems[] = [
@@ -66,15 +117,29 @@ class ZsiPayController extends Controller
                 ];
             }
 
-            $payPayload = [
+            $payPayload = array_filter([
                 'currency' => 'USD',
                 'customer_email' => $customerEmail,
+                'amount' => $totalAmount > 0 ? $totalAmount : null,
+                'total' => $totalAmount > 0 ? $totalAmount : null,
+                'subtotal' => $subtotalAmount > 0 ? $subtotalAmount : null,
+                'shipping' => $shippingCost > 0 ? $shippingCost : null,
+                'tax' => $taxAmount > 0 ? $taxAmount : null,
+                'discount' => $discountAmount > 0 ? $discountAmount : null,
                 'items' => $formattedItems,
                 'metadata' => [
                     'order_id' => (string) $orderId,
                     'order_number' => (string) $orderNumber,
+                    'subtotal' => (string) number_format($subtotalAmount, 2, '.', ''),
+                    'shipping' => (string) number_format($shippingCost, 2, '.', ''),
+                    'tax' => (string) number_format($taxAmount, 2, '.', ''),
+                    'discount' => (string) number_format($discountAmount, 2, '.', ''),
+                    'total' => (string) number_format($totalAmount > 0 ? $totalAmount : $itemsSum, 2, '.', ''),
+                    'customer_email' => (string) $customerEmail,
                 ]
-            ];
+            ], function ($val) {
+                return !is_null($val);
+            });
 
             $payEndpoint = $baseUrl . '/pay';
 
