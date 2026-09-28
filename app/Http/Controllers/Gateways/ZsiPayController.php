@@ -117,15 +117,9 @@ class ZsiPayController extends Controller
                 ];
             }
 
-            $payPayload = array_filter([
+            $payPayload = [
                 'currency' => 'USD',
                 'customer_email' => $customerEmail,
-                'amount' => $totalAmount > 0 ? $totalAmount : null,
-                'total' => $totalAmount > 0 ? $totalAmount : null,
-                'subtotal' => $subtotalAmount > 0 ? $subtotalAmount : null,
-                'shipping' => $shippingCost > 0 ? $shippingCost : null,
-                'tax' => $taxAmount > 0 ? $taxAmount : null,
-                'discount' => $discountAmount > 0 ? $discountAmount : null,
                 'items' => $formattedItems,
                 'metadata' => [
                     'order_id' => (string) $orderId,
@@ -137,9 +131,7 @@ class ZsiPayController extends Controller
                     'total' => (string) number_format($totalAmount > 0 ? $totalAmount : $itemsSum, 2, '.', ''),
                     'customer_email' => (string) $customerEmail,
                 ]
-            ], function ($val) {
-                return !is_null($val);
-            });
+            ];
 
             $payEndpoint = $baseUrl . '/pay';
 
