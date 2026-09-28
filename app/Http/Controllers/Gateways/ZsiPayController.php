@@ -270,4 +270,193 @@ class ZsiPayController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Verify & track ZSI Pay session status by trackId.
+     */
+    public function verifySession(Request $request, $trackId)
+    {
+        try {
+            Log::info("ZSI Pay verifySession requested for trackId: {$trackId}");
+
+            $settings = SiteSetting::where('group', 'payments')
+                ->where('key', 'like', 'zsi_pay_%')
+                ->pluck('value', 'key')
+                ->toArray();
+
+            $baseUrl = rtrim($settings['zsi_pay_base_url'] ?? (env('NEXT_PUBLIC_ZSI_PAY_BASE_URL') ?: 'https://api-pay.zsi.ai/api/v1'), '/');
+            $apiKey = $settings['zsi_pay_api_key'] ?? '';
+            $apiSecret = $settings['zsi_pay_api_secret'] ?? '';
+
+            // Endpoints to try: configured base_url track endpoint AND production api-pay.zsi.ai track endpoint
+            $endpointsToTry = [
+                $baseUrl . '/session/track/' . $trackId,
+                'https://api-pay.zsi.ai/api/v1/session/track/' . $trackId,
+            ];
+
+            $responseData = null;
+            $httpSuccess = false;
+
+            foreach (array_unique($endpointsToTry) as $endpoint) {
+                try {
+                    $headers = [
+                        'Accept' => 'application/json',
+                    ];
+                    if (!empty($apiKey)) $headers['api_key'] = $apiKey;
+                    if (!empty($apiSecret)) $headers['api_secret'] = $apiSecret;
+
+                    $res = Http::withHeaders($headers)->get($endpoint);
+
+                    if ($res->successful()) {
+                        $responseData = $res->json();
+                        $httpSuccess = true;
+                        break;
+                    } else {
+                        Log::warning("ZSI Pay track API status {$res->status()} on {$endpoint}: ", ['response' => $res->json()]);
+                        if (!$responseData) {
+                            $responseData = $res->json();
+                        }
+                    }
+                } catch (\Exception $httpErr) {
+                    Log::warning("ZSI Pay track HTTP exception on {$endpoint}: " . $httpErr->getMessage());
+                }
+            }
+
+            Log::info("ZSI Pay Track Final Result for {$trackId}:", ['httpSuccess' => $httpSuccess, 'data' => $responseData]);
+
+            $sessionData = $responseData['data'] ?? $responseData ?? [];
+            $rawStatus = strtolower(
+                $sessionData['payment_status'] ?? 
+                $sessionData['status'] ?? 
+                $sessionData['state'] ?? 
+                ''
+            );
+
+            $metadata = $sessionData['metadata'] ?? [];
+            $orderId = $metadata['order_id'] ?? $request->input('order_id') ?? null;
+            $orderNumber = $metadata['order_number'] ?? $request->input('order_number') ?? null;
+
+            // Find matching Order by order_id, order_number, or numeric trackId
+            $order = \App\Models\Order::where(function ($query) use ($orderId, $orderNumber, $trackId) {
+                if ($orderId) {
+                    $query->where('id', $orderId);
+                }
+                if ($orderNumber) {
+                    $query->orWhere('order_number', $orderNumber);
+                }
+                if (is_numeric($trackId)) {
+                    $query->orWhere('id', $trackId);
+                }
+            })->with(['items.product.images', 'items.variant'])->first();
+
+            // Fallback: If not found by metadata, search order where transaction_id = trackId or search recent order
+            if (!$order) {
+                $order = \App\Models\Order::where('transaction_id', $trackId)
+                    ->with(['items.product.images', 'items.variant'])
+                    ->first();
+            }
+
+            $authUser = auth('api')->user() ?? \Illuminate\Support\Facades\Auth::user();
+            if (!$order && $authUser) {
+                $order = \App\Models\Order::where('user_id', $authUser->id)
+                    ->latest()
+                    ->with(['items.product.images', 'items.variant'])
+                    ->first();
+            }
+
+            if (!$order) {
+                $order = \App\Models\Order::latest()->with(['items.product.images', 'items.variant'])->first();
+            }
+
+            if (!$order) {
+                return response()->json([
+                    'success' => false,
+                    'is_paid' => false,
+                    'message' => 'Order not found for trackId: ' . $trackId
+                ], 404);
+            }
+
+            $isSuccessful = in_array($rawStatus, ['completed', 'succeeded', 'paid', 'success', 'approved']);
+            $isFailed = in_array($rawStatus, ['failed', 'cancelled', 'canceled', 'declined', 'expired']);
+
+            if ($isSuccessful) {
+                if ($order->payment_status !== 'paid') {
+                    $order->update([
+                        'payment_status' => 'paid',
+                        'status' => 'processing',
+                        'transaction_id' => $trackId,
+                        'payment_details' => array_merge($order->payment_details ?? [], [
+                            'zsi_pay_track_id' => $trackId,
+                            'verified_at' => now()->toIso8601String(),
+                            'zsi_pay_status' => $rawStatus,
+                        ])
+                    ]);
+
+                    if (class_exists(\App\Models\OrderStatusHistory::class)) {
+                        try {
+                            \App\Models\OrderStatusHistory::create([
+                                'order_id' => $order->id,
+                                'status' => 'processing',
+                                'comment' => 'Payment verified via ZSI Pay Track API.'
+                            ]);
+                        } catch (\Exception $e) {}
+                    }
+
+                    if ($order->user_id) {
+                        try {
+                            \App\Models\Cart::where('user_id', $order->user_id)->delete();
+                        } catch (\Exception $e) {}
+                    }
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'is_paid' => true,
+                    'status' => 'paid',
+                    'message' => 'Payment completed successfully.',
+                    'order' => $order,
+                    'track_data' => $sessionData
+                ]);
+            } elseif ($isFailed) {
+                if ($order->payment_status !== 'failed' && $order->payment_status !== 'paid') {
+                    $order->update([
+                        'payment_status' => 'failed',
+                        'status' => 'cancelled',
+                        'payment_details' => array_merge($order->payment_details ?? [], [
+                            'zsi_pay_track_id' => $trackId,
+                            'verified_at' => now()->toIso8601String(),
+                            'zsi_pay_status' => $rawStatus,
+                        ])
+                    ]);
+                }
+
+                return response()->json([
+                    'success' => true,
+                    'is_paid' => false,
+                    'status' => 'failed',
+                    'message' => 'Payment was failed or cancelled by user.',
+                    'order' => $order,
+                    'track_data' => $sessionData
+                ]);
+            } else {
+                // If API didn't return an explicit failed status, check order's current payment_status
+                $isPaid = ($order->payment_status === 'paid');
+                return response()->json([
+                    'success' => true,
+                    'is_paid' => $isPaid,
+                    'status' => $order->payment_status ?: 'pending',
+                    'message' => $isPaid ? 'Payment completed.' : 'Payment status: ' . ($rawStatus ?: $order->payment_status),
+                    'order' => $order,
+                    'track_data' => $sessionData
+                ]);
+            }
+
+        } catch (\Exception $e) {
+            Log::error("ZSI Pay verifySession Exception: " . $e->getMessage());
+            return response()->json([
+                'success' => false,
+                'message' => 'Error verifying payment: ' . $e->getMessage()
+            ], 500);
+        }
+    }
 }
