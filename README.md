@@ -262,10 +262,20 @@ If you want to run migration for **only one specific database**:
   php artisan tenants:migrate --tenant=goldenmarkstore_db --seed
   ```
 
+* **With Seeder for a single tenant:**
+  ```bash
+  php artisan tenants:migrate --path=aliexpress/Migrations
+  ```
+
+
 > *Alternative native Laravel way:*
 > ```bash
 > DB_DATABASE=goldenmarkstore_db php artisan migrate
 > ```
+
+
+
+
 
 #### 3. Local API Testing (Postman / Frontend)
 When testing on `localhost:8000` or local dev servers, pass the `X-Tenant-Domain` header in your HTTP requests:
