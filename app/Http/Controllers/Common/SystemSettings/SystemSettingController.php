@@ -69,7 +69,12 @@ class SystemSettingController extends Controller
             'apple_login_flow',
             'apple_redirect_uri',
             'app_name',
+            'store_name',
+            'store_tagline',
+            'site_name',
             'app_logo',
+            'site_logo',
+            'site_favicon',
             'primary_color',
             'support_email'
         ];
