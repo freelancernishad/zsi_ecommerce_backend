@@ -25,7 +25,9 @@ class ProductVariant extends Model
         'cj_variant_sku',
         'cj_weight',
         'amazon_asin',
-        'amazon_variant_sku'
+        'amazon_variant_sku',
+        'aliexpress_sku_id',
+        'aliexpress_variant_sku',
     ];
 
     public function product()

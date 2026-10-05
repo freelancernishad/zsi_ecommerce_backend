@@ -35,6 +35,7 @@
             "App\\": "app/",
             "CjDropshipping\\": "cjdropshipping/",
             "Amazon\\": "amazon/",
+            "AliExpress\\": "aliexpress/",
             "Database\\Factories\\": "database/factories/",
             "Database\\Seeders\\": "database/seeders/"
         },

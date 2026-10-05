@@ -61,6 +61,11 @@ class Product extends Model
         'is_amazon_product',
         'amazon_synced_at',
         'import_source',
+        'aliexpress_product_id',
+        'aliexpress_url',
+        'is_aliexpress_product',
+        'aliexpress_synced_at',
+        'aliexpress_store_name',
     ];
 
     public function brand()
