@@ -7,7 +7,7 @@ Artisan::command('inspire', function () {
     $this->comment(Inspiring::quote());
 })->purpose('Display an inspiring quote');
 
-Artisan::command('tenants:migrate {--tenant= : Specific tenant database name (e.g. goldenmarkstore_db)} {--seed : Seed the database with records}', function () {
+Artisan::command('tenants:migrate {--tenant= : Specific tenant database name (e.g. goldenmarkstore_db)} {--path= : Specific migration path} {--seed : Seed the database with records}', function () {
     $tenantDomains = config('tenants.domains', []);
     $dbNames = array_unique(array_values($tenantDomains));
 
@@ -31,6 +31,9 @@ Artisan::command('tenants:migrate {--tenant= : Specific tenant database name (e.
             \Illuminate\Support\Facades\DB::reconnect('mysql');
 
             $options = ['--database' => 'mysql', '--force' => true];
+            if ($path = $this->option('path')) {
+                $options['--path'] = $path;
+            }
             if ($this->option('seed')) {
                 $options['--seed'] = true;
             }
