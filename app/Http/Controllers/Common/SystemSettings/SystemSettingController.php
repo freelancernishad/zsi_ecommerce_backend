@@ -61,6 +61,7 @@ class SystemSettingController extends Controller
     public function getPublicSettings()
     {
         $safeKeys = [
+            'google_auth_enabled',
             'google_client_id',
             'google_login_flow',
             'apple_auth_enabled',
@@ -74,7 +75,12 @@ class SystemSettingController extends Controller
         ];
 
         $systemSettings = SystemSetting::whereIn('key', $safeKeys)->pluck('value', 'key')->toArray();
-        $siteSettings = SiteSetting::whereIn('key', $safeKeys)->pluck('value', 'key')->toArray();
+
+        $siteSettingsModels = SiteSetting::whereIn('key', $safeKeys)->get();
+        $siteSettings = [];
+        foreach ($siteSettingsModels as $s) {
+            $siteSettings[$s->key] = is_array($s->value) ? json_encode($s->value) : (string) $s->value;
+        }
 
         $settings = array_merge($systemSettings, $siteSettings);
 

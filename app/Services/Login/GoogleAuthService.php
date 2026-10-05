@@ -17,13 +17,20 @@ class GoogleAuthService
     public function login(Request $request)
     {
         try {
+            $googleAuthEnabled = \App\Models\SiteSetting::getValue('google_auth_enabled') ?? \App\Models\SystemSetting::getValue('google_auth_enabled', '1');
+            if (strval($googleAuthEnabled) === '0' || strval($googleAuthEnabled) === 'false') {
+                return response()->json([
+                    'error' => 'Google authentication is currently disabled by administrator.',
+                ], 403);
+            }
+
             $accessToken = $request->access_token;
             $code = $request->code;
 
             // If we have a code (from redirect flow), exchange it for an access token
             if ($code) {
-                $clientId = \App\Models\SystemSetting::getValue('google_client_id');
-                $clientSecret = \App\Models\SystemSetting::getValue('google_client_secret');
+                $clientId = \App\Models\SiteSetting::getValue('google_client_id') ?? \App\Models\SystemSetting::getValue('google_client_id');
+                $clientSecret = \App\Models\SiteSetting::getValue('google_client_secret') ?? \App\Models\SystemSetting::getValue('google_client_secret');
                 
                 // Use the redirect_uri from request, or fallback to frontend origin
                 $redirectUri = $request->redirect_uri;

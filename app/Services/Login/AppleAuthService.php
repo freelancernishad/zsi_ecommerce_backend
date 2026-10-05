@@ -17,6 +17,13 @@ class AppleAuthService
     public function login(Request $request)
     {
         try {
+            $appleAuthEnabled = \App\Models\SiteSetting::getValue('apple_auth_enabled') ?? \App\Models\SystemSetting::getValue('apple_auth_enabled', '1');
+            if (strval($appleAuthEnabled) === '0' || strval($appleAuthEnabled) === 'false') {
+                return response()->json([
+                    'error' => 'Apple authentication is currently disabled by administrator.',
+                ], 403);
+            }
+
             $identityToken = $request->identity_token;
             $name = $request->name;
 
