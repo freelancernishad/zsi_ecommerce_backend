@@ -23,11 +23,17 @@ return [
         'admin.bismillahfashionusa.com'=> env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
 
 
+        // ebsdeals.com
+        'ebsdeals.com'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
+        'www.ebsdeals.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
+        'admin.ebsdeals.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
+
+
         
         // Bismillah Fashion USA
-        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
-        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
-        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
+        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
+        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
+        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
         // 'localhost:3001' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
 
 
