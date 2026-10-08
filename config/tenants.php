@@ -34,7 +34,7 @@ return [
         'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
         'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
         'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
-        // 'localhost:3001' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_bismillahfashionusa_db'),
+        'localhost:3001' => env('DB_DATABASE_BISMILLAH', 'mustgyyu_ebsdeals'),
 
 
 
