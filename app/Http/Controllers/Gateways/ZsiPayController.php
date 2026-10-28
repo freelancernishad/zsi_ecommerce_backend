@@ -31,18 +31,6 @@ class ZsiPayController extends Controller
                 ], 400);
             }
 
-            $rawBaseUrl = $settings['zsi_pay_base_url'] ?? (env('NEXT_PUBLIC_ZSI_PAY_BASE_URL') ?: 'https://api-pay.zsi.ai/v1/payments');
-            $baseUrl = rtrim($rawBaseUrl, '/');
-            if (str_ends_with($baseUrl, '/api/v1')) {
-                $payEndpoint = substr($baseUrl, 0, -7) . '/v1/payments';
-            } elseif (str_ends_with($baseUrl, '/v1')) {
-                $payEndpoint = $baseUrl . '/payments';
-            } elseif (str_ends_with($baseUrl, '/v1/payments')) {
-                $payEndpoint = $baseUrl;
-            } else {
-                $payEndpoint = $baseUrl . '/v1/payments';
-            }
-
             $apiKey = $settings['zsi_pay_api_key'] ?? '';
             $apiSecret = $settings['zsi_pay_api_secret'] ?? '';
 
@@ -63,12 +51,13 @@ class ZsiPayController extends Controller
             $taxAmount = (float) $request->input('tax', 0);
             $discountAmount = (float) $request->input('discount', 0);
 
-            // Format items strictly conforming to https://api-pay.zsi.ai/v1/payments schema
+            // Format items strictly conforming to zsi-pay-server validation schema
             $formattedItems = [];
-            $itemsSum = 0;
+            $itemsSum = 0.0;
             if (!empty($items) && is_array($items)) {
                 foreach ($items as $idx => $item) {
-                    $itemPrice = max(1, (int) round((float) ($item['price'] ?? 1.0)));
+                    $itemPrice = (float) ($item['price'] ?? 1.0);
+                    if ($itemPrice <= 0) $itemPrice = 1.0;
                     $itemQty = max(1, (int) ($item['quantity'] ?? 1));
                     $itemsSum += ($itemPrice * $itemQty);
 
@@ -76,11 +65,11 @@ class ZsiPayController extends Controller
                         'id' => (string) ($item['id'] ?? $item['product_id'] ?? $idx + 1),
                         'name' => substr((string) ($item['name'] ?? $item['product_name'] ?? 'Product Item'), 0, 200),
                         'quantity' => $itemQty,
-                        'price' => $itemPrice,
+                        'price' => round($itemPrice, 2),
                     ];
                 }
             } else {
-                $fallbackPrice = max(1, (int) round($totalAmount > 0 ? $totalAmount : 1.0));
+                $fallbackPrice = round($totalAmount > 0 ? $totalAmount : 1.0, 2);
                 $formattedItems[] = [
                     'id' => '1',
                     'name' => 'Order ' . ($orderNumber ?: 'Payment'),
@@ -90,67 +79,110 @@ class ZsiPayController extends Controller
                 $itemsSum = $fallbackPrice;
             }
 
-            $targetIntTotal = max(1, (int) round($totalAmount > 0 ? $totalAmount : $itemsSum));
-            if ($targetIntTotal > $itemsSum) {
-                $diff = $targetIntTotal - $itemsSum;
-                $formattedItems[] = [
-                    'id' => 'shipping_and_tax',
-                    'name' => 'Shipping & Taxes',
-                    'quantity' => 1,
-                    'price' => $diff,
-                ];
+            // Target total adjustment so items sum matches total amount exactly
+            $targetTotal = round($totalAmount > 0 ? $totalAmount : $itemsSum, 2);
+            if ($targetTotal > $itemsSum) {
+                $diff = round($targetTotal - $itemsSum, 2);
+                if ($diff > 0) {
+                    $formattedItems[] = [
+                        'id' => 'shipping_and_tax',
+                        'name' => 'Shipping & Taxes',
+                        'quantity' => 1,
+                        'price' => $diff,
+                    ];
+                }
             }
 
             $clientOrigin = $request->header('origin') ?: config('app.frontend_url', 'http://localhost:3000');
             $successUrl = $request->input('success_url') ?: (rtrim($clientOrigin, '/') . '/checkout/success?merchant_transaction_id=' . urlencode((string)$orderNumber) . '&provider=zsipay');
             $cancelUrl = $request->input('cancel_url') ?: (rtrim($clientOrigin, '/') . '/checkout?cancelled=1');
 
-            $payPayload = [
-                'customer_email' => (string) $customerEmail,
-                'success_url' => (string) $successUrl,
-                'cancel_url' => (string) $cancelUrl,
+            $metadata = array_merge([
                 'merchant_transaction_id' => (string) $orderNumber,
-                'items' => $formattedItems,
-                'metadata' => array_merge([
-                    'order_id' => (string) $orderId,
-                    'order_number' => (string) $orderNumber,
-                    'subtotal' => $subtotalAmount,
-                    'shipping' => $shippingCost,
-                    'tax' => $taxAmount,
-                    'discount' => $discountAmount,
-                    'total' => $totalAmount,
-                ], (array) $request->input('metadata', []))
-            ];
+                'order_id' => (string) $orderId,
+                'order_number' => (string) $orderNumber,
+                'subtotal' => $subtotalAmount,
+                'shipping' => $shippingCost,
+                'tax' => $taxAmount,
+                'discount' => $discountAmount,
+                'total' => $targetTotal,
+                'success_url' => $successUrl,
+                'cancel_url' => $cancelUrl,
+            ], (array) $request->input('metadata', []));
 
-            // Send HTTP request to Zsi pay server
-            $response = Http::withHeaders([
-                'x-zsi-api-key' => $apiKey,
-                'x-zsi-api-secret' => $apiSecret,
+            $headers = [
                 'api_key' => $apiKey,
                 'api_secret' => $apiSecret,
+                'x-zsi-api-key' => $apiKey,
+                'x-zsi-api-secret' => $apiSecret,
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
-            ])->post($payEndpoint, $payPayload);
+            ];
 
+            // Resolve server host base URL
+            $payServerBase = 'https://api-pay.zsi.ai';
+            if (!empty($settings['zsi_pay_base_url'])) {
+                $parsed = parse_url($settings['zsi_pay_base_url']);
+                if (!empty($parsed['scheme']) && !empty($parsed['host'])) {
+                    $payServerBase = $parsed['scheme'] . '://' . $parsed['host'];
+                }
+            }
+
+            // Attempt 1: Call /api/v1/pay (Universal session creation in zsi-pay-server)
+            $payPayload = [
+                'currency' => 'USD',
+                'customer_email' => (string) $customerEmail,
+                'items' => $formattedItems,
+                'metadata' => $metadata,
+            ];
+
+            $response = Http::withHeaders($headers)->post($payServerBase . '/api/v1/pay', $payPayload);
             $responseData = $response->json();
 
-            $checkoutUrl = $responseData['data']['payment_url']
-                ?? $responseData['data']['checkout_url']
-                ?? $responseData['payment_url']
+            $checkoutUrl = $responseData['data']['checkout_url']
+                ?? $responseData['data']['payment_url']
                 ?? $responseData['checkout_url']
+                ?? $responseData['payment_url']
                 ?? null;
 
-            if ($response->successful() && $checkoutUrl) {
+            // Attempt 2: If /api/v1/pay did not return a checkout URL, fallback to /v1/payments
+            if (!$checkoutUrl || !$response->successful()) {
+                $v1PaymentsPayload = [
+                    'customer_email' => (string) $customerEmail,
+                    'success_url' => (string) $successUrl,
+                    'cancel_url' => (string) $cancelUrl,
+                    'merchant_transaction_id' => (string) $orderNumber,
+                    'items' => array_map(function ($item) {
+                        return [
+                            'id' => (string) $item['id'],
+                            'name' => (string) $item['name'],
+                            'quantity' => (int) $item['quantity'],
+                            'price' => (int) max(1, round($item['price'])),
+                        ];
+                    }, $formattedItems),
+                    'metadata' => $metadata,
+                ];
+
+                $v1Response = Http::withHeaders($headers)->post($payServerBase . '/v1/payments', $v1PaymentsPayload);
+                $v1Data = $v1Response->json();
+
+                if ($v1Response->successful() && !empty($v1Data['data']['payment_url'])) {
+                    $checkoutUrl = $v1Data['data']['payment_url'];
+                    $responseData = $v1Data;
+                }
+            }
+
+            if ($checkoutUrl) {
                 return response()->json([
                     'success' => true,
                     'url' => $checkoutUrl,
                     'payment_url' => $checkoutUrl,
                     'checkout_url' => $checkoutUrl,
-                    'data' => $responseData['data'] ?? []
+                    'data' => $responseData['data'] ?? ['checkout_url' => $checkoutUrl]
                 ]);
             }
 
-            $errorMessage = $responseData['message'] ?? $responseData['error'] ?? 'Failed to initialize ZSI Pay checkout URL.';
+            $errorMessage = $responseData['message'] ?? $responseData['error'] ?? 'Failed to initialize Zsi pay checkout URL.';
             Log::error("ZSI Pay Checkout API Error: ", ['status' => $response->status(), 'response' => $responseData]);
 
             return response()->json([
