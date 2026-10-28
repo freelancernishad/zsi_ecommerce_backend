@@ -28,7 +28,9 @@ class AmazonImportService
         ?int $categoryId = null,
         int $defaultStock = 20,
         string $status = 'published',
-        ?callable $onProgress = null
+        ?callable $onProgress = null,
+        string $markupType = 'percentage',
+        float $fixedMarkupAmount = 0.0
     ): array {
         @set_time_limit(600);
 
@@ -47,7 +49,9 @@ class AmazonImportService
                     $profitMarginPercent,
                     $categoryId,
                     $defaultStock,
-                    $status
+                    $status,
+                    $markupType,
+                    $fixedMarkupAmount
                 );
 
                 $itemResult = [
@@ -94,7 +98,9 @@ class AmazonImportService
         float $profitMarginPercent = 15.0,
         ?int $categoryId = null,
         int $defaultStock = 20,
-        string $status = 'published'
+        string $status = 'published',
+        string $markupType = 'percentage',
+        float $fixedMarkupAmount = 0.0
     ): Product {
         // Load Site Settings for Amazon defaults
         $siteSettings = \App\Models\SiteSetting::where('group', 'amazon')->pluck('value', 'key')->toArray();
@@ -115,9 +121,13 @@ class AmazonImportService
             throw new Exception("Product details not found or title empty for Amazon item: {$asinOrUrl}");
         }
 
-        return DB::transaction(function () use ($amazonData, $profitMarginPercent, $categoryId, $defaultStock, $status, $affiliateTag) {
+        return DB::transaction(function () use ($amazonData, $profitMarginPercent, $categoryId, $defaultStock, $status, $affiliateTag, $markupType, $fixedMarkupAmount) {
             $costPrice = (float) ($amazonData['price'] ?? 0.0);
-            $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
+            if ($markupType === 'fixed' && $fixedMarkupAmount > 0) {
+                $salePrice = round($costPrice + $fixedMarkupAmount, 2);
+            } else {
+                $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
+            }
             if ($salePrice <= 0) {
                 $salePrice = 59.99; // Fallback retail price if cost is 0
             }
@@ -217,7 +227,11 @@ class AmazonImportService
 
                 foreach ($amazonData['variants'] as $v) {
                     $vCost = (float) ($v['price'] ?? $costPrice);
-                    $vPrice = round($vCost * (1 + ($profitMarginPercent / 100)), 2);
+                    if ($markupType === 'fixed' && $fixedMarkupAmount > 0) {
+                        $vPrice = round($vCost + $fixedMarkupAmount, 2);
+                    } else {
+                        $vPrice = round($vCost * (1 + ($profitMarginPercent / 100)), 2);
+                    }
                     if ($vPrice <= 0) $vPrice = $salePrice;
 
                     $vLabel = $v['title'] ?? 'Default Title';

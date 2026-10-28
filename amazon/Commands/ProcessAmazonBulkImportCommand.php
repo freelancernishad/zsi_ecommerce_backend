@@ -46,6 +46,8 @@ class ProcessAmazonBulkImportCommand extends Command
 
         $items = $batchData['items'];
         $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 15);
+        $markupType = $batchData['markup_type'] ?? 'percentage';
+        $fixedMarkup = (float) ($batchData['fixed_markup_amount'] ?? 0);
         $categoryId = isset($batchData['category_id']) ? (int) $batchData['category_id'] : null;
         $defaultStock = (int) ($batchData['default_stock'] ?? 20);
         $status = $batchData['publish_status'] ?? 'published';
@@ -85,7 +87,9 @@ class ProcessAmazonBulkImportCommand extends Command
                     }
 
                     Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
-                }
+                },
+                $markupType,
+                $fixedMarkup
             );
 
             $batchData['status'] = 'completed';
