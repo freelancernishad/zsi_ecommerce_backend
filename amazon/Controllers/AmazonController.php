@@ -54,10 +54,12 @@ class AmazonController extends Controller
                 'data' => $result,
             ]);
         } catch (Exception $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : 422;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
@@ -82,10 +84,12 @@ class AmazonController extends Controller
                 'data' => $data,
             ]);
         } catch (Exception $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : 422;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
@@ -102,10 +106,12 @@ class AmazonController extends Controller
                 'data' => $data,
             ]);
         } catch (Exception $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : 422;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
@@ -143,10 +149,12 @@ class AmazonController extends Controller
                 'data' => $importedProduct->load(['images', 'variants']),
             ]);
         } catch (Exception $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : 422;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
@@ -320,10 +328,12 @@ class AmazonController extends Controller
                 'message' => "Triggered processing for Amazon batch {$batchId}",
             ]);
         } catch (Exception $e) {
+            $code = $e->getCode();
+            $status = ($code >= 400 && $code < 600) ? $code : 422;
             return response()->json([
                 'success' => false,
                 'message' => $e->getMessage(),
-            ], 500);
+            ], $status);
         }
     }
 
