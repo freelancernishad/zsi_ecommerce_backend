@@ -123,6 +123,9 @@ class AmazonController extends Controller
         $request->validate([
             'asin_or_url' => 'required|string',
             'profit_margin_percent' => 'nullable|numeric|min:0',
+            'markup_type' => 'nullable|string|in:percentage,fixed',
+            'markup_value' => 'nullable|numeric|min:0',
+            'fixed_markup_amount' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',
@@ -130,6 +133,8 @@ class AmazonController extends Controller
 
         $asinOrUrl = $request->input('asin_or_url');
         $profitMargin = (float) $request->input('profit_margin_percent', 15);
+        $markupType = $request->input('markup_type', 'percentage');
+        $fixedMarkup = (float) ($request->input('fixed_markup_amount') ?? ($markupType === 'fixed' ? $request->input('markup_value', 0) : 0));
         $categoryId = $request->input('category_id');
         $defaultStock = (int) $request->input('default_stock', 20);
         $status = $request->input('status', 'published');
@@ -140,7 +145,9 @@ class AmazonController extends Controller
                 $profitMargin,
                 $categoryId ? (int) $categoryId : null,
                 $defaultStock,
-                $status
+                $status,
+                $markupType,
+                $fixedMarkup
             );
 
             return response()->json([
@@ -167,6 +174,9 @@ class AmazonController extends Controller
             'asins_or_urls' => 'required|array|min:1',
             'asins_or_urls.*' => 'required|string',
             'profit_margin_percent' => 'nullable|numeric|min:0',
+            'markup_type' => 'nullable|string|in:percentage,fixed',
+            'markup_value' => 'nullable|numeric|min:0',
+            'fixed_markup_amount' => 'nullable|numeric|min:0',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',
@@ -175,6 +185,8 @@ class AmazonController extends Controller
 
         $items = $request->input('asins_or_urls');
         $profitMargin = (float) $request->input('profit_margin_percent', 15);
+        $markupType = $request->input('markup_type', 'percentage');
+        $fixedMarkup = (float) ($request->input('fixed_markup_amount') ?? ($markupType === 'fixed' ? $request->input('markup_value', 0) : 0));
         $categoryId = $request->input('category_id');
         $defaultStock = (int) $request->input('default_stock', 20);
         $status = $request->input('status', 'published');
@@ -189,7 +201,10 @@ class AmazonController extends Controller
                     $profitMargin,
                     $categoryId ? (int) $categoryId : null,
                     $defaultStock,
-                    $status
+                    $status,
+                    null,
+                    $markupType,
+                    $fixedMarkup
                 );
 
                 return response()->json([
@@ -213,6 +228,8 @@ class AmazonController extends Controller
             'created_at' => now()->toDateTimeString(),
             'items' => $items,
             'profit_margin_percent' => $profitMargin,
+            'markup_type' => $markupType,
+            'fixed_markup_amount' => $fixedMarkup,
             'category_id' => $categoryId ? (int) $categoryId : null,
             'default_stock' => $defaultStock,
             'publish_status' => $status,
