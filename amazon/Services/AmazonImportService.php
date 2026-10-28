@@ -231,7 +231,7 @@ class AmazonImportService
                         'sku' => $vSku,
                         'stock' => $defaultStock,
                         'available_quantity' => $defaultStock,
-                        'color' => $v['attributes']['Color'] ?? $v['attributes']['Option'] ?? null,
+                        'color' => $v['attributes']['Color'] ?? $v['attributes']['Option'] ?? (isset($v['attributes']['Size']) ? null : $vLabel),
                         'size' => $v['attributes']['Size'] ?? null,
                         'amazon_asin' => $v['asin'] ?? $asin,
                         'amazon_variant_sku' => $vSku,
@@ -259,8 +259,10 @@ class AmazonImportService
                 continue;
             }
             foreach ($v['attributes'] as $optName => $val) {
-                if (!empty($optName) && !empty($val)) {
-                    $optionsCollector[ucfirst($optName)][$val] = true;
+                $cleanOpt = trim((string) $optName);
+                $cleanVal = trim((string) $val);
+                if (!empty($cleanOpt) && !empty($cleanVal)) {
+                    $optionsCollector[ucfirst($cleanOpt)][$cleanVal] = true;
                 }
             }
         }
