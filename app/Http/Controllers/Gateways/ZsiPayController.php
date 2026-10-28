@@ -27,11 +27,22 @@ class ZsiPayController extends Controller
             if (!$enabled) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Golden Mark Money Gateway (ZSI Pay) is currently disabled.'
+                    'message' => 'Zsi pay is currently disabled.'
                 ], 400);
             }
 
-            $baseUrl = rtrim($settings['zsi_pay_base_url'] ?? (env('NEXT_PUBLIC_ZSI_PAY_BASE_URL') ?: 'http://localhost:5000/api/v1'), '/');
+            $rawBaseUrl = $settings['zsi_pay_base_url'] ?? (env('NEXT_PUBLIC_ZSI_PAY_BASE_URL') ?: 'https://api-pay.zsi.ai/v1/payments');
+            $baseUrl = rtrim($rawBaseUrl, '/');
+            if (str_ends_with($baseUrl, '/api/v1')) {
+                $payEndpoint = substr($baseUrl, 0, -7) . '/v1/payments';
+            } elseif (str_ends_with($baseUrl, '/v1')) {
+                $payEndpoint = $baseUrl . '/payments';
+            } elseif (str_ends_with($baseUrl, '/v1/payments')) {
+                $payEndpoint = $baseUrl;
+            } else {
+                $payEndpoint = $baseUrl . '/v1/payments';
+            }
+
             $apiKey = $settings['zsi_pay_api_key'] ?? '';
             $apiSecret = $settings['zsi_pay_api_secret'] ?? '';
 
@@ -45,98 +56,76 @@ class ZsiPayController extends Controller
             $customerEmail = $request->input('customer_email', 'guest@goldenmark.com');
             $items = $request->input('items', []);
             $orderId = $request->input('order_id');
-            $orderNumber = $request->input('order_number');
+            $orderNumber = $request->input('order_number') ?: ($request->input('merchant_transaction_id') ?: ('ORD-' . ($orderId ?: time())));
             $totalAmount = (float) $request->input('total', 0);
             $subtotalAmount = (float) $request->input('subtotal', 0);
             $shippingCost = (float) $request->input('shipping_cost', 0);
             $taxAmount = (float) $request->input('tax', 0);
             $discountAmount = (float) $request->input('discount', 0);
 
-            // Format items for ZSI Pay API payload
+            // Format items strictly conforming to https://api-pay.zsi.ai/v1/payments schema
             $formattedItems = [];
             $itemsSum = 0;
             if (!empty($items) && is_array($items)) {
-                foreach ($items as $item) {
-                    $itemPrice = (float) ($item['price'] ?? 1.00);
-                    $itemQty = (int) ($item['quantity'] ?? 1);
+                foreach ($items as $idx => $item) {
+                    $itemPrice = max(1, (int) round((float) ($item['price'] ?? 1.0)));
+                    $itemQty = max(1, (int) ($item['quantity'] ?? 1));
                     $itemsSum += ($itemPrice * $itemQty);
 
                     $formattedItems[] = [
-                        'name' => substr($item['name'] ?? $item['product_name'] ?? 'Product Item', 0, 150),
+                        'id' => (string) ($item['id'] ?? $item['product_id'] ?? $idx + 1),
+                        'name' => substr((string) ($item['name'] ?? $item['product_name'] ?? 'Product Item'), 0, 200),
                         'quantity' => $itemQty,
                         'price' => $itemPrice,
                     ];
                 }
-
-                // Add Shipping Fee line item so ZSI Pay total includes shipping
-                if ($shippingCost > 0) {
-                    $formattedItems[] = [
-                        'name' => 'Shipping Fee',
-                        'quantity' => 1,
-                        'price' => (float) $shippingCost,
-                    ];
-                    $itemsSum += (float) $shippingCost;
-                }
-
-                // Add Tax line item so ZSI Pay total includes tax
-                if ($taxAmount > 0) {
-                    $formattedItems[] = [
-                        'name' => 'Estimated Tax',
-                        'quantity' => 1,
-                        'price' => (float) $taxAmount,
-                    ];
-                    $itemsSum += (float) $taxAmount;
-                }
-
-                // Add Discount line item if discount applied
-                if ($discountAmount > 0) {
-                    $formattedItems[] = [
-                        'name' => 'Discount',
-                        'quantity' => 1,
-                        'price' => - (float) $discountAmount,
-                    ];
-                    $itemsSum -= (float) $discountAmount;
-                }
-
-                // Safety check: if totalAmount > 0 and differs from items sum, add adjustment line item
-                if ($totalAmount > 0 && abs($totalAmount - $itemsSum) > 0.01) {
-                    $diff = round($totalAmount - $itemsSum, 2);
-                    if ($diff != 0) {
-                        $formattedItems[] = [
-                            'name' => $diff > 0 ? 'Fee / Adjustment' : 'Discount / Adjustment',
-                            'quantity' => 1,
-                            'price' => $diff,
-                        ];
-                    }
-                }
             } else {
+                $fallbackPrice = max(1, (int) round($totalAmount > 0 ? $totalAmount : 1.0));
                 $formattedItems[] = [
-                    'name' => 'Order ' . ($orderNumber ?? $orderId ?? 'Payment'),
+                    'id' => '1',
+                    'name' => 'Order ' . ($orderNumber ?: 'Payment'),
                     'quantity' => 1,
-                    'price' => $totalAmount > 0 ? $totalAmount : 1.00,
+                    'price' => $fallbackPrice,
+                ];
+                $itemsSum = $fallbackPrice;
+            }
+
+            $targetIntTotal = max(1, (int) round($totalAmount > 0 ? $totalAmount : $itemsSum));
+            if ($targetIntTotal > $itemsSum) {
+                $diff = $targetIntTotal - $itemsSum;
+                $formattedItems[] = [
+                    'id' => 'shipping_and_tax',
+                    'name' => 'Shipping & Taxes',
+                    'quantity' => 1,
+                    'price' => $diff,
                 ];
             }
 
+            $clientOrigin = $request->header('origin') ?: config('app.frontend_url', 'http://localhost:3000');
+            $successUrl = $request->input('success_url') ?: (rtrim($clientOrigin, '/') . '/checkout/success?merchant_transaction_id=' . urlencode((string)$orderNumber) . '&provider=zsipay');
+            $cancelUrl = $request->input('cancel_url') ?: (rtrim($clientOrigin, '/') . '/checkout?cancelled=1');
+
             $payPayload = [
-                'currency' => 'USD',
-                'customer_email' => $customerEmail,
+                'customer_email' => (string) $customerEmail,
+                'success_url' => (string) $successUrl,
+                'cancel_url' => (string) $cancelUrl,
+                'merchant_transaction_id' => (string) $orderNumber,
                 'items' => $formattedItems,
-                'metadata' => [
+                'metadata' => array_merge([
                     'order_id' => (string) $orderId,
                     'order_number' => (string) $orderNumber,
-                    'subtotal' => (string) number_format($subtotalAmount, 2, '.', ''),
-                    'shipping' => (string) number_format($shippingCost, 2, '.', ''),
-                    'tax' => (string) number_format($taxAmount, 2, '.', ''),
-                    'discount' => (string) number_format($discountAmount, 2, '.', ''),
-                    'total' => (string) number_format($totalAmount > 0 ? $totalAmount : $itemsSum, 2, '.', ''),
-                    'customer_email' => (string) $customerEmail,
-                ]
+                    'subtotal' => $subtotalAmount,
+                    'shipping' => $shippingCost,
+                    'tax' => $taxAmount,
+                    'discount' => $discountAmount,
+                    'total' => $totalAmount,
+                ], (array) $request->input('metadata', []))
             ];
 
-            $payEndpoint = $baseUrl . '/pay';
-
-            // Send HTTP request to Golden Mark Money Gateway API Server
+            // Send HTTP request to Zsi pay server
             $response = Http::withHeaders([
+                'x-zsi-api-key' => $apiKey,
+                'x-zsi-api-secret' => $apiSecret,
                 'api_key' => $apiKey,
                 'api_secret' => $apiSecret,
                 'Accept' => 'application/json',
@@ -145,13 +134,19 @@ class ZsiPayController extends Controller
 
             $responseData = $response->json();
 
-            if ($response->successful() && isset($responseData['data']['checkout_url'])) {
-                $checkoutUrl = $responseData['data']['checkout_url'];
+            $checkoutUrl = $responseData['data']['payment_url']
+                ?? $responseData['data']['checkout_url']
+                ?? $responseData['payment_url']
+                ?? $responseData['checkout_url']
+                ?? null;
+
+            if ($response->successful() && $checkoutUrl) {
                 return response()->json([
                     'success' => true,
                     'url' => $checkoutUrl,
+                    'payment_url' => $checkoutUrl,
                     'checkout_url' => $checkoutUrl,
-                    'data' => $responseData['data']
+                    'data' => $responseData['data'] ?? []
                 ]);
             }
 
@@ -234,7 +229,7 @@ class ZsiPayController extends Controller
                         \App\Models\OrderStatusHistory::create([
                             'order_id' => $order->id,
                             'status' => 'processing',
-                            'comment' => 'Payment succeeded via Golden Mark Money Gateway (ZSI Pay).'
+                            'comment' => 'Payment succeeded via Zsi pay.'
                         ]);
                     } catch (\Exception $historyErr) {
                         Log::warning("Failed to create OrderStatusHistory: " . $historyErr->getMessage());
