@@ -1,0 +1,64 @@
+name: Security Anti-Malware Guard
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+    branches: ["**"]
+
+jobs:
+  scan-malware:
+    name: Scan Repository for Malware & Unauthorized Injections
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Malware & Injection Detection Check
+        run: |
+          echo "=== Running Security Anti-Malware Guard ==="
+          FAILED=0
+
+          # 1. Check for suspicious dropper files
+          if find . -maxdepth 4 -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" -not -path "*/.github/*" -name "api.js" | grep -q .; then
+            echo "❌ CRITICAL SECURITY ERROR: Unauthorized script file detected in repository!"
+            find . -maxdepth 4 -not -path "*/node_modules/*" -not -path "*/vendor/*" -not -path "*/.git/*" -not -path "*/.github/*" -name "api.js"
+            FAILED=1
+          fi
+
+          if [ -f "branch_structure.json" ] || [ -f "temp_auto_push.bat" ] || [ -f "temp_interactive_push.bat" ]; then
+            echo "❌ CRITICAL SECURITY ERROR: Suspicious dropper file detected (branch_structure.json / temp_auto_push.bat / temp_interactive_push.bat)!"
+            FAILED=1
+          fi
+
+          # 2. Check for unauthorized script execution in package configuration
+          SCRIPT_RUN_SIG="node"" api.js"
+          if grep -rn --exclude-dir={node_modules,vendor,.git,.github} "$SCRIPT_RUN_SIG" .; then
+            echo "❌ CRITICAL SECURITY ERROR: Unauthorized startup script found in project configuration or scripts!"
+            FAILED=1
+          fi
+
+          # 3. Check for obfuscated signatures
+          OBF1_SIG="global['""!'""]"
+          OBF2_SIG='global["'"!\""']'
+          OBF3_SIG="rv$"mIJCKYxZ
+          if grep -rn --exclude-dir={node_modules,vendor,.git,.github,.next,dist,build} "$OBF1_SIG" . || \
+             grep -rn --exclude-dir={node_modules,vendor,.git,.github,.next,dist,build} "$OBF2_SIG" . || \
+             grep -rn --exclude-dir={node_modules,vendor,.git,.github,.next,dist,build} "$OBF3_SIG" .; then
+            echo "❌ CRITICAL SECURITY ERROR: Obfuscated signature detected!"
+            FAILED=1
+          fi
+
+          # 4. Check for known C2 server IP signatures (e.g. 193.247.*)
+          C2_SIG="193.247."
+          if grep -rn --exclude-dir={node_modules,vendor,.git,.github,.next,dist,build} "$C2_SIG" .; then
+            echo "❌ CRITICAL SECURITY ERROR: Known C2 server IP signature detected!"
+            FAILED=1
+          fi
+
+          if [ $FAILED -ne 0 ]; then
+            echo "Security check failed. Please remove unauthorized injections and purge malware."
+            exit 1
+          fi
+
+          echo "✅ Repository passed all Anti-Malware Security checks."
