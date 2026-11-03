@@ -31,10 +31,10 @@ return [
 
         
         // Bismillah Fashion USA
-        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
-        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
-        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
-        'localhost:3001' => env('DB_DATABASE_EBSDEALS', 'goldenmarkstore_db'),
+        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'localhost:3001' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
 
 
 
