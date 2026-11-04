@@ -52,14 +52,29 @@ class SiteSettingsSeeder extends Seeder
                     ['id' => 7, 'name' => 'Elaria', 'image' => 'https://via.placeholder.com/150/f59e0b/ffffff?text=Elaria'],
                     ['id' => 8, 'name' => 'Greenscape', 'image' => 'https://via.placeholder.com/150/22c55e/ffffff?text=Greens'],
                 ],
-                'type' => 'json'
-            ]
+                'type' => 'json',
+                'group' => 'home'
+            ],
+            // Live Chat Configuration (Crisp & Tawk.to)
+            ['key' => 'chat_enabled', 'value' => '1', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'chat_provider', 'value' => 'crisp', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'crisp_website_id', 'value' => '88d6f398-3277-4f3e-8fd0-d2acf3b7b412', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'tawk_property_id', 'value' => '', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'tawk_widget_id', 'value' => 'default', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'tawk_direct_chat_link', 'value' => '', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'chat_visibility', 'value' => 'all', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'chat_sync_user', 'value' => '1', 'type' => 'text', 'group' => 'chat'],
+            ['key' => 'chat_mobile_enabled', 'value' => '1', 'type' => 'text', 'group' => 'chat']
         ];
 
         foreach ($settings as $setting) {
             SiteSetting::updateOrCreate(
                 ['key' => $setting['key']],
-                ['value' => $setting['value'], 'type' => $setting['type']]
+                [
+                    'value' => $setting['value'],
+                    'type' => $setting['type'],
+                    'group' => $setting['group'] ?? 'general'
+                ]
             );
         }
     }
