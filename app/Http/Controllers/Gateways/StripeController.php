@@ -22,6 +22,10 @@ class StripeController extends Controller
      */
     public function checkout(Request $request)
     {
+        if ($request->filled('secret_key')) {
+            \Stripe\Stripe::setApiKey(trim($request->input('secret_key')));
+        }
+
         $user = auth('api')->user() ?? Auth::user();
         $items = $request->input('items', []); // Format: [['price_data' => [...], 'quantity' => 1]]
         $shippingCost = (float) $request->input('shipping_cost', 0);

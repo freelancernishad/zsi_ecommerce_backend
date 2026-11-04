@@ -11,7 +11,38 @@ use Illuminate\Support\Facades\Log;
 class ZsiPayController extends Controller
 {
     /**
+     * Resolve the clean payments endpoint (guarantees ending in /v1/payments)
+     */
+    private function resolvePaymentsEndpoint(array $settings, ?string $overrideUrl = null): string
+    {
+        $raw = trim($overrideUrl ?: ($settings['zsi_pay_base_url'] ?? env('NEXT_PUBLIC_ZSI_PAY_BASE_URL', 'https://api-pay.zsi.ai/v1/payments')));
+        if (empty($raw)) {
+            return 'https://api-pay.zsi.ai/v1/payments';
+        }
+        $trimmed = rtrim($raw, '/');
+        if (str_ends_with($trimmed, '/v1/payments')) {
+            return $trimmed;
+        }
+        return $trimmed . '/v1/payments';
+    }
+
+    /**
+     * Resolve the clean server root URL (e.g. https://api-pay.zsi.ai or http://localhost:5000) for legacy fallbacks
+     */
+    private function resolveServerBase(array $settings, ?string $overrideUrl = null): string
+    {
+        $endpoint = $this->resolvePaymentsEndpoint($settings, $overrideUrl);
+        $parsed = parse_url($endpoint);
+        if (!empty($parsed['scheme']) && !empty($parsed['host'])) {
+            $port = !empty($parsed['port']) ? ':' . $parsed['port'] : '';
+            return rtrim($parsed['scheme'] . '://' . $parsed['host'] . $port, '/');
+        }
+        return 'https://api-pay.zsi.ai';
+    }
+
+    /**
      * Create a Golden Mark / ZSI Pay Checkout Session & URL.
+     * Uses the latest /v1/payments endpoint from zsi-pay-server.
      */
     public function checkout(Request $request)
     {
@@ -22,17 +53,18 @@ class ZsiPayController extends Controller
                 ->pluck('value', 'key')
                 ->toArray();
 
+            $isTest = $request->boolean('is_test', false);
             $enabled = filter_var($settings['zsi_pay_enabled'] ?? '0', FILTER_VALIDATE_BOOLEAN) || ($settings['zsi_pay_enabled'] ?? '0') === '1';
             
-            if (!$enabled) {
+            if (!$enabled && !$isTest) {
                 return response()->json([
                     'success' => false,
-                    'message' => 'Zsi pay is currently disabled.'
+                    'message' => 'ZSI Pay is currently disabled.'
                 ], 400);
             }
 
-            $apiKey = $settings['zsi_pay_api_key'] ?? '';
-            $apiSecret = $settings['zsi_pay_api_secret'] ?? '';
+            $apiKey = trim($request->input('api_key') ?: ($settings['zsi_pay_api_key'] ?? ''));
+            $apiSecret = trim($request->input('api_secret') ?: ($settings['zsi_pay_api_secret'] ?? ''));
 
             if (empty($apiKey) || empty($apiSecret)) {
                 return response()->json([
@@ -51,26 +83,26 @@ class ZsiPayController extends Controller
             $taxAmount = (float) $request->input('tax', 0);
             $discountAmount = (float) $request->input('discount', 0);
 
-            // Format items strictly conforming to zsi-pay-server validation schema
-            $formattedItems = [];
-            $itemsSum = 0.0;
+            // Format items strictly conforming to zsi-pay-server /v1/payments schema:
+            // price must be an integer, quantity must be positive integer.
+            $v1Items = [];
+            $itemsSum = 0;
             if (!empty($items) && is_array($items)) {
                 foreach ($items as $idx => $item) {
-                    $itemPrice = (float) ($item['price'] ?? 1.0);
-                    if ($itemPrice <= 0) $itemPrice = 1.0;
+                    $itemPrice = (int) max(1, round((float)($item['price'] ?? 1)));
                     $itemQty = max(1, (int) ($item['quantity'] ?? 1));
                     $itemsSum += ($itemPrice * $itemQty);
 
-                    $formattedItems[] = [
+                    $v1Items[] = [
                         'id' => (string) ($item['id'] ?? $item['product_id'] ?? $idx + 1),
                         'name' => substr((string) ($item['name'] ?? $item['product_name'] ?? 'Product Item'), 0, 200),
                         'quantity' => $itemQty,
-                        'price' => round($itemPrice, 2),
+                        'price' => $itemPrice,
                     ];
                 }
             } else {
-                $fallbackPrice = round($totalAmount > 0 ? $totalAmount : 1.0, 2);
-                $formattedItems[] = [
+                $fallbackPrice = (int) max(1, round($totalAmount > 0 ? $totalAmount : 1));
+                $v1Items[] = [
                     'id' => '1',
                     'name' => 'Order ' . ($orderNumber ?: 'Payment'),
                     'quantity' => 1,
@@ -79,12 +111,12 @@ class ZsiPayController extends Controller
                 $itemsSum = $fallbackPrice;
             }
 
-            // Target total adjustment so items sum matches total amount exactly
-            $targetTotal = round($totalAmount > 0 ? $totalAmount : $itemsSum, 2);
-            if ($targetTotal > $itemsSum) {
-                $diff = round($targetTotal - $itemsSum, 2);
+            // Adjust target total so items sum matches total amount exactly
+            $targetIntTotal = (int) max(1, round($totalAmount > 0 ? $totalAmount : $itemsSum));
+            if ($targetIntTotal > $itemsSum) {
+                $diff = $targetIntTotal - $itemsSum;
                 if ($diff > 0) {
-                    $formattedItems[] = [
+                    $v1Items[] = [
                         'id' => 'shipping_and_tax',
                         'name' => 'Shipping & Taxes',
                         'quantity' => 1,
@@ -98,91 +130,118 @@ class ZsiPayController extends Controller
             $cancelUrl = $request->input('cancel_url') ?: (rtrim($clientOrigin, '/') . '/checkout?cancelled=1');
 
             $metadata = array_merge([
-                'merchant_transaction_id' => (string) $orderNumber,
                 'order_id' => (string) $orderId,
                 'order_number' => (string) $orderNumber,
+                'merchant_transaction_id' => (string) $orderNumber,
                 'subtotal' => $subtotalAmount,
                 'shipping' => $shippingCost,
                 'tax' => $taxAmount,
                 'discount' => $discountAmount,
-                'total' => $targetTotal,
+                'total' => $totalAmount,
+                'currency' => 'USD',
                 'success_url' => $successUrl,
                 'cancel_url' => $cancelUrl,
             ], (array) $request->input('metadata', []));
 
             $headers = [
-                'api_key' => $apiKey,
-                'api_secret' => $apiSecret,
                 'x-zsi-api-key' => $apiKey,
                 'x-zsi-api-secret' => $apiSecret,
+                'api_key' => $apiKey,
+                'api_secret' => $apiSecret,
                 'Accept' => 'application/json',
                 'Content-Type' => 'application/json',
             ];
 
-            // Resolve server host base URL
-            $payServerBase = 'https://api-pay.zsi.ai';
-            if (!empty($settings['zsi_pay_base_url'])) {
-                $parsed = parse_url($settings['zsi_pay_base_url']);
-                if (!empty($parsed['scheme']) && !empty($parsed['host'])) {
-                    $payServerBase = $parsed['scheme'] . '://' . $parsed['host'];
-                }
-            }
+            $gatewayUrl = $request->input('gateway_url');
+            $payServerBase = $this->resolveServerBase($settings, $gatewayUrl);
+            $v1PaymentsUrl = $this->resolvePaymentsEndpoint($settings, $gatewayUrl);
 
-            // Attempt 1: Call /api/v1/pay (Universal session creation in zsi-pay-server)
-            $payPayload = [
-                'currency' => 'USD',
+            // PRIMARY SYSTEM (LATEST SYSTEM ADDED IN ZSI-PAY-SERVER): POST /v1/payments
+            $v1PaymentsPayload = [
                 'customer_email' => (string) $customerEmail,
-                'items' => $formattedItems,
+                'success_url' => (string) $successUrl,
+                'cancel_url' => (string) $cancelUrl,
+                'merchant_transaction_id' => (string) $orderNumber,
+                'items' => $v1Items,
                 'metadata' => $metadata,
             ];
+            Log::info("ZSI Pay Checkout Requesting /v1/payments: ", [
+                'url' => $v1PaymentsUrl,
+                'payload' => $v1PaymentsPayload
+            ]);
 
-            $response = Http::withHeaders($headers)->post($payServerBase . '/api/v1/pay', $payPayload);
+            $response = Http::withHeaders($headers)->post($v1PaymentsUrl, $v1PaymentsPayload);
             $responseData = $response->json();
 
-            $checkoutUrl = $responseData['data']['checkout_url']
-                ?? $responseData['data']['payment_url']
-                ?? $responseData['checkout_url']
+            Log::info("ZSI Pay /v1/payments Response status {$response->status()}: ", ['response' => $responseData]);
+
+            $checkoutUrl = $responseData['data']['payment_url']
+                ?? $responseData['data']['checkout_url']
+                ?? $responseData['data']['url']
                 ?? $responseData['payment_url']
+                ?? $responseData['checkout_url']
+                ?? $responseData['url']
                 ?? null;
 
-            // Attempt 2: If /api/v1/pay did not return a checkout URL, fallback to /v1/payments
+            $trackingId = $responseData['data']['tracking_id'] ?? null;
+            $merchantTxId = $responseData['data']['merchant_transaction_id'] ?? $orderNumber;
+
+            // SECONDARY FALLBACK (LEGACY SYSTEM): If /v1/payments failed, attempt legacy /api/v1/pay
             if (!$checkoutUrl || !$response->successful()) {
-                $v1PaymentsPayload = [
+                Log::warning("ZSI Pay /v1/payments did not return checkout URL, attempting legacy /api/v1/pay fallback...");
+
+                $legacyPayload = [
+                    'currency' => 'USD',
                     'customer_email' => (string) $customerEmail,
-                    'success_url' => (string) $successUrl,
-                    'cancel_url' => (string) $cancelUrl,
-                    'merchant_transaction_id' => (string) $orderNumber,
-                    'items' => array_map(function ($item) {
-                        return [
-                            'id' => (string) $item['id'],
-                            'name' => (string) $item['name'],
-                            'quantity' => (int) $item['quantity'],
-                            'price' => (int) max(1, round($item['price'])),
-                        ];
-                    }, $formattedItems),
+                    'items' => $v1Items,
                     'metadata' => $metadata,
                 ];
 
-                $v1Response = Http::withHeaders($headers)->post($payServerBase . '/v1/payments', $v1PaymentsPayload);
-                $v1Data = $v1Response->json();
+                $legacyResponse = Http::withHeaders($headers)->post($payServerBase . '/api/v1/pay', $legacyPayload);
+                $legacyData = $legacyResponse->json();
 
-                if ($v1Response->successful() && !empty($v1Data['data']['payment_url'])) {
-                    $checkoutUrl = $v1Data['data']['payment_url'];
-                    $responseData = $v1Data;
+                if ($legacyResponse->successful()) {
+                    $checkoutUrl = $legacyData['data']['checkout_url']
+                        ?? $legacyData['data']['payment_url']
+                        ?? $legacyData['data']['url']
+                        ?? $legacyData['checkout_url']
+                        ?? $legacyData['payment_url']
+                        ?? null;
+                    if ($checkoutUrl) {
+                        $responseData = $legacyData;
+                    }
                 }
             }
 
             if ($checkoutUrl) {
+                // Link order transaction ID if order exists
+                if ($orderId || $orderNumber) {
+                    \App\Models\Order::where(function ($q) use ($orderId, $orderNumber) {
+                        if ($orderId) $q->where('id', $orderId);
+                        if ($orderNumber) $q->orWhere('order_number', $orderNumber);
+                    })->update([
+                        'transaction_id' => $trackingId ?: $orderNumber,
+                    ]);
+                }
+
                 return response()->json([
                     'success' => true,
                     'url' => $checkoutUrl,
                     'payment_url' => $checkoutUrl,
                     'checkout_url' => $checkoutUrl,
-                    'data' => $responseData['data'] ?? ['checkout_url' => $checkoutUrl]
+                    'tracking_id' => $trackingId,
+                    'merchant_transaction_id' => $merchantTxId,
+                    'data' => [
+                        'url' => $checkoutUrl,
+                        'payment_url' => $checkoutUrl,
+                        'checkout_url' => $checkoutUrl,
+                        'tracking_id' => $trackingId,
+                        'merchant_transaction_id' => $merchantTxId,
+                    ]
                 ]);
             }
 
-            $errorMessage = $responseData['message'] ?? $responseData['error'] ?? 'Failed to initialize Zsi pay checkout URL.';
+            $errorMessage = $responseData['message'] ?? $responseData['error'] ?? 'Failed to initialize ZSI Pay checkout URL.';
             Log::error("ZSI Pay Checkout API Error: ", ['status' => $response->status(), 'response' => $responseData]);
 
             return response()->json([
@@ -210,12 +269,13 @@ class ZsiPayController extends Controller
         try {
             $eventType = $payload['type'] ?? $request->input('event_type') ?? null;
             $data = $payload['data'] ?? [];
-            $paymentStatus = strtolower($data['payment_status'] ?? $payload['payment_status'] ?? '');
+            $paymentStatus = strtolower($data['payment_status'] ?? $data['status'] ?? $payload['payment_status'] ?? '');
 
             $metadata = $data['metadata'] ?? $payload['metadata'] ?? [];
             $orderId = $metadata['order_id'] ?? $payload['order_id'] ?? null;
-            $orderNumber = $metadata['order_number'] ?? $payload['order_number'] ?? null;
+            $orderNumber = $metadata['order_number'] ?? $data['merchant_transaction_id'] ?? $payload['order_number'] ?? $payload['merchant_transaction_id'] ?? null;
             $transactionId = $data['provider_transaction_id'] 
+                ?? $data['tracking_id'] 
                 ?? $data['session_token'] 
                 ?? $data['session_id'] 
                 ?? $data['invoice_id'] 
@@ -241,8 +301,11 @@ class ZsiPayController extends Controller
                 return response()->json(['success' => false, 'message' => 'Order not found'], 404);
             }
 
-            // Check if event is payment.succeeded or payment_status is succeeded
-            if ($eventType === 'payment.succeeded' || $paymentStatus === 'succeeded' || $paymentStatus === 'paid') {
+            // Check if event is payment.succeeded or merchant.payment.succeeded or paymentStatus is succeeded/paid/completed
+            $isSuccessEvent = in_array($eventType, ['payment.succeeded', 'merchant.payment.succeeded']) ||
+                              in_array($paymentStatus, ['succeeded', 'paid', 'completed']);
+
+            if ($isSuccessEvent) {
                 $order->update([
                     'payment_status' => 'paid',
                     'status' => 'processing',
@@ -250,7 +313,8 @@ class ZsiPayController extends Controller
                     'payment_details' => array_merge($order->payment_details ?? [], [
                         'zsi_pay_webhook_event' => $eventType,
                         'zsi_pay_session_id' => $data['session_id'] ?? null,
-                        'zsi_pay_provider_tx_id' => $data['provider_transaction_id'] ?? null,
+                        'zsi_pay_tracking_id' => $data['tracking_id'] ?? null,
+                        'zsi_pay_merchant_tx_id' => $orderNumber,
                         'paid_at' => $data['paid_at'] ?? now()->toIso8601String(),
                     ])
                 ]);
@@ -261,7 +325,7 @@ class ZsiPayController extends Controller
                         \App\Models\OrderStatusHistory::create([
                             'order_id' => $order->id,
                             'status' => 'processing',
-                            'comment' => 'Payment succeeded via Zsi pay.'
+                            'comment' => 'Payment succeeded via ZSI Pay.'
                         ]);
                     } catch (\Exception $historyErr) {
                         Log::warning("Failed to create OrderStatusHistory: " . $historyErr->getMessage());
@@ -299,7 +363,8 @@ class ZsiPayController extends Controller
     }
 
     /**
-     * Verify & track ZSI Pay session status by trackId.
+     * Verify & track ZSI Pay session status by trackId or merchant_transaction_id.
+     * Checks the latest /v1/payments/:merchant_transaction_id endpoint first.
      */
     public function verifySession(Request $request, $trackId)
     {
@@ -311,57 +376,76 @@ class ZsiPayController extends Controller
                 ->pluck('value', 'key')
                 ->toArray();
 
-            $baseUrl = rtrim($settings['zsi_pay_base_url'] ?? (env('NEXT_PUBLIC_ZSI_PAY_BASE_URL') ?: 'https://api-pay.zsi.ai/api/v1'), '/');
-            $apiKey = $settings['zsi_pay_api_key'] ?? '';
-            $apiSecret = $settings['zsi_pay_api_secret'] ?? '';
+            $payServerBase = $this->resolveServerBase($settings);
+            $apiKey = trim($settings['zsi_pay_api_key'] ?? '');
+            $apiSecret = trim($settings['zsi_pay_api_secret'] ?? '');
 
-            // Endpoints to try: configured base_url track endpoint AND production api-pay.zsi.ai track endpoint
-            $endpointsToTry = [
-                $baseUrl . '/session/track/' . $trackId,
-                'https://api-pay.zsi.ai/api/v1/session/track/' . $trackId,
+            $headers = [
+                'Accept' => 'application/json',
+                'x-zsi-api-key' => $apiKey,
+                'x-zsi-api-secret' => $apiSecret,
+                'api_key' => $apiKey,
+                'api_secret' => $apiSecret,
             ];
 
             $responseData = null;
             $httpSuccess = false;
+            $rawStatus = '';
 
-            foreach (array_unique($endpointsToTry) as $endpoint) {
-                try {
-                    $headers = [
-                        'Accept' => 'application/json',
-                    ];
-                    if (!empty($apiKey)) $headers['api_key'] = $apiKey;
-                    if (!empty($apiSecret)) $headers['api_secret'] = $apiSecret;
+            // Step 1: Check LATEST SYSTEM route: GET /v1/payments/:merchant_transaction_id
+            $v1PaymentsGetUrl = $this->resolvePaymentsEndpoint($settings) . '/' . urlencode($trackId);
+            try {
+                $res = Http::withHeaders($headers)->get($v1PaymentsGetUrl);
+                if ($res->successful()) {
+                    $responseData = $res->json();
+                    $httpSuccess = true;
+                    $sessionData = $responseData['data'] ?? $responseData;
+                    $rawStatus = strtolower($sessionData['status'] ?? $sessionData['payment_status'] ?? '');
+                } else {
+                    Log::warning("ZSI Pay /v1/payments GET status {$res->status()}: ", ['response' => $res->json()]);
+                }
+            } catch (\Exception $v1Err) {
+                Log::warning("ZSI Pay /v1/payments GET exception: " . $v1Err->getMessage());
+            }
 
-                    $res = Http::withHeaders($headers)->get($endpoint);
+            // Step 2: Fallback to LEGACY SYSTEM: GET /api/v1/session/track/:trackId
+            if (!$httpSuccess || empty($rawStatus)) {
+                $legacyEndpoints = [
+                    $payServerBase . '/api/v1/session/track/' . urlencode($trackId),
+                    $payServerBase . '/session/track/' . urlencode($trackId),
+                ];
 
-                    if ($res->successful()) {
-                        $responseData = $res->json();
-                        $httpSuccess = true;
-                        break;
-                    } else {
-                        Log::warning("ZSI Pay track API status {$res->status()} on {$endpoint}: ", ['response' => $res->json()]);
-                        if (!$responseData) {
+                foreach (array_unique($legacyEndpoints) as $endpoint) {
+                    try {
+                        $res = Http::withHeaders($headers)->get($endpoint);
+                        if ($res->successful()) {
                             $responseData = $res->json();
+                            $httpSuccess = true;
+                            $sessionData = $responseData['data'] ?? $responseData;
+                            $rawStatus = strtolower($sessionData['payment_status'] ?? $sessionData['status'] ?? $sessionData['state'] ?? '');
+                            break;
                         }
+                    } catch (\Exception $e) {
+                        Log::warning("ZSI Pay legacy track exception on {$endpoint}: " . $e->getMessage());
                     }
-                } catch (\Exception $httpErr) {
-                    Log::warning("ZSI Pay track HTTP exception on {$endpoint}: " . $httpErr->getMessage());
                 }
             }
 
-            Log::info("ZSI Pay Track Final Result for {$trackId}:", ['httpSuccess' => $httpSuccess, 'data' => $responseData]);
+            Log::info("ZSI Pay Track Final Result for {$trackId}:", ['httpSuccess' => $httpSuccess, 'status' => $rawStatus, 'data' => $responseData]);
 
             $sessionData = $responseData['data'] ?? $responseData ?? [];
-            $rawStatus = strtolower(
-                $sessionData['payment_status'] ?? 
-                $sessionData['status'] ?? 
-                $sessionData['state'] ?? 
-                ''
-            );
+            if (empty($rawStatus)) {
+                $rawStatus = strtolower(
+                    $sessionData['status'] ?? 
+                    $sessionData['payment_status'] ?? 
+                    $sessionData['state'] ?? 
+                    ''
+                );
+            }
 
             $metadata = $sessionData['metadata'] ?? [];
             $orderId = $metadata['order_id'] ?? $request->input('order_id') ?? null;
-            $orderNumber = $metadata['order_number'] ?? $request->input('order_number') ?? null;
+            $orderNumber = $metadata['order_number'] ?? $sessionData['merchant_transaction_id'] ?? $request->input('order_number') ?? null;
 
             // Find matching Order by order_id, order_number, or numeric trackId
             $order = \App\Models\Order::where(function ($query) use ($orderId, $orderNumber, $trackId) {
@@ -370,6 +454,10 @@ class ZsiPayController extends Controller
                 }
                 if ($orderNumber) {
                     $query->orWhere('order_number', $orderNumber);
+                }
+                if ($trackId) {
+                    $query->orWhere('order_number', $trackId)
+                          ->orWhere('transaction_id', $trackId);
                 }
                 if (is_numeric($trackId)) {
                     $query->orWhere('id', $trackId);
@@ -411,11 +499,13 @@ class ZsiPayController extends Controller
                     $order->update([
                         'payment_status' => 'paid',
                         'status' => 'processing',
-                        'transaction_id' => $trackId,
+                        'transaction_id' => $sessionData['tracking_id'] ?? $trackId,
                         'payment_details' => array_merge($order->payment_details ?? [], [
                             'zsi_pay_track_id' => $trackId,
                             'verified_at' => now()->toIso8601String(),
                             'zsi_pay_status' => $rawStatus,
+                            'provider' => $sessionData['payment']['provider'] ?? null,
+                            'method' => $sessionData['payment']['method'] ?? null,
                         ])
                     ]);
 
@@ -424,7 +514,7 @@ class ZsiPayController extends Controller
                             \App\Models\OrderStatusHistory::create([
                                 'order_id' => $order->id,
                                 'status' => 'processing',
-                                'comment' => 'Payment verified via ZSI Pay Track API.'
+                                'comment' => 'Payment verified via ZSI Pay /v1/payments API.'
                             ]);
                         } catch (\Exception $e) {}
                     }
