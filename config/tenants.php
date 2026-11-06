@@ -29,8 +29,15 @@ return [
         'admin.ebsdeals.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_ebsdeals'),
 
 
+
+        // cheaperbro.com
+        'cheaperbro.com'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'www.cheaperbro.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'admin.cheaperbro.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+
+
         
-        // Bismillah Fashion USA
+        // vercel and local
         'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
         'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
         'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
