@@ -314,4 +314,118 @@ class AliExpressController extends Controller
             ], 500);
         }
     }
+
+    /**
+     * Get AliExpress connection and OAuth status.
+     */
+    public function status()
+    {
+        $settings = \App\Models\SiteSetting::where('group', 'aliexpress')->pluck('value', 'key')->toArray();
+
+        $getVal = function ($key, $default = '') use ($settings) {
+            $val = $settings[$key] ?? config("aliexpress.{$key}", $default);
+            if (is_array($val)) return (string)($val[0] ?? $default);
+            return (string)($val ?? $default);
+        };
+
+        $appKey = $getVal('aliexpress_app_key', config('aliexpress.app_key', ''));
+        $appSecret = $getVal('aliexpress_app_secret', config('aliexpress.app_secret', ''));
+        $accessToken = $getVal('aliexpress_access_token', '');
+        $refreshToken = $getVal('aliexpress_refresh_token', '');
+        $tokenExpiresAt = $getVal('aliexpress_token_expires_at', '');
+        $userNick = $getVal('aliexpress_user_nick', '');
+        $rapidApiKey = $getVal('aliexpress_rapidapi_key', config('aliexpress.rapidapi_key', ''));
+
+        $isTokenExpired = false;
+        if (!empty($tokenExpiresAt)) {
+            $isTokenExpired = now()->greaterThan(\Carbon\Carbon::parse($tokenExpiresAt));
+        }
+
+        return response()->json([
+            'success' => true,
+            'data' => [
+                'has_app_key' => !empty($appKey),
+                'has_app_secret' => !empty($appSecret),
+                'has_access_token' => !empty($accessToken),
+                'has_refresh_token' => !empty($refreshToken),
+                'has_rapidapi_key' => !empty($rapidApiKey),
+                'is_connected' => !empty($appKey) && !empty($appSecret) && (!empty($accessToken) || !empty($rapidApiKey)),
+                'user_nick' => $userNick,
+                'token_expires_at' => $tokenExpiresAt,
+                'is_token_expired' => $isTokenExpired,
+                'default_profit_margin' => (float)$getVal('aliexpress_default_profit_margin', (string)config('aliexpress.default_profit_margin', 20.0)),
+                'default_stock' => (int)$getVal('aliexpress_default_stock', (string)config('aliexpress.default_stock', 50)),
+                'ship_to_country' => $getVal('aliexpress_ship_to_country', config('aliexpress.ship_to_country', 'US')),
+                'currency' => $getVal('aliexpress_currency', config('aliexpress.currency', 'USD')),
+            ],
+        ]);
+    }
+
+    /**
+     * Get OAuth authorization URL for AliExpress Open Platform login.
+     */
+    public function oauthUrl(Request $request)
+    {
+        $redirectUri = $request->query('redirect_uri') ?: url('/admin/settings/aliexpress/callback');
+
+        try {
+            $url = $this->aliService->getOAuthAuthorizationUrl($redirectUri);
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'authorization_url' => $url,
+                    'redirect_uri' => $redirectUri,
+                ],
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Exchange OAuth code for Access Token and Refresh Token.
+     */
+    public function exchangeToken(Request $request)
+    {
+        $request->validate([
+            'code' => 'required|string',
+        ]);
+
+        try {
+            $data = $this->aliService->createTokenFromCode($request->input('code'));
+            return response()->json([
+                'success' => true,
+                'message' => 'AliExpress OAuth token generated successfully!',
+                'data' => $data,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Token exchange failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Refresh AliExpress Access Token.
+     */
+    public function refreshToken()
+    {
+        try {
+            $data = $this->aliService->refreshAccessToken();
+            return response()->json([
+                'success' => true,
+                'message' => 'AliExpress Access Token renewed successfully!',
+                'data' => $data,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Token refresh failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
 }

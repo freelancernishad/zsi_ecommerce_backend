@@ -12,8 +12,10 @@ return [
     */
 
     'api_key' => env('ALIEXPRESS_API_KEY', ''),
-    'app_key' => env('ALIEXPRESS_APP_KEY', ''),
+    'app_key' => env('ALIEXPRESS_APP_KEY', '558340'),
     'app_secret' => env('ALIEXPRESS_APP_SECRET', ''),
+    'access_token' => env('ALIEXPRESS_ACCESS_TOKEN', ''),
+    'refresh_token' => env('ALIEXPRESS_REFRESH_TOKEN', ''),
     'tracking_id' => env('ALIEXPRESS_TRACKING_ID', ''),
     'rapidapi_key' => env('ALIEXPRESS_RAPIDAPI_KEY', ''),
     'rapidapi_host' => env('ALIEXPRESS_RAPIDAPI_HOST', 'aliexpress-datahub.p.rapidapi.com'),

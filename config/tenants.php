@@ -38,14 +38,15 @@ return [
 
         
         // vercel and local
-        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-        'localhost:3001' => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-
-
-
-
+        'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
+        'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
+        'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
+        'localhost:3000' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        'localhost:3001' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        'localhost'      => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        '127.0.0.1:3000' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        '127.0.0.1:3001' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        '127.0.0.1'      => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
 
         // Local development hostnames
         'goldenmark.test'            => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
@@ -57,5 +58,5 @@ return [
     | Default Fallback Database
     |--------------------------------------------------------------------------
     */
-    'fallback' => env('DB_DATABASE', 'zsi_ecommerce'),
+    'fallback' => env('DB_DATABASE', 'goldenmarkstore_db'),
 ];

@@ -137,7 +137,7 @@ class AliExpressImportService
             $productData = [
                 'name' => $productName,
                 'slug' => $slug,
-                'sku' => 'ALI-' . ($aliData['spu'] ?? $productId),
+                'sku' => str_starts_with((string)($aliData['spu'] ?? ''), 'ALI-') ? $aliData['spu'] : ('ALI-' . $productId),
                 'description' => $aliData['description'] ?? '',
                 'summary' => Str::limit(strip_tags($aliData['description'] ?? ''), 250),
                 'cost_price' => $costPrice,
