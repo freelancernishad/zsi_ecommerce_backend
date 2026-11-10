@@ -78,5 +78,12 @@ Schedule::call(function () {
     }
 })->everyMinute()->name('process-pending-bulk-imports')->withoutOverlapping();
 
+// Automatic Supplier Inventory, Stock & Variant Sync (Checks hourly, runs according to configured frequency)
+Schedule::command('inventory:sync')
+    ->hourly()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/inventory_sync.log'))
+    ->name('auto-sync-supplier-inventory');
+
 
 

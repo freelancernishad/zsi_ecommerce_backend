@@ -25,4 +25,15 @@ Route::prefix('admin/settings')->group(function () {
     // Site Wide Settings Routes (Universal & Scalable)
     Route::get('/site-settings/{group}', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'index']);
     Route::post('/site-settings/update', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'update']);
+
+    // Inventory Auto-Sync & Stock Monitoring Routes
+    Route::prefix('inventory-sync')->group(function () {
+        Route::get('/status', [\App\Http\Controllers\Admin\InventorySyncController::class, 'status']);
+        Route::post('/settings', [\App\Http\Controllers\Admin\InventorySyncController::class, 'updateSettings']);
+        Route::post('/trigger', [\App\Http\Controllers\Admin\InventorySyncController::class, 'triggerSync']);
+        Route::get('/logs', [\App\Http\Controllers\Admin\InventorySyncController::class, 'logs']);
+        Route::get('/out-of-stock', [\App\Http\Controllers\Admin\InventorySyncController::class, 'outOfStock']);
+        Route::post('/retry-product', [\App\Http\Controllers\Admin\InventorySyncController::class, 'retryProduct']);
+        Route::post('/retry-failed', [\App\Http\Controllers\Admin\InventorySyncController::class, 'retryFailed']);
+    });
 });
