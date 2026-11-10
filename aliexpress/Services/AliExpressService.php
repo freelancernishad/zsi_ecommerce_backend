@@ -699,7 +699,7 @@ class AliExpressService
         $response = Http::withHeaders([
             'x-rapidapi-key' => $this->rapidApiKey,
             'x-rapidapi-host' => $this->rapidApiHost,
-        ])->get("https://{$this->rapidApiHost}/item_detail", [
+        ])->timeout(20)->get("https://{$this->rapidApiHost}/item_detail", [
             'itemId' => $productId,
         ]);
 
