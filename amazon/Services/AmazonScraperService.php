@@ -322,9 +322,14 @@ class AmazonScraperService
     public function getProductDetail(string $asinOrUrl): array
     {
         $asin = $this->extractAsin($asinOrUrl);
-        $url = str_starts_with($asinOrUrl, 'http')
-            ? $asinOrUrl
-            : "https://www.amazon.com/dp/{$asin}";
+        $host = 'www.amazon.com';
+        if (str_starts_with($asinOrUrl, 'http')) {
+            $parsedHost = parse_url($asinOrUrl, PHP_URL_HOST);
+            if ($parsedHost && str_contains($parsedHost, 'amazon.')) {
+                $host = $parsedHost;
+            }
+        }
+        $url = "https://{$host}/dp/{$asin}?th=1&psc=1";
 
         // If ASIN matches a generated fallback catalog pattern (e.g. B02951F68F), return fallback specs immediately
         if ($this->isFallbackAsin($asin)) {
@@ -600,6 +605,7 @@ class AmazonScraperService
     {
         $variants = [];
         $seenAsins = [];
+        $asinMeta = [];
 
         // --- STRATEGY 1: <script type="a-state"> twister-sort-filter-data ---
         if (preg_match('/<script[^>]*data-a-state="[^"]*twister-sort-filter-data[^"]*"[^>]*>(.*?)<\/script>/s', $html, $m)) {
@@ -611,7 +617,7 @@ class AmazonScraperService
 
                     foreach ($items as $idx => $item) {
                         $itemAsin = $item['defaultAsin'] ?? null;
-                        if (!$itemAsin || isset($seenAsins[$itemAsin])) continue;
+                        if (!$itemAsin) continue;
 
                         $title = trim($item['dimensionValueDisplayText'] ?? '');
                         if (empty($title)) {
@@ -647,6 +653,15 @@ class AmazonScraperService
                             }
                         }
 
+                        $isAvailable = ($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE';
+                        $asinMeta[$itemAsin] = [
+                            'price' => $itemPrice,
+                            'image' => $itemImg,
+                            'available' => $isAvailable,
+                        ];
+
+                        if (isset($seenAsins[$itemAsin])) continue;
+
                         $variants[] = [
                             'id' => $itemAsin,
                             'asin' => $itemAsin,
@@ -657,7 +672,7 @@ class AmazonScraperService
                             'attributes' => [
                                 $dimLabel => $title,
                             ],
-                            'available' => ($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE',
+                            'available' => $isAvailable,
                         ];
                         $seenAsins[$itemAsin] = true;
                     }
@@ -665,58 +680,20 @@ class AmazonScraperService
             }
         }
 
-        // --- STRATEGY 2: Embedded Twister JS (dimensionValuesDisplayData, variationValues, etc.) ---
-        if (empty($variants)) {
-            $dimDisplayData = null;
-            $labels = [];
-            $colorImages = [];
-
-            if (preg_match('/["\']?dimensionValuesDisplayData["\']?\s*:\s*(\{.*?\})\s*,\s*["\'](?:pwASINs|pwUnavailableMessage|variationDisplayLabels|variationValues)/s', $html, $m)) {
-                $dimDisplayData = json_decode($m[1], true);
+        // --- STRATEGY 2: Embedded Twister JS (multi-dimension combinations via dimensionValuesDisplayData) ---
+        $twisterVariants = $this->parseTwisterJsVariants($html, $asin, $price, $images, $asinMeta);
+        $hasMultiDimTwister = false;
+        foreach ($twisterVariants as $tv) {
+            if (count($tv['attributes'] ?? []) > 1) {
+                $hasMultiDimTwister = true;
+                break;
             }
+        }
 
-            if (preg_match('/["\']?variationDisplayLabels["\']?\s*:\s*(\{[^}]+\})/s', $html, $m)) {
-                $labels = json_decode($m[1], true) ?: [];
-            }
-
-            if (preg_match('/[\'"]colorImages[\'"]\s*:\s*(\{.*?\})\s*,\s*[\'"]colorToAsin/s', $html, $m)) {
-                $colorImages = json_decode(str_replace("'", '"', $m[1]), true) ?: [];
-            }
-
-            if (!empty($dimDisplayData) && is_array($dimDisplayData)) {
-                foreach ($dimDisplayData as $itemAsin => $valArray) {
-                    if (!is_string($itemAsin) || strlen($itemAsin) !== 10 || isset($seenAsins[$itemAsin])) continue;
-                    $optVal = is_array($valArray) ? implode(' / ', $valArray) : (string) $valArray;
-                    if (empty($optVal)) continue;
-
-                    $dimName = 'Color';
-                    if (!empty($labels)) {
-                        $firstKey = array_key_first($labels);
-                        $dimName = $labels[$firstKey] ?: 'Color';
-                    }
-
-                    $varImg = !empty($images) ? $images[0] : '';
-                    if (!empty($colorImages[$optVal][0]['hiRes'])) {
-                        $varImg = $colorImages[$optVal][0]['hiRes'];
-                    } elseif (!empty($colorImages[$optVal][0]['large'])) {
-                        $varImg = $colorImages[$optVal][0]['large'];
-                    }
-
-                    $variants[] = [
-                        'id' => $itemAsin,
-                        'asin' => $itemAsin,
-                        'title' => $optVal,
-                        'price' => $price,
-                        'sku' => "AMZ-{$itemAsin}",
-                        'image' => $varImg,
-                        'attributes' => [
-                            $dimName => $optVal,
-                        ],
-                        'available' => true,
-                    ];
-                    $seenAsins[$itemAsin] = true;
-                }
-            }
+        // Prefer multi-dimensional Twister combinations over single-dimension slices
+        if ($hasMultiDimTwister || (empty($variants) && !empty($twisterVariants))) {
+            $variants = $twisterVariants;
+            $seenAsins = array_fill_keys(array_column($variants, 'asin'), true);
         }
 
         // --- STRATEGY 3: DOM XPath Scraper (Inline Twister, Swatches, Variations) ---
@@ -847,6 +824,105 @@ class AmazonScraperService
                 'attributes' => [],
                 'available' => true,
             ];
+        }
+
+        return $variants;
+    }
+
+    /**
+     * Parse full multi-dimensional variant combinations from Amazon Twister JS data.
+     */
+    protected function parseTwisterJsVariants(
+        string $html,
+        string $currentAsin,
+        float $price,
+        array $images,
+        array $asinMeta = []
+    ): array {
+        $dimDisplayData = null;
+        $dimensions = [];
+        $labels = [];
+        $colorImages = [];
+
+        if (preg_match('/["\']?dimensionValuesDisplayData["\']?\s*:\s*(\{.*?\})\s*,\s*["\'](?:pwASINs|pwUnavailableMessage|variationDisplayLabels|variationValues|dimensions)/s', $html, $m)) {
+            $dimDisplayData = json_decode($m[1], true);
+        }
+
+        if (empty($dimDisplayData) || !is_array($dimDisplayData)) {
+            return [];
+        }
+
+        if (preg_match('/["\']?dimensions["\']?\s*:\s*(\[[^\]]+\])/s', $html, $m)) {
+            $dimensions = json_decode($m[1], true) ?: [];
+        }
+
+        if (preg_match('/["\']?variationDisplayLabels["\']?\s*:\s*(\{[^}]+\})/s', $html, $m)) {
+            $labels = json_decode($m[1], true) ?: [];
+        }
+
+        if (preg_match('/[\'"]colorImages[\'"]\s*:\s*(\{.*?\})\s*,\s*[\'"]colorToAsin/s', $html, $m)) {
+            $colorImages = json_decode(str_replace("'", '"', $m[1]), true) ?: [];
+        }
+
+        $dimKeys = !empty($dimensions) ? array_values($dimensions) : array_keys($labels);
+        $variants = [];
+        $seenAsins = [];
+
+        foreach ($dimDisplayData as $itemAsin => $valArray) {
+            if (!is_string($itemAsin) || strlen($itemAsin) !== 10 || isset($seenAsins[$itemAsin])) {
+                continue;
+            }
+
+            $values = is_array($valArray) ? array_values($valArray) : [(string) $valArray];
+            $cleanValues = array_values(array_filter(array_map(fn($v) => trim((string) $v), $values), fn($v) => $v !== ''));
+            if (empty($cleanValues)) {
+                continue;
+            }
+
+            $attributes = [];
+            foreach ($cleanValues as $idx => $val) {
+                $dimKey = $dimKeys[$idx] ?? null;
+                if ($dimKey && !empty($labels[$dimKey])) {
+                    $attrName = trim((string) $labels[$dimKey]);
+                } elseif ($dimKey) {
+                    $cleanKey = trim(preg_replace('/(_name|_string)$/i', '', (string) $dimKey));
+                    $attrName = ucwords(str_replace('_', ' ', $cleanKey ?: 'Option'));
+                } else {
+                    $attrName = count($cleanValues) === 1 ? 'Option' : 'Option ' . ($idx + 1);
+                }
+                $attributes[$attrName] = $val;
+            }
+
+            $title = implode(' / ', $cleanValues);
+            $meta = $asinMeta[$itemAsin] ?? [];
+
+            $varImg = $meta['image'] ?? (!empty($images) ? $images[0] : '');
+            foreach ($cleanValues as $val) {
+                if (!empty($colorImages[$val][0]['hiRes'])) {
+                    $varImg = $colorImages[$val][0]['hiRes'];
+                    break;
+                }
+                if (!empty($colorImages[$val][0]['large'])) {
+                    $varImg = $colorImages[$val][0]['large'];
+                    break;
+                }
+            }
+
+            $itemPrice = ($itemAsin === $currentAsin && $price > 0)
+                ? $price
+                : ($meta['price'] ?? $price);
+
+            $variants[] = [
+                'id' => $itemAsin,
+                'asin' => $itemAsin,
+                'title' => $title,
+                'price' => $itemPrice,
+                'sku' => "AMZ-{$itemAsin}",
+                'image' => $varImg,
+                'attributes' => $attributes,
+                'available' => $meta['available'] ?? true,
+            ];
+            $seenAsins[$itemAsin] = true;
         }
 
         return $variants;
