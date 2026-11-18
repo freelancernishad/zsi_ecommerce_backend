@@ -134,6 +134,28 @@ class AliExpressImportService
                 $finalCategoryId = $defaultCategory ? $defaultCategory->id : 1;
             }
 
+            // Build variant_options JSON from variant attributes
+            $optionsCollector = [];
+            foreach (($aliData['variants'] ?? []) as $v) {
+                if (empty($v['attributes']) || !is_array($v['attributes'])) {
+                    continue;
+                }
+                foreach ($v['attributes'] as $optName => $optVal) {
+                    $cleanOpt = trim((string) $optName);
+                    $cleanVal = trim((string) $optVal);
+                    if ($cleanOpt !== '' && $cleanVal !== '') {
+                        $optionsCollector[$cleanOpt][$cleanVal] = true;
+                    }
+                }
+            }
+            $variantOptions = [];
+            foreach ($optionsCollector as $optName => $valsMap) {
+                $variantOptions[] = [
+                    'name' => $optName,
+                    'values' => array_values(array_keys($valsMap)),
+                ];
+            }
+
             $productData = [
                 'name' => $productName,
                 'slug' => $slug,
@@ -146,6 +168,7 @@ class AliExpressImportService
                 'category_id' => $finalCategoryId,
                 'status' => $status,
                 'is_featured' => false,
+                'variant_options' => !empty($variantOptions) ? $variantOptions : null,
                 'aliexpress_product_id' => $productId,
                 'aliexpress_url' => $aliData['productUrl'] ?? "https://www.aliexpress.com/item/{$productId}.html",
                 'is_aliexpress_product' => true,
@@ -191,8 +214,10 @@ class AliExpressImportService
                 ProductVariant::where('product_id', $product->id)->delete();
 
                 foreach ($rawVariants as $index => $v) {
-                    $vCostPrice = (float)($v['cost_price'] ?? $costPrice);
+                    $rawVCost = $v['cost_price'] ?? null;
+                    $vCostPrice = (is_numeric($rawVCost) && (float)$rawVCost > 0) ? (float)$rawVCost : $costPrice;
                     $vRetailPrice = round($vCostPrice * (1 + ($profitMarginPercent / 100)), 2);
+                    $attrs = is_array($v['attributes'] ?? null) ? $v['attributes'] : [];
 
                     ProductVariant::create([
                         'product_id' => $product->id,
@@ -200,6 +225,8 @@ class AliExpressImportService
                         'sku' => $v['sku_id'] ?? ('ALI-' . $productId . '-' . ($index + 1)),
                         'price' => $vRetailPrice,
                         'stock' => (int)($v['stock'] ?? $defaultStock),
+                        'color' => $attrs['Color'] ?? $attrs['Colour'] ?? null,
+                        'size' => $attrs['Size'] ?? null,
                         'aliexpress_sku_id' => $v['sku_id'] ?? null,
                         'aliexpress_variant_sku' => $v['sku_id'] ?? null,
                     ]);

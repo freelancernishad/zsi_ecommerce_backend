@@ -355,7 +355,12 @@ class AliExpressService
 
         if (!empty($skuList)) {
             foreach ($skuList as $skuItem) {
-                $skuCost = (float)($skuItem['offer_sale_price'] ?? $skuItem['sku_price'] ?? 0);
+                $rawOfferPrice = $skuItem['offer_sale_price'] ?? null;
+                $rawSkuPrice = $skuItem['sku_price'] ?? null;
+                $skuCost = (is_numeric($rawOfferPrice) && (float)$rawOfferPrice > 0)
+                    ? (float)$rawOfferPrice
+                    : ((is_numeric($rawSkuPrice) && (float)$rawSkuPrice > 0) ? (float)$rawSkuPrice : 0.0);
+
                 if ($skuCost > 0 && $skuCost < $minCostPrice) {
                     $minCostPrice = $skuCost;
                     $foundPrice = true;
@@ -364,8 +369,9 @@ class AliExpressService
                 $skuStock = (int)($skuItem['sku_available_stock'] ?? $skuItem['ipm_sku_stock'] ?? $this->defaultStock);
                 $skuRetailPrice = round($skuCost * (1 + ($this->defaultProfitMargin / 100)), 2);
 
-                // Option title
+                // Option title & structured attributes
                 $optionName = '';
+                $attributes = [];
                 $skuImg = $mainImage;
                 $rawProps = $skuItem['ae_sku_property_dtos']['ae_sku_property_d_t_o'] ?? $skuItem['ae_sku_property_dtos'] ?? [];
                 $propList = (is_array($rawProps) && (isset($rawProps['sku_property_name']) || isset($rawProps['property_value_definition_name'])))
@@ -374,9 +380,14 @@ class AliExpressService
 
                 if (!empty($propList)) {
                     $propNames = [];
-                    foreach ($propList as $prop) {
-                        $pVal = $prop['property_value_definition_name'] ?? $prop['sku_property_value'] ?? $prop['sku_property_name'] ?? '';
-                        if ($pVal) $propNames[] = $pVal;
+                    foreach ($propList as $idx => $prop) {
+                        $pKey = trim((string)($prop['sku_property_name'] ?? ''));
+                        $pVal = trim((string)($prop['property_value_definition_name'] ?? $prop['sku_property_value'] ?? ''));
+                        if ($pVal !== '') {
+                            $propNames[] = $pVal;
+                            $attrKey = $pKey !== '' ? ucfirst($pKey) : (count($propList) === 1 ? 'Option' : 'Option ' . ($idx + 1));
+                            $attributes[$attrKey] = $pVal;
+                        }
                         if (!empty($prop['sku_image'])) {
                             $skuImg = $this->formatImageUrl($prop['sku_image']);
                         }
@@ -395,12 +406,21 @@ class AliExpressService
                     'price' => $skuRetailPrice,
                     'stock' => $skuStock > 0 ? $skuStock : $this->defaultStock,
                     'image' => $skuImg,
+                    'attributes' => $attributes,
                 ];
             }
         }
 
         $finalCostPrice = $foundPrice ? $minCostPrice : 15.0;
         $finalRetailPrice = round($finalCostPrice * (1 + ($this->defaultProfitMargin / 100)), 2);
+
+        foreach ($variants as &$v) {
+            if (($v['cost_price'] ?? 0) <= 0) {
+                $v['cost_price'] = $finalCostPrice;
+                $v['price'] = $finalRetailPrice;
+            }
+        }
+        unset($v);
 
         return [
             'productId' => $productId,
@@ -488,11 +508,7 @@ class AliExpressService
     }
 
     /**
-     * Get detailed AliExpress product info by URL or Product ID.
-     * Cascading strategy:
-     * 1. Official AliExpress Open Platform API (aliexpress.ds.product.get)
-     * 2. RapidAPI (if configured)
-     * 3. Direct Web Scraper / Fallback
+     * Get detailed AliExpress product info via Official AliExpress Open Platform API only.
      */
     public function getProductDetail(string $productIdOrUrl): array
     {
@@ -503,40 +519,20 @@ class AliExpressService
             throw new Exception("Invalid AliExpress Product ID or URL provided.");
         }
 
-        // 1. Official AliExpress Open Platform API
-        if (!empty($this->appKey) && !empty($this->appSecret)) {
-            try {
-                $detail = $this->getDetailViaOfficialApi($productId);
-                if (!empty($detail['productId']) && !empty($detail['title'])) {
-                    return $detail;
-                }
-            } catch (Exception $e) {
-                Log::warning("AliExpress Official API getDetail failed for {$productId}: " . $e->getMessage());
-            }
+        if (empty($this->appKey) || empty($this->appSecret)) {
+            throw new Exception("AliExpress Official API credentials (App Key & App Secret) are not configured in Settings.");
         }
 
-        // 2. RapidAPI fallback
-        if (!empty($this->rapidApiKey)) {
-            try {
-                $detail = $this->getDetailViaRapidApi($productId);
-                if (!empty($detail['productId']) || !empty($detail['title'])) {
-                    return $detail;
-                }
-            } catch (Exception $e) {
-                Log::warning("AliExpress RapidAPI detail fetch failed for {$productId}: " . $e->getMessage());
-            }
+        $detail = $this->getDetailViaOfficialApi($productId);
+        if (empty($detail['productId']) || empty($detail['title'])) {
+            throw new Exception("AliExpress Official API returned empty product details for ID: {$productId}.");
         }
 
-        // 3. Direct Web Scraper / HTML fetch
-        return $this->getDetailViaDirectWeb($productId, $productIdOrUrl);
+        return $detail;
     }
 
     /**
-     * Search live AliExpress products by keyword & filters.
-     * Cascading strategy:
-     * 1. Official AliExpress Open Platform API (aliexpress.ds.text.search)
-     * 2. RapidAPI (if configured)
-     * 3. Direct Web Search
+     * Search live AliExpress products via Official AliExpress Open Platform API only.
      */
     public function searchProducts(
         string $keyword,
@@ -551,32 +547,11 @@ class AliExpressService
     ): array {
         $this->loadSettings();
 
-        // 1. Official AliExpress Open Platform API
-        if (!empty($this->appKey) && !empty($this->appSecret)) {
-            try {
-                $officialResult = $this->searchViaOfficialApi($keyword, $page, $size, $categoryId, $minPrice, $maxPrice);
-                if (!empty($officialResult['items'])) {
-                    return $officialResult;
-                }
-            } catch (Exception $e) {
-                Log::warning("AliExpress Official API search failed: " . $e->getMessage());
-            }
+        if (empty($this->appKey) || empty($this->appSecret)) {
+            throw new Exception("AliExpress Official API credentials (App Key & App Secret) are not configured in Settings.");
         }
 
-        // 2. RapidAPI fallback
-        if (!empty($this->rapidApiKey)) {
-            try {
-                $rapidResult = $this->searchViaRapidApi($keyword, $page, $size, $minPrice, $maxPrice);
-                if (!empty($rapidResult['items'])) {
-                    return $rapidResult;
-                }
-            } catch (Exception $e) {
-                Log::warning("AliExpress RapidAPI search failed: " . $e->getMessage());
-            }
-        }
-
-        // 3. Fallback: Direct Web Scraper
-        return $this->searchViaDirectWeb($keyword, $page, $size, $minPrice, $maxPrice);
+        return $this->searchViaOfficialApi($keyword, $page, $size, $categoryId, $minPrice, $maxPrice);
     }
 
     /**
