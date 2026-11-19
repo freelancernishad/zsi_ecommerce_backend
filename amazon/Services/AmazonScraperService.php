@@ -557,6 +557,20 @@ class AmazonScraperService
             $descriptionHtml = '<ul>' . implode('', array_map(fn($f) => '<li>' . htmlspecialchars($f) . '</li>', $features)) . '</ul>';
         }
 
+        // 4b. Technical Specifications / Product Details Table
+        $specifications = $this->parseSpecifications($xpath);
+        if (!empty($specifications)) {
+            $specRows = '';
+            foreach ($specifications as $specKey => $specVal) {
+                $specRows .= '<tr><th style="text-align:left;padding:6px 10px;border:1px solid #e5e7eb;background:#f9fafb;">'
+                    . htmlspecialchars($specKey)
+                    . '</th><td style="padding:6px 10px;border:1px solid #e5e7eb;">'
+                    . htmlspecialchars($specVal)
+                    . '</td></tr>';
+            }
+            $descriptionHtml .= '<div class="amazon-specifications" style="margin-top:16px;"><h3>Product Specifications</h3><table style="width:100%;border-collapse:collapse;">' . $specRows . '</table></div>';
+        }
+
         // 5. Brand / Vendor Extraction
         $brand = 'Generic';
         $brandNodes = $xpath->query('//a[@id="bylineInfo"] | //div[contains(@class, "po-brand")]//span[contains(@class, "a-span9")]');
@@ -588,6 +602,7 @@ class AmazonScraperService
             'price' => $price,
             'images' => $images,
             'features' => $features,
+            'specifications' => $specifications,
             'sku' => "AMZ-{$asin}",
             'variants' => $variants,
         ];
@@ -827,6 +842,49 @@ class AmazonScraperService
         }
 
         return $variants;
+    }
+
+    /**
+     * Extract technical specifications and product details from Amazon tables/bullets.
+     */
+    protected function parseSpecifications(DOMXPath $xpath): array
+    {
+        $specs = [];
+
+        $tableRows = $xpath->query(
+            '//table[@id="productDetails_techSpec_section_1"]//tr'
+            . ' | //table[@id="productDetails_techSpec_section_2"]//tr'
+            . ' | //table[@id="productDetails_detailBullets_sections1"]//tr'
+            . ' | //div[@id="productOverview_feature_div"]//table//tr'
+        );
+
+        foreach ($tableRows as $row) {
+            $th = $xpath->query('.//th | .//td[1]', $row);
+            $td = $xpath->query('.//td[last()]', $row);
+            if ($th->length > 0 && $td->length > 0) {
+                $k = trim(preg_replace('/\s+/', ' ', str_replace(["\u{200E}", "\u{200F}"], '', $th->item(0)->textContent)));
+                $v = trim(preg_replace('/\s+/', ' ', str_replace(["\u{200E}", "\u{200F}"], '', $td->item(0)->textContent)));
+                $k = rtrim($k, ':');
+                if ($k !== '' && $v !== '' && $k !== $v && !str_contains(strtolower($k), 'customer reviews') && !str_contains(strtolower($k), 'best sellers rank')) {
+                    $specs[$k] = $v;
+                }
+            }
+        }
+
+        $bulletItems = $xpath->query('//div[@id="detailBullets_feature_div"]//li/span[contains(@class, "a-list-item")]');
+        foreach ($bulletItems as $item) {
+            $spans = $xpath->query('./span', $item);
+            if ($spans->length >= 2) {
+                $k = trim(preg_replace('/[\s:\x{200E}\x{200F}]+/u', ' ', $spans->item(0)->textContent));
+                $k = trim(rtrim($k, ':'));
+                $v = trim(preg_replace('/\s+/', ' ', str_replace(["\u{200E}", "\u{200F}"], '', $spans->item(1)->textContent)));
+                if ($k !== '' && $v !== '' && !isset($specs[$k]) && !str_contains(strtolower($k), 'customer reviews') && !str_contains(strtolower($k), 'best sellers rank')) {
+                    $specs[$k] = $v;
+                }
+            }
+        }
+
+        return $specs;
     }
 
     /**

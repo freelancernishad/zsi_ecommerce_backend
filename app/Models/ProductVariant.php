@@ -20,6 +20,7 @@ class ProductVariant extends Model
         'stock',
         'color', 
         'size', 
+        'image',
         'price_adjustment',
         'cj_vid',
         'cj_variant_sku',

@@ -227,6 +227,7 @@ class AliExpressImportService
                         'stock' => (int)($v['stock'] ?? $defaultStock),
                         'color' => $attrs['Color'] ?? $attrs['Colour'] ?? null,
                         'size' => $attrs['Size'] ?? null,
+                        'image' => $v['image'] ?? null,
                         'aliexpress_sku_id' => $v['sku_id'] ?? null,
                         'aliexpress_variant_sku' => $v['sku_id'] ?? null,
                     ]);
