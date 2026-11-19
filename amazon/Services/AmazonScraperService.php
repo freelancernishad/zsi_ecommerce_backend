@@ -396,6 +396,30 @@ class AmazonScraperService
                 return $response->body();
             }
 
+            // If raw returned 200 with empty body, retry once with format=json to inspect/extract envelope
+            if ($response->successful() && empty($response->body())) {
+                $jsonRes = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $this->brightdataApiKey,
+                    'Content-Type' => 'application/json',
+                ])->timeout(45)->post("https://api.brightdata.com/request", [
+                    'zone' => $this->brightdataZone,
+                    'url' => $url,
+                    'format' => 'json',
+                ]);
+
+                $jsonData = $jsonRes->json();
+                if ($jsonRes->successful() && !empty($jsonData['body'])) {
+                    return (string) $jsonData['body'];
+                }
+
+                Log::warning("BrightData empty body ({$response->status()}) for {$url}", [
+                    'headers' => $response->headers(),
+                    'json_fallback_status' => $jsonRes->status(),
+                    'json_fallback_keys' => is_array($jsonData) ? array_keys($jsonData) : substr($jsonRes->body(), 0, 300),
+                ]);
+                return '';
+            }
+
             Log::warning("BrightData request failed ({$response->status()}) for {$url}: " . substr($response->body(), 0, 300));
         } catch (Exception $e) {
             Log::warning("BrightData exception for {$url}: " . $e->getMessage());
