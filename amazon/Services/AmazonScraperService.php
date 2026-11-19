@@ -154,9 +154,8 @@ class AmazonScraperService
             }
         }
 
-        // Fallback catalog generator if direct scrape is blocked or 0 items
-        if (empty($items)) {
-            $items = $this->generateFallbackSearchProducts($keyword, $countryCode, $minPrice, $maxPrice);
+        if (empty($html)) {
+            throw new Exception("Unable to search Amazon for '{$keyword}'. The connection may be temporarily restricted by Amazon.", 429);
         }
 
         return [
