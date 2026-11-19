@@ -46,6 +46,8 @@ class AmazonScraperService
         ?int $freeShipping = null,
         ?int $videoOnly = null
     ): array {
+        $this->loadSettings();
+
         $queryParams = [
             'k' => $keyword,
             'page' => $page,
@@ -320,6 +322,7 @@ class AmazonScraperService
      */
     public function getProductDetail(string $asinOrUrl): array
     {
+        $this->loadSettings();
         $asin = $this->extractAsin($asinOrUrl);
         $host = 'www.amazon.com';
         if (str_starts_with($asinOrUrl, 'http')) {
@@ -383,7 +386,7 @@ class AmazonScraperService
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->brightdataApiKey,
                 'Content-Type' => 'application/json',
-            ])->timeout(8)->post("https://api.brightdata.com/request", [
+            ])->timeout(45)->post("https://api.brightdata.com/request", [
                 'zone' => $this->brightdataZone,
                 'url' => $url,
                 'format' => 'raw',
@@ -392,8 +395,10 @@ class AmazonScraperService
             if ($response->successful() && !empty($response->body())) {
                 return $response->body();
             }
+
+            Log::warning("BrightData request failed ({$response->status()}) for {$url}: " . substr($response->body(), 0, 300));
         } catch (Exception $e) {
-            // Silently fall back to direct HTTP
+            Log::warning("BrightData exception for {$url}: " . $e->getMessage());
         }
 
         return '';
