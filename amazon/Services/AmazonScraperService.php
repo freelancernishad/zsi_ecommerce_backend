@@ -14,6 +14,7 @@ class AmazonScraperService
     protected string $brightdataApiKey;
     protected string $brightdataZone;
     protected string $provider;
+    protected int $defaultStock = 20;
 
     public function __construct()
     {
@@ -30,6 +31,9 @@ class AmazonScraperService
         $this->brightdataApiKey = $setting['amazon_brightdata_api_key'] ?? config('amazon.brightdata_api_key', '');
         $this->brightdataZone = $setting['amazon_brightdata_zone'] ?? config('amazon.brightdata_zone', '');
         $this->provider = $setting['amazon_scraper_provider'] ?? config('amazon.scraper_provider', 'brightdata');
+        $this->defaultStock = !empty($setting['amazon_default_stock'])
+            ? max(1, (int) $setting['amazon_default_stock'])
+            : 20;
     }
 
     /**
@@ -608,8 +612,11 @@ class AmazonScraperService
             $brand = trim($brand) ?: 'Generic';
         }
 
-        // 6. Comprehensive Variants Extraction
-        $variants = $this->parseVariants($html, $asin, $price, $images, $xpath);
+        // 6. Availability & Stock Extraction
+        $availability = $this->parseAvailability($xpath, $price);
+
+        // 7. Comprehensive Variants Extraction
+        $variants = $this->parseVariants($html, $asin, $price, $images, $xpath, $availability);
 
         // Include any variant swatch images into the main image gallery if missing
         foreach ($variants as $v) {
@@ -628,11 +635,60 @@ class AmazonScraperService
             'brand' => $brand,
             'vendor' => $brand,
             'price' => $price,
+            'cost_price' => $price,
+            'stock' => $availability['stock'],
+            'available' => $availability['available'],
             'images' => $images,
             'features' => $features,
             'specifications' => $specifications,
             'sku' => "AMZ-{$asin}",
             'variants' => $variants,
+        ];
+    }
+
+    /**
+     * Extract page-level availability and estimated stock from Amazon buybox/availability DOM.
+     */
+    protected function parseAvailability(DOMXPath $xpath, float $price): array
+    {
+        $availNodes = $xpath->query(
+            '//div[@id="availability"] | //div[@id="availabilityInsideBuyBox_feature_div"] | //div[@id="outOfStock"]'
+        );
+
+        $availText = '';
+        foreach ($availNodes as $node) {
+            $text = trim(preg_replace('/\s+/', ' ', $node->textContent));
+            if ($text !== '') {
+                $availText .= ' ' . $text;
+            }
+        }
+        $availLower = strtolower(trim($availText));
+
+        if ($availLower !== '') {
+            if (preg_match('/currently unavailable|out of stock|temporarily out of stock|we don\'t know when or if this item will be back/', $availLower)) {
+                return ['available' => false, 'stock' => 0];
+            }
+            if (preg_match('/only\s+(\d+)\s+left\s+in\s+stock/', $availLower, $m)) {
+                return ['available' => true, 'stock' => max(1, (int) $m[1])];
+            }
+            if (str_contains($availLower, 'in stock')) {
+                return ['available' => true, 'stock' => $this->defaultStock];
+            }
+        }
+
+        // Fallback: check Add to Cart / Buy Now buttons
+        $buyButtons = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]');
+        if ($buyButtons->length > 0) {
+            return ['available' => true, 'stock' => $this->defaultStock];
+        }
+
+        if ($xpath->query('//div[@id="outOfStock"]')->length > 0) {
+            return ['available' => false, 'stock' => 0];
+        }
+
+        return [
+            'available' => $price > 0,
+            'stock' => $price > 0 ? $this->defaultStock : 0,
         ];
     }
 
@@ -644,8 +700,10 @@ class AmazonScraperService
      * 4. Dropdown variation options
      * 5. Single default variant fallback
      */
-    protected function parseVariants(string $html, string $asin, float $price, array $images, DOMXPath $xpath): array
+    protected function parseVariants(string $html, string $asin, float $price, array $images, DOMXPath $xpath, array $availability = []): array
     {
+        $pageAvailable = $availability['available'] ?? ($price > 0);
+        $pageStock = $availability['stock'] ?? ($pageAvailable ? $this->defaultStock : 0);
         $variants = [];
         $seenAsins = [];
         $asinMeta = [];
@@ -697,10 +755,16 @@ class AmazonScraperService
                         }
 
                         $isAvailable = ($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE';
+                        if ($itemAsin === $asin && !$pageAvailable) {
+                            $isAvailable = false;
+                        }
+                        $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+
                         $asinMeta[$itemAsin] = [
                             'price' => $itemPrice,
                             'image' => $itemImg,
                             'available' => $isAvailable,
+                            'stock' => $varStock,
                         ];
 
                         if (isset($seenAsins[$itemAsin])) continue;
@@ -710,12 +774,14 @@ class AmazonScraperService
                             'asin' => $itemAsin,
                             'title' => $title,
                             'price' => $itemPrice,
+                            'cost_price' => $itemPrice,
                             'sku' => "AMZ-{$itemAsin}",
                             'image' => $itemImg,
                             'attributes' => [
                                 $dimLabel => $title,
                             ],
                             'available' => $isAvailable,
+                            'stock' => $varStock,
                         ];
                         $seenAsins[$itemAsin] = true;
                     }
@@ -724,7 +790,7 @@ class AmazonScraperService
         }
 
         // --- STRATEGY 2: Embedded Twister JS (multi-dimension combinations via dimensionValuesDisplayData) ---
-        $twisterVariants = $this->parseTwisterJsVariants($html, $asin, $price, $images, $asinMeta);
+        $twisterVariants = $this->parseTwisterJsVariants($html, $asin, $price, $images, $asinMeta, $availability);
         $hasMultiDimTwister = false;
         foreach ($twisterVariants as $tv) {
             if (count($tv['attributes'] ?? []) > 1) {
@@ -802,17 +868,26 @@ class AmazonScraperService
                         }
                     }
 
+                    $liClass = strtolower((string) $node->getAttribute('class'));
+                    $isAvailable = !str_contains($liClass, 'unavailable');
+                    if ($itemAsin === $asin && !$pageAvailable) {
+                        $isAvailable = false;
+                    }
+                    $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+
                     $variants[] = [
                         'id' => $itemAsin,
                         'asin' => $itemAsin,
                         'title' => $title,
                         'price' => $itemPrice,
+                        'cost_price' => $itemPrice,
                         'sku' => "AMZ-{$itemAsin}",
                         'image' => $itemImg,
                         'attributes' => [
                             'Option' => $title,
                         ],
-                        'available' => true,
+                        'available' => $isAvailable,
+                        'stock' => $varStock,
                     ];
                     $seenAsins[$itemAsin] = true;
                 }
@@ -838,17 +913,22 @@ class AmazonScraperService
                     $title = trim(preg_replace('/\s+/', ' ', $opt->textContent));
                     if (empty($title)) continue;
 
+                    $isAvailable = ($itemAsin === $asin) ? $pageAvailable : true;
+                    $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+
                     $variants[] = [
                         'id' => $itemAsin,
                         'asin' => $itemAsin,
                         'title' => $title,
                         'price' => $price,
+                        'cost_price' => $price,
                         'sku' => "AMZ-{$itemAsin}",
                         'image' => !empty($images) ? $images[0] : '',
                         'attributes' => [
                             'Size' => $title,
                         ],
-                        'available' => true,
+                        'available' => $isAvailable,
+                        'stock' => $varStock,
                     ];
                     $seenAsins[$itemAsin] = true;
                 }
@@ -862,10 +942,12 @@ class AmazonScraperService
                 'asin' => $asin,
                 'title' => 'Default Title',
                 'price' => $price,
+                'cost_price' => $price,
                 'sku' => "AMZ-{$asin}",
                 'image' => !empty($images) ? $images[0] : '',
                 'attributes' => [],
-                'available' => true,
+                'available' => $pageAvailable,
+                'stock' => $pageStock,
             ];
         }
 
@@ -923,8 +1005,11 @@ class AmazonScraperService
         string $currentAsin,
         float $price,
         array $images,
-        array $asinMeta = []
+        array $asinMeta = [],
+        array $availability = []
     ): array {
+        $pageAvailable = $availability['available'] ?? ($price > 0);
+        $pageStock = $availability['stock'] ?? ($pageAvailable ? $this->defaultStock : 0);
         $dimDisplayData = null;
         $dimensions = [];
         $labels = [];
@@ -998,15 +1083,20 @@ class AmazonScraperService
                 ? $price
                 : ($meta['price'] ?? $price);
 
+            $isAvailable = $meta['available'] ?? ($itemAsin === $currentAsin ? $pageAvailable : true);
+            $varStock = $meta['stock'] ?? ($isAvailable ? ($itemAsin === $currentAsin ? $pageStock : $this->defaultStock) : 0);
+
             $variants[] = [
                 'id' => $itemAsin,
                 'asin' => $itemAsin,
                 'title' => $title,
                 'price' => $itemPrice,
+                'cost_price' => $itemPrice,
                 'sku' => "AMZ-{$itemAsin}",
                 'image' => $varImg,
                 'attributes' => $attributes,
-                'available' => $meta['available'] ?? true,
+                'available' => $isAvailable,
+                'stock' => $varStock,
             ];
             $seenAsins[$itemAsin] = true;
         }

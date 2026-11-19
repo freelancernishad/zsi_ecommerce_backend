@@ -333,12 +333,14 @@ class InventorySyncService
                 foreach ($localVariants as $lVar) {
                     $matchedSuppVar = null;
                     foreach ($supplierVariants as $sVar) {
-                        $sSkuId = (string)($sVar['sku_id'] ?? $sVar['vid'] ?? $sVar['id'] ?? '');
+                        $sSkuId = (string)($sVar['sku_id'] ?? $sVar['vid'] ?? $sVar['asin'] ?? $sVar['id'] ?? '');
+                        $sVarTitle = (string)($sVar['name'] ?? $sVar['title'] ?? '');
                         if (
                             ($lVar->aliexpress_sku_id && $lVar->aliexpress_sku_id === $sSkuId) ||
                             ($lVar->cj_vid && $lVar->cj_vid === $sSkuId) ||
+                            ($lVar->amazon_asin && $sSkuId && $lVar->amazon_asin === $sSkuId) ||
                             ($lVar->sku && $sSkuId && str_ends_with($lVar->sku, $sSkuId)) ||
-                            (strtolower(trim($lVar->combination_label)) === strtolower(trim($sVar['name'] ?? '')))
+                            ($sVarTitle !== '' && strtolower(trim((string)$lVar->combination_label)) === strtolower(trim($sVarTitle)))
                         ) {
                             $matchedSuppVar = $sVar;
                             break;
@@ -349,8 +351,18 @@ class InventorySyncService
                     $oldVarPrice = (float)($lVar->price ?? 0);
 
                     if ($matchedSuppVar) {
-                        $newVarStock = (int)($matchedSuppVar['stock'] ?? 0);
-                        $suppCostPrice = (float)($matchedSuppVar['cost_price'] ?? $matchedSuppVar['costPrice'] ?? 0);
+                        if (array_key_exists('stock', $matchedSuppVar)) {
+                            $newVarStock = max(0, (int)$matchedSuppVar['stock']);
+                        } elseif (array_key_exists('available', $matchedSuppVar)) {
+                            $newVarStock = $matchedSuppVar['available'] ? 20 : 0;
+                        } else {
+                            $newVarStock = 0;
+                        }
+                        $suppCostPrice = (float)(
+                            $matchedSuppVar['cost_price']
+                            ?? $matchedSuppVar['costPrice']
+                            ?? ($channel === 'amazon' ? ($matchedSuppVar['price'] ?? 0) : 0)
+                        );
                     } else {
                         // Variant was removed by supplier -> 0 stock
                         $newVarStock = 0;
@@ -394,8 +406,18 @@ class InventorySyncService
                 }
             } else {
                 // Single/Non-variant product
-                $suppStock = (int)($supplierData['stock'] ?? 50);
-                $suppCost = (float)($supplierData['costPrice'] ?? $supplierData['cost_price'] ?? 0);
+                if (array_key_exists('stock', $supplierData)) {
+                    $suppStock = max(0, (int)$supplierData['stock']);
+                } elseif (array_key_exists('available', $supplierData)) {
+                    $suppStock = $supplierData['available'] ? 20 : 0;
+                } else {
+                    $suppStock = 50;
+                }
+                $suppCost = (float)(
+                    $supplierData['costPrice']
+                    ?? $supplierData['cost_price']
+                    ?? ($channel === 'amazon' ? ($supplierData['price'] ?? 0) : 0)
+                );
 
                 $totalNewStock = $suppStock;
                 if ($suppStock !== $oldProductStock) {
