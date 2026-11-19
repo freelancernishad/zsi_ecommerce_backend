@@ -238,6 +238,11 @@ class AmazonImportService
                     $vSku = $v['sku'] ?? ($product->sku . '-' . ($v['id'] ?? Str::random(4)));
                     $vStock = (isset($v['available']) && $v['available'] === false) ? 0 : $defaultStock;
 
+                    $isDefaultPlaceholder = in_array(strtolower(trim($vLabel)), ['default', 'default title', 'default variant'], true);
+                    $vColor = $v['attributes']['Color']
+                        ?? $v['attributes']['Option']
+                        ?? (isset($v['attributes']['Size']) || $isDefaultPlaceholder ? null : $vLabel);
+
                     ProductVariant::create([
                         'product_id' => $product->id,
                         'combination_label' => $vLabel,
@@ -246,7 +251,7 @@ class AmazonImportService
                         'sku' => $vSku,
                         'stock' => $vStock,
                         'available_quantity' => $vStock,
-                        'color' => $v['attributes']['Color'] ?? $v['attributes']['Option'] ?? (isset($v['attributes']['Size']) ? null : $vLabel),
+                        'color' => $vColor,
                         'size' => $v['attributes']['Size'] ?? null,
                         'image' => $v['image'] ?? null,
                         'amazon_asin' => $v['asin'] ?? $asin,
