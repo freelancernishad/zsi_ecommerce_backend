@@ -229,6 +229,7 @@ class ProductController extends Controller
                         'discount_price'     => $variant['discount_price'] ?? null,
                         'sku'                => $variant['sku'] ?? null,
                         'available_quantity' => $variant['qty'] ?? 0,
+                        'image'              => $variant['image'] ?? null,
                     ]);
                 }
             }
@@ -323,18 +324,23 @@ class ProductController extends Controller
                 $product->variants()->whereNotIn('id', $incomingIds)->delete();
 
                 foreach ($request->variant_combinations as $variant) {
+                    $variantPayload = [
+                        'combination_label'  => $variant['label'] ?? null,
+                        'price'              => $variant['price'] ?? $product->price,
+                        'discount_price'     => $variant['discount_price'] ?? null,
+                        'sku'                => $variant['sku'] ?? null,
+                        'available_quantity' => $variant['qty'] ?? 0,
+                    ];
+                    if (array_key_exists('image', $variant)) {
+                        $variantPayload['image'] = $variant['image'];
+                    }
+
                     ProductVariant::updateOrCreate(
                         [
                             'product_id' => $product->id,
                             'id' => $variant['id'] ?? null // Match by ID if it exists
                         ],
-                        [
-                            'combination_label'  => $variant['label'] ?? null,
-                            'price'              => $variant['price'] ?? $product->price,
-                            'discount_price'     => $variant['discount_price'] ?? null,
-                            'sku'                => $variant['sku'] ?? null,
-                            'available_quantity' => $variant['qty'] ?? 0,
-                        ]
+                        $variantPayload
                     );
                 }
             }

@@ -392,6 +392,10 @@ class InventorySyncService
                     $lVar->stock = $newVarStock;
                     $lVar->available_quantity = $newVarStock;
                     $lVar->price = $newVarPrice;
+                    $suppVarImage = $matchedSuppVar['image'] ?? $matchedSuppVar['variantImage'] ?? null;
+                    if (is_string($suppVarImage) && str_starts_with(trim($suppVarImage), 'http')) {
+                        $lVar->image = trim($suppVarImage);
+                    }
                     $lVar->save();
 
                     $variantLogs[] = [

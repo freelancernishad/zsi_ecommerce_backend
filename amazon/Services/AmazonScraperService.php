@@ -707,9 +707,11 @@ class AmazonScraperService
         $variants = [];
         $seenAsins = [];
         $asinMeta = [];
+        // Pre-load per-variant high-res image map from Amazon's embedded colorImages JSON blocks
+        $dimValueImages = $this->extractColorImagesMap($html);
 
         // --- STRATEGY 1: <script type="a-state"> twister-sort-filter-data ---
-        if (preg_match('/<script[^>]*data-a-state="[^"]*twister-sort-filter-data[^"]*"[^>]*>(.*?)<\/script>/s', $html, $m)) {
+        if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $m)) {
             $json = json_decode(html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
             if (!empty($json['sortedDimValuesForAllDims']) && is_array($json['sortedDimValuesForAllDims'])) {
                 foreach ($json['sortedDimValuesForAllDims'] as $dimKey => $items) {
@@ -725,9 +727,16 @@ class AmazonScraperService
                             $title = "{$dimLabel} " . ($idx + 1);
                         }
 
-                        $itemImg = $item['imageAttribute']['url'] ?? '';
-                        if (!empty($itemImg)) {
-                            $itemImg = preg_replace('/._[A-Z0-9,_]+_./i', '.', $itemImg);
+                        $titleLower = strtolower($title);
+                        $rawItemImg = trim((string) ($item['imageAttribute']['url'] ?? ''));
+                        $hasOwnImg = false;
+                        if (!empty($dimValueImages[$titleLower])) {
+                            $itemImg = $dimValueImages[$titleLower];
+                            $hasOwnImg = true;
+                        } elseif (!empty($rawItemImg) && str_starts_with($rawItemImg, 'http')) {
+                            $itemImg = preg_replace('/\._[A-Z0-9,_]+_\./i', '.', $rawItemImg);
+                            $dimValueImages[$titleLower] = $itemImg;
+                            $hasOwnImg = true;
                         } else {
                             $itemImg = !empty($images) ? $images[0] : '';
                         }
@@ -760,9 +769,10 @@ class AmazonScraperService
                         }
                         $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
 
+                        $existingMeta = $asinMeta[$itemAsin] ?? [];
                         $asinMeta[$itemAsin] = [
-                            'price' => $itemPrice,
-                            'image' => $itemImg,
+                            'price' => $itemPrice > 0 ? $itemPrice : ($existingMeta['price'] ?? $price),
+                            'image' => $hasOwnImg ? $itemImg : ($existingMeta['image'] ?? $itemImg),
                             'available' => $isAvailable,
                             'stock' => $varStock,
                         ];
@@ -789,8 +799,30 @@ class AmazonScraperService
             }
         }
 
+        // Collect DOM color/swatch images keyed by dimension value (e.g. "black" => "https://...")
+        $swatchImgNodes = $xpath->query(
+            '//div[contains(@id, "inline-twister-row")]//li//img'
+            . ' | //div[contains(@id, "variation_")]//li//img'
+            . ' | //div[@id="twister"]//li//img'
+            . ' | //ul[contains(@class, "swatches")]//li//img'
+        );
+        foreach ($swatchImgNodes as $imgNode) {
+            $alt = strtolower(trim((string) $imgNode->getAttribute('alt')));
+            $src = trim((string) $imgNode->getAttribute('src'));
+            if (
+                $alt !== ''
+                && $src !== ''
+                && str_starts_with($src, 'http')
+                && !str_contains($src, 'sprite')
+                && !str_contains($src, 'transparent-pixel')
+                && !isset($dimValueImages[$alt])
+            ) {
+                $dimValueImages[$alt] = preg_replace('/\._[A-Z0-9,_]+_\./i', '.', $src);
+            }
+        }
+
         // --- STRATEGY 2: Embedded Twister JS (multi-dimension combinations via dimensionValuesDisplayData) ---
-        $twisterVariants = $this->parseTwisterJsVariants($html, $asin, $price, $images, $asinMeta, $availability);
+        $twisterVariants = $this->parseTwisterJsVariants($html, $asin, $price, $images, $asinMeta, $availability, $dimValueImages);
         $hasMultiDimTwister = false;
         foreach ($twisterVariants as $tv) {
             if (count($tv['attributes'] ?? []) > 1) {
@@ -850,11 +882,11 @@ class AmazonScraperService
                     }
 
                     // Image
-                    $itemImg = !empty($images) ? $images[0] : '';
-                    if ($imgNodes->length > 0) {
+                    $itemImg = $dimValueImages[strtolower($title)] ?? (!empty($images) ? $images[0] : '');
+                    if (empty($dimValueImages[strtolower($title)]) && $imgNodes->length > 0) {
                         $src = trim($imgNodes->item(0)->getAttribute('src'));
                         if (!empty($src) && str_starts_with($src, 'http')) {
-                            $itemImg = preg_replace('/._[A-Z0-9,_]+_./i', '.', $src);
+                            $itemImg = preg_replace('/\._[A-Z0-9,_]+_\./i', '.', $src);
                         }
                     }
 
@@ -923,7 +955,7 @@ class AmazonScraperService
                         'price' => $price,
                         'cost_price' => $price,
                         'sku' => "AMZ-{$itemAsin}",
-                        'image' => !empty($images) ? $images[0] : '',
+                        'image' => $dimValueImages[strtolower($title)] ?? (!empty($images) ? $images[0] : ''),
                         'attributes' => [
                             'Size' => $title,
                         ],
@@ -998,6 +1030,97 @@ class AmazonScraperService
     }
 
     /**
+     * Extract all per-variant high-res images from Amazon's embedded "colorImages" JSON blocks
+     * using balanced-brace scanning (handles nested objects and multiple colorImages blocks).
+     */
+    protected function extractColorImagesMap(string $html): array
+    {
+        $map = [];
+        $offset = 0;
+        $len = strlen($html);
+
+        while (preg_match('/["\']colorImages["\']\s*:\s*\{/i', $html, $m, PREG_OFFSET_CAPTURE, $offset)) {
+            $matchStart = $m[0][1];
+            $braceStart = strpos($html, '{', $matchStart + 11);
+            if ($braceStart === false) {
+                break;
+            }
+
+            $depth = 0;
+            $inStr = false;
+            $quoteChar = '';
+            $esc = false;
+            $braceEnd = null;
+            $maxScan = min($len, $braceStart + 500000);
+
+            for ($i = $braceStart; $i < $maxScan; $i++) {
+                $ch = $html[$i];
+                if ($esc) {
+                    $esc = false;
+                    continue;
+                }
+                if ($ch === '\\') {
+                    $esc = true;
+                    continue;
+                }
+                if ($inStr) {
+                    if ($ch === $quoteChar) {
+                        $inStr = false;
+                    }
+                    continue;
+                }
+                if ($ch === '"' || $ch === "'") {
+                    $inStr = true;
+                    $quoteChar = $ch;
+                    continue;
+                }
+                if ($ch === '{') {
+                    $depth++;
+                } elseif ($ch === '}') {
+                    $depth--;
+                    if ($depth === 0) {
+                        $braceEnd = $i;
+                        break;
+                    }
+                }
+            }
+
+            $offset = ($braceEnd !== null) ? ($braceEnd + 1) : ($braceStart + 1);
+            if ($braceEnd === null) {
+                continue;
+            }
+
+            $jsonStr = substr($html, $braceStart, $braceEnd - $braceStart + 1);
+            $decoded = json_decode($jsonStr, true);
+            if (!is_array($decoded)) {
+                continue;
+            }
+
+            foreach ($decoded as $dimVal => $imgList) {
+                if (!is_string($dimVal) || strtolower(trim($dimVal)) === 'initial' || !is_array($imgList)) {
+                    continue;
+                }
+                $chosenImg = '';
+                foreach ($imgList as $imgEntry) {
+                    if (!is_array($imgEntry)) continue;
+                    $candidate = $imgEntry['hiRes'] ?? $imgEntry['large'] ?? '';
+                    if (is_string($candidate) && str_starts_with(trim($candidate), 'http')) {
+                        $chosenImg = trim($candidate);
+                        if (($imgEntry['variant'] ?? '') === 'MAIN') {
+                            break;
+                        }
+                    }
+                }
+                if ($chosenImg !== '') {
+                    $map[strtolower(trim($dimVal))] = $chosenImg;
+                }
+            }
+        }
+
+        return $map;
+    }
+
+    /**
      * Parse full multi-dimensional variant combinations from Amazon Twister JS data.
      */
     protected function parseTwisterJsVariants(
@@ -1006,7 +1129,8 @@ class AmazonScraperService
         float $price,
         array $images,
         array $asinMeta = [],
-        array $availability = []
+        array $availability = [],
+        array $dimValueImages = []
     ): array {
         $pageAvailable = $availability['available'] ?? ($price > 0);
         $pageStock = $availability['stock'] ?? ($pageAvailable ? $this->defaultStock : 0);
@@ -1031,8 +1155,18 @@ class AmazonScraperService
             $labels = json_decode($m[1], true) ?: [];
         }
 
-        if (preg_match('/[\'"]colorImages[\'"]\s*:\s*(\{.*?\})\s*,\s*[\'"]colorToAsin/s', $html, $m)) {
-            $colorImages = json_decode(str_replace("'", '"', $m[1]), true) ?: [];
+        if (preg_match('/[\'"]colorImages[\'"]\s*:\s*(\{.*?\})\s*,\s*[\'"](?:colorToAsin|visualDimensions|heroImage|landingAsinColor|initial)/s', $html, $m)) {
+            $decoded = json_decode($m[1], true);
+            if (!is_array($decoded)) {
+                $decoded = json_decode(str_replace("'", '"', $m[1]), true);
+            }
+            if (is_array($decoded)) {
+                foreach ($decoded as $cKey => $cImgs) {
+                    if (is_string($cKey) && strtolower($cKey) !== 'initial' && is_array($cImgs)) {
+                        $colorImages[strtolower(trim($cKey))] = $cImgs;
+                    }
+                }
+            }
         }
 
         $dimKeys = !empty($dimensions) ? array_values($dimensions) : array_keys($labels);
@@ -1067,16 +1201,32 @@ class AmazonScraperService
             $title = implode(' / ', $cleanValues);
             $meta = $asinMeta[$itemAsin] ?? [];
 
-            $varImg = $meta['image'] ?? (!empty($images) ? $images[0] : '');
+            $varImg = '';
+            // 1. Prefer high-res colorImages match for any dimension value (e.g. Color)
             foreach ($cleanValues as $val) {
-                if (!empty($colorImages[$val][0]['hiRes'])) {
-                    $varImg = $colorImages[$val][0]['hiRes'];
+                $valLower = strtolower($val);
+                if (!empty($colorImages[$valLower][0]['hiRes'])) {
+                    $varImg = $colorImages[$valLower][0]['hiRes'];
                     break;
                 }
-                if (!empty($colorImages[$val][0]['large'])) {
-                    $varImg = $colorImages[$val][0]['large'];
+                if (!empty($colorImages[$valLower][0]['large'])) {
+                    $varImg = $colorImages[$valLower][0]['large'];
                     break;
                 }
+            }
+            // 2. Fallback to dimension-value swatch image map (covers all sizes of the same color)
+            if (empty($varImg)) {
+                foreach ($cleanValues as $val) {
+                    $valLower = strtolower($val);
+                    if (!empty($dimValueImages[$valLower])) {
+                        $varImg = $dimValueImages[$valLower];
+                        break;
+                    }
+                }
+            }
+            // 3. Fallback to per-ASIN meta image or main product image
+            if (empty($varImg)) {
+                $varImg = $meta['image'] ?? (!empty($images) ? $images[0] : '');
             }
 
             $itemPrice = ($itemAsin === $currentAsin && $price > 0)

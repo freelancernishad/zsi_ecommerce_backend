@@ -218,6 +218,13 @@ class CjImportService
                         $sizeVal = strtoupper(trim($m[2]));
                     }
 
+                    $vImage = null;
+                    $rawVarImg = $v['variantImage'] ?? $v['image'] ?? null;
+                    if (is_string($rawVarImg) && trim($rawVarImg) !== '') {
+                        $parsedVarImgs = $this->parseImageUrls($rawVarImg);
+                        $vImage = $parsedVarImgs[0] ?? trim($rawVarImg);
+                    }
+
                     ProductVariant::create([
                         'product_id' => $product->id,
                         'combination_label' => $cleanLabel,
@@ -228,6 +235,7 @@ class CjImportService
                         'available_quantity' => $vStock,
                         'color' => $colorVal,
                         'size' => $sizeVal,
+                        'image' => $vImage,
                         'cj_vid' => $v['vid'] ?? null,
                         'cj_variant_sku' => $v['variantSku'] ?? null,
                         'cj_weight' => (float) ($v['variantWeight'] ?? 0),
