@@ -28,3 +28,4 @@ temp_interactive_push.bat
 api.js
 
 config.bat
+.env
