@@ -96,7 +96,7 @@ class HomeController extends Controller
         // Fetch actual products for Spring Fling if IDs are provided
         $springFlingProducts = [];
         if (!empty($springFlingConfig['product_ids'])) {
-            $springFlingProducts = Product::with(['images'])
+            $springFlingProducts = Product::with(['images', 'variants'])
                 ->whereIn('id', $springFlingConfig['product_ids'])
                 ->get();
         }
@@ -109,7 +109,7 @@ class HomeController extends Controller
 
         $viralPick = null;
         if (!empty($trendsConfig['viral_pick_id'])) {
-            $viralPick = Product::with(['images', 'reviews'])
+            $viralPick = Product::with(['images', 'reviews', 'variants'])
                 ->find($trendsConfig['viral_pick_id']);
         }
 
