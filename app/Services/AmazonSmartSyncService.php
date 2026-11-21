@@ -1286,9 +1286,31 @@ class AmazonSmartSyncService
                 return null;
             }
 
-            return $this->parseLightweightHtml($html, $config['default_stock']);
+            $parsed = $this->parseLightweightHtml($html, $config['default_stock']);
+
+            // If Force US is ON and direct_http returned price=0 (e.g., Amazon served "Deliver to: Bangladesh" with empty apex_desktop),
+            // do NOT pretend it succeeded — return null (so direct_http_first falls back to BrightData US) or throw a clear message.
+            if (!empty($config['force_us_location']) && ($parsed['price'] ?? 0) <= 0 && empty($parsed['explicitly_out_of_stock'])) {
+                $deliverTo = '';
+                if (preg_match('/glow-ingress-line2[^>]*>(.*?)<\/span>/s', $html, $dm)) {
+                    $deliverTo = trim(strip_tags($dm[1]));
+                }
+                $locNote = $deliverTo !== '' ? " (Amazon served 'Deliver to: {$deliverTo}')" : '';
+                if (($config['sync_provider'] ?? '') === 'direct_http') {
+                    throw new Exception(
+                        "US Buybox price hidden by Amazon on Direct HTTP{$locNote}. Switch to BrightData Lightweight (US), PA-API 5.0, or Keepa API for accurate US prices."
+                    );
+                }
+                return null; // Triggers BrightData US fallback when direct_http_first is enabled
+            }
+
+            return $parsed;
         } catch (Exception $e) {
-            if (($config['sync_provider'] ?? '') === 'direct_http' && (str_contains($e->getMessage(), 'Geo-restricted') || str_contains($e->getMessage(), 'Could not verify'))) {
+            if (($config['sync_provider'] ?? '') === 'direct_http' && (
+                str_contains($e->getMessage(), 'Geo-restricted')
+                || str_contains($e->getMessage(), 'Could not verify')
+                || str_contains($e->getMessage(), 'US Buybox price hidden')
+            )) {
                 throw $e;
             }
             return null;
