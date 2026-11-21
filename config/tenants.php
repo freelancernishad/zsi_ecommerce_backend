@@ -36,6 +36,13 @@ return [
         'admin.cheaperbro.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
 
 
+
+        // everythingpet.org
+        'everythingpet.org'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
+        'www.everythingpet.org'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
+        'admin.everythingpet.org'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
+
+
         
         // vercel and local
         'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
