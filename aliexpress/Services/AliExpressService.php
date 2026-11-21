@@ -133,6 +133,20 @@ class AliExpressService
             throw new Exception("AliExpress App Key or App Secret is not configured in settings.");
         }
 
+        // Auto-refresh expired OAuth access token if refresh token is present
+        if (
+            $needSession
+            && !empty($this->refreshToken)
+            && !empty($this->tokenExpiresAt)
+            && strtotime($this->tokenExpiresAt) <= time()
+        ) {
+            try {
+                $this->refreshAccessToken();
+            } catch (Exception $e) {
+                Log::warning('AliExpress auto token refresh failed: ' . $e->getMessage());
+            }
+        }
+
         $publicParams = [
             'app_key' => $this->appKey,
             'timestamp' => (string)round(microtime(true) * 1000),
@@ -151,7 +165,10 @@ class AliExpressService
         $allParams = array_merge($publicParams, $bizParams);
         $allParams['sign'] = $this->calculateSignature($allParams, $this->appSecret, 'sha256');
 
-        $response = Http::withOptions(['verify' => false])
+        $response = Http::withOptions([
+                'verify' => false,
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+            ])
             ->asForm()
             ->timeout(25)
             ->post($this->gatewayUrl, $allParams);
@@ -263,7 +280,13 @@ class AliExpressService
         $params['sign'] = $this->calculateSignature($params, $this->appSecret, 'sha256', '/auth/token/refresh');
 
         $endpoint = $this->restUrl . '/auth/token/refresh';
-        $response = Http::asForm()->timeout(15)->post($endpoint, $params);
+        $response = Http::withOptions([
+                'verify' => false,
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+            ])
+            ->asForm()
+            ->timeout(15)
+            ->post($endpoint, $params);
 
         if ($response->failed()) {
             throw new Exception("Failed to refresh token: HTTP " . $response->status());
@@ -473,6 +496,11 @@ class AliExpressService
         $rawResponse = $this->executeGatewayCall('aliexpress.ds.text.search', $bizParams, true);
 
         $resp = $rawResponse['aliexpress_ds_text_search_response'] ?? $rawResponse;
+        if (!empty($resp['code']) && (string) $resp['code'] !== '0' && (string) $resp['code'] !== '200') {
+            $errCode = (string) $resp['code'];
+            $errMsg = (string) ($resp['msg'] ?? $resp['sub_msg'] ?? $errCode);
+            throw new Exception("AliExpress Search Error [{$errCode}]: {$errMsg}");
+        }
         $data = $resp['data'] ?? $resp['result'] ?? [];
         $rawProducts = $data['products'] ?? [];
         $rawItems = $rawProducts['selection_search_product'] ?? $rawProducts ?? $data['items'] ?? $data['product_list'] ?? [];
