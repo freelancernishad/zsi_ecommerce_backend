@@ -821,6 +821,8 @@ class AmazonSmartSyncService
             $asin = strtoupper((string) $p->amazon_asin);
             $primaryImg = $p->images->first()?->image_path ?? null;
 
+            $inferred = $this->inferExistingMarkup($p);
+
             return [
                 'id' => $p->id,
                 'name' => $p->name,
@@ -833,6 +835,9 @@ class AmazonSmartSyncService
                 'cost_per_item' => (float) ($p->cost_per_item ?? 0),
                 'sync_markup_type' => $p->sync_markup_type,
                 'sync_markup_value' => $p->sync_markup_value !== null ? (float) $p->sync_markup_value : null,
+                'effective_markup_type' => $inferred['type'],
+                'effective_markup_value' => $inferred['value'],
+                'is_markup_inferred' => $inferred['inferred'],
                 'stock_quantity' => (int) ($p->stock_quantity ?? 0),
                 'variants_count' => (int) ($p->variants_count ?? 0),
                 'status' => $p->status,
@@ -1172,7 +1177,7 @@ class AmazonSmartSyncService
 
             return $this->parseLightweightHtml($html, $config['default_stock']);
         } catch (Exception $e) {
-            if (($config['sync_provider'] ?? '') === 'direct_http' && str_contains($e->getMessage(), 'Geo-restricted')) {
+            if (($config['sync_provider'] ?? '') === 'direct_http' && (str_contains($e->getMessage(), 'Geo-restricted') || str_contains($e->getMessage(), 'Could not verify'))) {
                 throw $e;
             }
             return null;
@@ -1463,11 +1468,16 @@ class AmazonSmartSyncService
         $availLower = strtolower(trim($availText));
 
         $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
-        $available = $price > 0 && $hasBuyButton;
+        $hasBuyingOptions = $xpath->query('//a[contains(@id, "buybox-see-all-buying-choices")] | //span[@id="buybox-see-all-buying-choices"]')->length > 0
+            || str_contains($buyboxLower, 'see all buying options');
+
+        $explicitlyOutOfStock = false;
+        $available = ($price > 0 && $hasBuyButton) || $hasBuyingOptions;
         $stock = $available ? $defaultStock : 0;
 
         if ($availLower !== '') {
             if (preg_match('/currently unavailable|out of stock|temporarily out of stock|we don\'t know when or if this item will be back/', $availLower)) {
+                $explicitlyOutOfStock = true;
                 $available = false;
                 $stock = 0;
             } elseif (preg_match('/only\s+(\d+)\s+left\s+in\s+stock/', $availLower, $m)) {
@@ -1482,7 +1492,7 @@ class AmazonSmartSyncService
         // Extract per-variant availability & price from the SAME single HTML page (0 extra API calls!)
         $variants = [];
 
-        // Strategy A: twister-sort-filter-data JSON
+        // Strategy A: twister-sort-filter-data JSON (including "options from $XX.XX" olpMessage!)
         if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $tm)) {
             $tJson = json_decode(html_entity_decode($tm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
             if (!empty($tJson['sortedDimValuesForAllDims']) && is_array($tJson['sortedDimValuesForAllDims'])) {
@@ -1495,8 +1505,10 @@ class AmazonSmartSyncService
                         if (strlen($vAsin) !== 10) {
                             continue;
                         }
-                        $vAvail = (($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE');
-                        $vPrice = null;
+                        $state = strtoupper((string) ($item['dimensionValueState'] ?? ''));
+                        $isSelected = ($state === 'SELECTED');
+                        $vAvail = $isSelected ? $available : ($state !== 'UNAVAILABLE');
+                        $vPrice = $isSelected && $price > 0 ? $price : null;
                         foreach ($item['slots'] ?? [] as $slot) {
                             $dd = $slot['displayData'] ?? [];
                             if (!empty($dd['priceWithoutCurrencySymbol'])) {
@@ -1506,10 +1518,18 @@ class AmazonSmartSyncService
                                     break;
                                 }
                             }
+                            if (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
+                                $pVal = (float) str_replace(',', '', $om[1]);
+                                if ($pVal > 0) {
+                                    $vPrice = $pVal;
+                                    $vAvail = true;
+                                    break;
+                                }
+                            }
                         }
                         $variants[$vAsin] = [
                             'available' => $vAvail,
-                            'stock' => $vAvail ? $defaultStock : 0,
+                            'stock' => $isSelected ? $stock : ($vAvail ? $defaultStock : 0),
                             'price' => $vPrice,
                         ];
                     }
@@ -1538,6 +1558,9 @@ class AmazonSmartSyncService
             $pNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
             if ($pNodes->length > 0 && preg_match('/[\d,]+\.\d{2}/', $pNodes->item(0)->textContent, $pm)) {
                 $vPrice = (float) str_replace(',', '', $pm[0]);
+            } elseif (preg_match('/from\s+\$([\d,]+\.\d{2})/i', (string) $node->textContent, $om)) {
+                $vPrice = (float) str_replace(',', '', $om[1]);
+                $vAvail = true;
             }
             $variants[$vAsin] = [
                 'available' => $vAvail,
@@ -1546,10 +1569,19 @@ class AmazonSmartSyncService
             ];
         }
 
+        // Safety guard: NEVER falsely zero out stock if Amazon did NOT explicitly say Out of Stock / Unavailable
+        $hasAnyAvailableVariant = !empty(array_filter($variants, fn($v) => !empty($v['available'])));
+        if (!$explicitlyOutOfStock && !$available && !$hasAnyAvailableVariant && $price <= 0) {
+            throw new Exception(
+                'Could not verify live Buybox price/stock (possible geo-restriction or anti-bot page) — preserved existing stock & price.'
+            );
+        }
+
         return [
             'price' => $price,
             'available' => $available,
             'stock' => $stock,
+            'explicitly_out_of_stock' => $explicitlyOutOfStock,
             'variants' => $variants,
         ];
     }
@@ -1578,6 +1610,39 @@ class AmazonSmartSyncService
     }
 
     /**
+     * Resolve saved or inferred markup for a product from its existing price & cost_per_item.
+     */
+    protected function inferExistingMarkup(Product $product, ?float $fallbackPercent = null): array
+    {
+        if (!empty($product->sync_markup_type) && $product->sync_markup_value !== null) {
+            return [
+                'type' => (string) $product->sync_markup_type,
+                'value' => round((float) $product->sync_markup_value, 2),
+                'inferred' => false,
+            ];
+        }
+
+        $price = (float) ($product->price ?? 0);
+        $cost = (float) ($product->cost_per_item ?? 0);
+
+        if ($cost > 0 && $price > $cost) {
+            $diff = round($price - $cost, 2);
+            $pct = round(($diff / $cost) * 100, 2);
+
+            $isCleanFixed = abs($diff * 2 - round($diff * 2)) < 0.001; // e.g. $5.00, $10.00, $12.50
+            $isCleanPct = abs($pct * 2 - round($pct * 2)) < 0.01;      // e.g. 15%, 20%, 25.5%
+
+            if ($isCleanFixed && !$isCleanPct) {
+                return ['type' => 'fixed', 'value' => $diff, 'inferred' => true];
+            }
+            return ['type' => 'percentage', 'value' => $pct, 'inferred' => true];
+        }
+
+        $defaultPct = $fallbackPercent ?? (float) ($this->getConfig()['default_markup_percent'] ?? 20.0);
+        return ['type' => 'percentage', 'value' => round($defaultPct, 2), 'inferred' => true];
+    }
+
+    /**
      * Calculate target retail price respecting per-product markup fields, preserved margin, or cost-only mode.
      */
     protected function calculateTargetRetailPrice(Product $product, float $suppCost, float $oldPrice, array $config): float
@@ -1592,22 +1657,11 @@ class AmazonSmartSyncService
         }
 
         if ($mode === 'product_field_or_preserve') {
-            $pType = $product->sync_markup_type;
-            $pVal = $product->sync_markup_value;
-
-            if ($pType === 'fixed' && $pVal !== null) {
-                return round($suppCost + (float) $pVal, 2);
+            $resolved = $this->inferExistingMarkup($product, (float) ($config['default_markup_percent'] ?? 20.0));
+            if ($resolved['type'] === 'fixed') {
+                return round($suppCost + $resolved['value'], 2);
             }
-            if ($pType === 'percentage' && $pVal !== null) {
-                return round($suppCost * (1 + ((float) $pVal / 100)), 2);
-            }
-
-            // Preserve existing margin if product already has cost_per_item & price
-            $oldCost = (float) ($product->cost_per_item ?? 0);
-            if ($oldCost > 0 && $oldPrice > $oldCost) {
-                $existingMultiplier = $oldPrice / $oldCost;
-                return round($suppCost * $existingMultiplier, 2);
-            }
+            return round($suppCost * (1 + ($resolved['value'] / 100)), 2);
         }
 
         // Global markup fallback
@@ -1674,7 +1728,7 @@ class AmazonSmartSyncService
                         if ($priceChanged) {
                             $newVarPrice = $newPrice;
                         }
-                    } elseif ($newStock <= 0) {
+                    } elseif (!empty($data['explicitly_out_of_stock']) && empty($variantDataMap)) {
                         $newVarStock = 0;
                     }
 
