@@ -1202,24 +1202,34 @@ class AmazonScraperService
             $meta = $asinMeta[$itemAsin] ?? [];
 
             $varImg = '';
-            // 1. Prefer high-res colorImages match for any dimension value (e.g. Color)
+            // Build candidate keys: combined dimension keys first (e.g. "size 3 136", "136 size 3"), then individual values
+            $candidateKeys = [];
+            if (count($cleanValues) > 1) {
+                $candidateKeys[] = strtolower(preg_replace('/\s+/', ' ', implode(' ', $cleanValues)));
+                $candidateKeys[] = strtolower(preg_replace('/\s+/', ' ', implode(' ', array_reverse($cleanValues))));
+                $candidateKeys[] = strtolower(implode(' / ', $cleanValues));
+            }
             foreach ($cleanValues as $val) {
-                $valLower = strtolower($val);
-                if (!empty($colorImages[$valLower][0]['hiRes'])) {
-                    $varImg = $colorImages[$valLower][0]['hiRes'];
+                $candidateKeys[] = strtolower($val);
+            }
+            $candidateKeys = array_values(array_unique(array_filter($candidateKeys)));
+
+            // 1. Prefer high-res colorImages match (combined or single dimension value)
+            foreach ($candidateKeys as $keyLower) {
+                if (!empty($colorImages[$keyLower][0]['hiRes'])) {
+                    $varImg = $colorImages[$keyLower][0]['hiRes'];
                     break;
                 }
-                if (!empty($colorImages[$valLower][0]['large'])) {
-                    $varImg = $colorImages[$valLower][0]['large'];
+                if (!empty($colorImages[$keyLower][0]['large'])) {
+                    $varImg = $colorImages[$keyLower][0]['large'];
                     break;
                 }
             }
-            // 2. Fallback to dimension-value swatch image map (covers all sizes of the same color)
+            // 2. Fallback to extracted colorImages / swatch image map (covers combined keys like "size 3 136" and single values)
             if (empty($varImg)) {
-                foreach ($cleanValues as $val) {
-                    $valLower = strtolower($val);
-                    if (!empty($dimValueImages[$valLower])) {
-                        $varImg = $dimValueImages[$valLower];
+                foreach ($candidateKeys as $keyLower) {
+                    if (!empty($dimValueImages[$keyLower])) {
+                        $varImg = $dimValueImages[$keyLower];
                         break;
                     }
                 }
@@ -1233,8 +1243,19 @@ class AmazonScraperService
                 ? $price
                 : ($meta['price'] ?? $price);
 
-            $isAvailable = $meta['available'] ?? ($itemAsin === $currentAsin ? $pageAvailable : true);
-            $varStock = $meta['stock'] ?? ($isAvailable ? ($itemAsin === $currentAsin ? $pageStock : $this->defaultStock) : 0);
+            // For multi-dimension products, twister-sort-filter-data marks other-dimension values as UNAVAILABLE
+            // relative to the currently selected sibling option, NOT globally out of stock.
+            $isMultiDim = count($cleanValues) > 1;
+            if ($itemAsin === $currentAsin) {
+                $isAvailable = $pageAvailable;
+                $varStock = $pageStock;
+            } elseif ($isMultiDim) {
+                $isAvailable = true;
+                $varStock = $this->defaultStock;
+            } else {
+                $isAvailable = $meta['available'] ?? true;
+                $varStock = $meta['stock'] ?? ($isAvailable ? $this->defaultStock : 0);
+            }
 
             $variants[] = [
                 'id' => $itemAsin,
