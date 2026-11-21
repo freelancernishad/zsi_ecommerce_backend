@@ -10,6 +10,7 @@ use Carbon\Carbon;
 use DOMDocument;
 use DOMXPath;
 use Exception;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -51,6 +52,8 @@ class AmazonSmartSyncService
             // Phase 1: Code Optimization Switches
             'lightweight_mode' => $bool('lightweight_mode', true),
             'sync_variant_stock' => $bool('sync_variant_stock', true),
+            'force_us_location' => $bool('force_us_location', true),
+            'us_zip_code' => (string) $val('us_zip_code', '10001'),
             'published_only' => $bool('published_only', true),
             'smart_retry_enabled' => $bool('smart_retry_enabled', true),
             'max_consecutive_failures' => max(1, (int) $val('max_consecutive_failures', 3)),
@@ -1127,12 +1130,14 @@ class AmazonSmartSyncService
             throw new Exception('BrightData API key or zone is not configured in Amazon Scraper settings.');
         }
 
+        $targetUrl = $this->buildUsAmazonUrl($asin, $url, $config);
+
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $apiKey,
             'Content-Type' => 'application/json',
         ])->timeout(35)->post('https://api.brightdata.com/request', [
             'zone' => $zone,
-            'url' => $url,
+            'url' => $targetUrl,
             'country' => 'us',
             'format' => 'raw',
         ]);
@@ -1154,20 +1159,126 @@ class AmazonSmartSyncService
     }
 
     /**
-     * Provider 2: Direct HTTP (100% Free, realistic desktop headers).
+     * Normalize any Amazon product URL to www.amazon.com (US) when force_us_location is enabled.
+     */
+    protected function buildUsAmazonUrl(string $asin, ?string $existingUrl, array $config): string
+    {
+        if (!empty($config['force_us_location'])) {
+            return "https://www.amazon.com/dp/{$asin}?th=1&psc=1&language=en_US&currency=USD";
+        }
+        return !empty($existingUrl) ? $existingUrl : "https://www.amazon.com/dp/{$asin}?th=1&psc=1";
+    }
+
+    /**
+     * Establish and cache a genuine US Delivery Location (ZIP 10001) Amazon cookie session
+     * so Direct HTTP requests always see US Buybox prices & stock even from non-US servers.
+     */
+    protected function getUsSessionCookieHeader(string $zipCode = '10001', bool $forceRefresh = false): string
+    {
+        $zip = preg_replace('/[^\d]/', '', $zipCode) ?: '10001';
+        $cacheKey = "amazon_smart_sync_us_cookie_{$zip}";
+
+        if (!$forceRefresh) {
+            $cached = Cache::get($cacheKey);
+            if (is_string($cached) && $cached !== '') {
+                return $cached;
+            }
+        }
+
+        $ua = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36';
+        $cookies = [
+            'i18n-prefs' => 'USD',
+            'lc-main' => 'en_US',
+        ];
+
+        try {
+            // Step 1: Load amazon.com homepage to obtain initial session-id & anti-csrftoken
+            $homeRes = Http::withHeaders([
+                'User-Agent' => $ua,
+                'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+                'Accept-Language' => 'en-US,en;q=0.9',
+                'Cookie' => 'i18n-prefs=USD; lc-main=en_US',
+            ])->timeout(15)->get('https://www.amazon.com/?language=en_US&currency=USD');
+
+            foreach ($homeRes->cookies() as $c) {
+                $cookies[$c->getName()] = $c->getValue();
+            }
+
+            $csrfToken = '';
+            $homeBody = $homeRes->body();
+            if (preg_match('/"anti-csrftoken-a2z"\s*:\s*"([^"]+)"/', $homeBody, $m)) {
+                $csrfToken = $m[1];
+            } elseif (preg_match('/name="anti-csrftoken-a2z"\s+value="([^"]+)"/', $homeBody, $m)) {
+                $csrfToken = $m[1];
+            }
+
+            // Step 2: Set Amazon delivery location to US ZIP code (e.g. 10001 New York)
+            if ($csrfToken !== '') {
+                $cookieStr = $this->formatCookieHeader($cookies);
+                $addrRes = Http::withHeaders([
+                    'User-Agent' => $ua,
+                    'Accept' => 'text/html,*/*',
+                    'Accept-Language' => 'en-US,en;q=0.9',
+                    'Content-Type' => 'application/json',
+                    'X-Requested-With' => 'XMLHttpRequest',
+                    'anti-csrftoken-a2z' => $csrfToken,
+                    'Origin' => 'https://www.amazon.com',
+                    'Referer' => 'https://www.amazon.com/',
+                    'Cookie' => $cookieStr,
+                ])->timeout(15)->post('https://www.amazon.com/portal-migration/hz/glow/address-change?actionSource=glow', [
+                    'locationType' => 'LOCATION_INPUT',
+                    'zipCode' => $zip,
+                    'storeContext' => 'generic',
+                    'deviceType' => 'web',
+                    'pageType' => 'Gateway',
+                    'actionSource' => 'glow',
+                ]);
+
+                foreach ($addrRes->cookies() as $c) {
+                    $cookies[$c->getName()] = $c->getValue();
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning('Failed to initialize US Amazon ZIP session: ' . $e->getMessage());
+        }
+
+        $finalCookieHeader = $this->formatCookieHeader($cookies);
+        Cache::put($cacheKey, $finalCookieHeader, now()->addHours(6));
+
+        return $finalCookieHeader;
+    }
+
+    protected function formatCookieHeader(array $cookies): string
+    {
+        $parts = [];
+        foreach ($cookies as $k => $v) {
+            if ($k !== '' && $v !== '') {
+                $parts[] = "{$k}={$v}";
+            }
+        }
+        return implode('; ', $parts);
+    }
+
+    /**
+     * Provider 2: Direct HTTP (100% Free, realistic desktop headers + cached US ZIP 10001 delivery session).
      */
     protected function fetchViaDirectHttp(string $asin, string $url, array $config): ?array
     {
         try {
+            $targetUrl = $this->buildUsAmazonUrl($asin, $url, $config);
+            $cookieHeader = !empty($config['force_us_location'])
+                ? $this->getUsSessionCookieHeader((string) ($config['us_zip_code'] ?? '10001'))
+                : 'i18n-prefs=USD; lc-main=en_US';
+
             $response = Http::withHeaders([
                 'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                 'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language' => 'en-US,en;q=0.9',
-                'Cookie' => 'i18n-prefs=USD; lc-main=en_US',
-            ])->timeout(15)->get($url);
+                'Cookie' => $cookieHeader,
+            ])->timeout(15)->get($targetUrl);
 
             if ($response->status() === 404) {
-                return ['price' => 0.0, 'available' => false, 'stock' => 0];
+                return ['price' => 0.0, 'available' => false, 'stock' => 0, 'explicitly_out_of_stock' => true];
             }
 
             $html = $response->body();
@@ -1352,7 +1463,10 @@ class AmazonSmartSyncService
             throw new Exception('BrightData API Key and Dataset ID are required.');
         }
 
-        $payload = array_map(fn($asin) => ['url' => "https://www.amazon.com/dp/{$asin}"], $asins);
+        $payload = array_map(fn($asin) => [
+            'url' => "https://www.amazon.com/dp/{$asin}",
+            'zipcode' => (string) ($config['us_zip_code'] ?? '10001'),
+        ], $asins);
 
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $apiKey,

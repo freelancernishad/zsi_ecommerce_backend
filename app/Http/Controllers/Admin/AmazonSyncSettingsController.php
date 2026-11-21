@@ -49,6 +49,8 @@ class AmazonSyncSettingsController extends Controller
             // Phase 1
             'lightweight_mode' => 'nullable|in:0,1,true,false',
             'sync_variant_stock' => 'nullable|in:0,1,true,false',
+            'force_us_location' => 'nullable|in:0,1,true,false',
+            'us_zip_code' => 'nullable|string|max:15',
             'published_only' => 'nullable|in:0,1,true,false',
             'smart_retry_enabled' => 'nullable|in:0,1,true,false',
             'max_consecutive_failures' => 'nullable|integer|min:1|max:20',
@@ -97,7 +99,7 @@ class AmazonSyncSettingsController extends Controller
 
         // Normalize booleans to '1' / '0' for SiteSetting consistency
         $boolKeys = [
-            'enabled', 'lightweight_mode', 'sync_variant_stock', 'published_only', 'smart_retry_enabled', 'direct_http_first',
+            'enabled', 'lightweight_mode', 'sync_variant_stock', 'force_us_location', 'published_only', 'smart_retry_enabled', 'direct_http_first',
             'tiered_sync_enabled', 'skip_cold_products', 'jit_sync_enabled', 'jit_on_product_view',
             'jit_on_add_to_cart', 'jit_on_checkout', 'daily_request_cap_enabled', 'auto_restock_enabled',
         ];
