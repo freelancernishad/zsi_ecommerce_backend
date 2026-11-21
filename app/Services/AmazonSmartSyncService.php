@@ -68,7 +68,7 @@ class AmazonSmartSyncService
             'cold_threshold_days' => max(1, (int) $val('cold_threshold_days', 30)),
 
             'jit_sync_enabled' => $bool('jit_sync_enabled', true),
-            'jit_on_product_view' => $bool('jit_on_product_view', false),
+            'jit_on_product_view' => $bool('jit_on_product_view', true),
             'jit_on_add_to_cart' => $bool('jit_on_add_to_cart', true),
             'jit_on_checkout' => $bool('jit_on_checkout', true),
             'jit_stale_hours' => max(1, (int) $val('jit_stale_hours', 12)),
@@ -697,19 +697,35 @@ class AmazonSmartSyncService
             return ['synced' => false, 'reason' => 'daily_cap_reached'];
         }
 
-        $result = $this->syncSingleProductWithProvider($product, $config);
-        $product->refresh();
+        // Prevent duplicate simultaneous API calls if multiple customers open the same stale product at once
+        $lock = Cache::lock("amazon_jit_sync_product_{$product->id}", 30);
+        if (!$lock->get()) {
+            return [
+                'synced' => false,
+                'reason' => 'sync_in_progress',
+                'product_id' => $product->id,
+                'price' => (float) $product->price,
+                'stock_quantity' => (int) $product->stock_quantity,
+            ];
+        }
 
-        return [
-            'synced' => ($result['status'] ?? '') === 'success',
-            'trigger' => $trigger,
-            'product_id' => $product->id,
-            'price' => (float) $product->price,
-            'stock_quantity' => (int) $product->stock_quantity,
-            'status' => $product->status,
-            'changes_detected' => $result['changes_detected'] ?? false,
-            'error' => $result['error'] ?? null,
-        ];
+        try {
+            $result = $this->syncSingleProductWithProvider($product, $config);
+            $product->refresh();
+
+            return [
+                'synced' => ($result['status'] ?? '') === 'success',
+                'trigger' => $trigger,
+                'product_id' => $product->id,
+                'price' => (float) $product->price,
+                'stock_quantity' => (int) $product->stock_quantity,
+                'status' => $product->status,
+                'changes_detected' => $result['changes_detected'] ?? false,
+                'error' => $result['error'] ?? null,
+            ];
+        } finally {
+            optional($lock)->release();
+        }
     }
 
     /**

@@ -257,6 +257,21 @@ class ProductController extends Controller
             $product = $query->where('slug', $idOrSlug)->firstOrFail();
         }
 
+        // Just-in-Time (JIT) Amazon Sync on product visit:
+        // If product is an Amazon item and last sync is older than configured jit_stale_hours (default 12h),
+        // sync live price & stock before returning product details; otherwise return directly.
+        if ($product->is_amazon_product && !empty($product->amazon_asin)) {
+            try {
+                $jitResult = app(\App\Services\AmazonSmartSyncService::class)->jitSyncProduct($product->id, 'view');
+                if (!empty($jitResult['synced'])) {
+                    $product->refresh();
+                    $product->load(['images', 'category', 'brand', 'variants', 'reviews.user']);
+                }
+            } catch (\Throwable $e) {
+                \Illuminate\Support\Facades\Log::warning("Amazon JIT sync on product view skipped for #{$product->id}: " . $e->getMessage());
+            }
+        }
+
         return response()->json([
             'status' => 'success',
             'data' => $product
