@@ -223,6 +223,11 @@ if (file_exists($AdminSettingsRoutes = __DIR__.'/Admins/Settings/SettingsRoutes.
     require $AdminSettingsRoutes;
 }
 
+// Load Dedicated Amazon Smart Sync Routes
+if (file_exists($AmazonSyncRoutes = __DIR__.'/Admins/Settings/AmazonSyncRoutes.php')) {
+    require $AmazonSyncRoutes;
+}
+
     Route::group(['prefix' => 'user', 'middleware' => 'auth:api'], function () {
         Route::put('/profile', [UserController::class, 'updateProfile']);
         Route::get('/addresses', [AddressController::class, 'index']);

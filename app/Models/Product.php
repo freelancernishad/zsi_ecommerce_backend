@@ -24,6 +24,8 @@ class Product extends Model
         'sale_price',
         'original_price',
         'cost_per_item',
+        'sync_markup_type',
+        'sync_markup_value',
         'stock_quantity',
         'sku',
         'barcode',

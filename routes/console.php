@@ -85,5 +85,12 @@ Schedule::command('inventory:sync')
     ->appendOutputTo(storage_path('logs/inventory_sync.log'))
     ->name('auto-sync-supplier-inventory');
 
+// Dedicated Cost-Optimized Amazon Smart Sync (Checks hourly, respects its own frequency, tiers & daily cap)
+Schedule::command('amazon:smart-sync')
+    ->hourly()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/amazon_smart_sync.log'))
+    ->name('auto-amazon-smart-sync');
+
 
 
