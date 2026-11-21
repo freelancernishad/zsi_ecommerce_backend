@@ -101,6 +101,36 @@ class OrderController extends Controller
             'transaction_id' => 'nullable|string',
         ]);
 
+        // Just-in-Time (JIT) Amazon Sync on Checkout BEFORE opening DB transaction / taking order
+        // (Only calls API if last sync > jit_stale_hours; prevents overselling out-of-stock Amazon items)
+        $itemProductIds = collect($request->items)->pluck('product_id')->filter()->unique()->values()->toArray();
+        if (!empty($itemProductIds)) {
+            $amazonItems = Product::whereIn('id', $itemProductIds)
+                ->where('is_amazon_product', true)
+                ->whereNotNull('amazon_asin')
+                ->get();
+
+            if ($amazonItems->isNotEmpty()) {
+                $smartSync = app(\App\Services\AmazonSmartSyncService::class);
+                foreach ($amazonItems as $amzProd) {
+                    try {
+                        $jitRes = $smartSync->jitSyncProduct($amzProd->id, 'checkout');
+                        if (!empty($jitRes['synced'])) {
+                            $amzProd->refresh();
+                            if ((int) $amzProd->stock_quantity <= 0 && !$amzProd->continue_selling) {
+                                return response()->json([
+                                    'status' => 'error',
+                                    'message' => "Sorry, '{$amzProd->name}' is currently out of stock.",
+                                ], 422);
+                            }
+                        }
+                    } catch (\Throwable $e) {
+                        \Illuminate\Support\Facades\Log::warning("Amazon JIT sync on checkout skipped for #{$amzProd->id}: " . $e->getMessage());
+                    }
+                }
+            }
+        }
+
         try {
             return DB::transaction(function () use ($request, $user) {
                 $address = null;
