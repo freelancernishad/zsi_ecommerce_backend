@@ -6,6 +6,7 @@ use App\Models\InventorySyncLog;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\SiteSetting;
+use App\Models\UserActivity;
 use Carbon\Carbon;
 use DOMDocument;
 use DOMXPath;
@@ -62,6 +63,7 @@ class AmazonSmartSyncService
             // Phase 2: Tiered & JIT (On-Demand) Sync Switches
             'tiered_sync_enabled' => $bool('tiered_sync_enabled', true),
             'hot_product_days' => max(1, (int) $val('hot_product_days', 7)),
+            'hot_min_views' => max(1, (int) $val('hot_min_views', 5)),
             'hot_sync_hours' => max(1, (int) $val('hot_sync_hours', 24)),
             'active_sync_hours' => max(1, (int) $val('active_sync_hours', 72)),
             'skip_cold_products' => $bool('skip_cold_products', true),
@@ -353,13 +355,16 @@ class AmazonSmartSyncService
         $published = (clone $base)->where('status', 'published')->count();
         $draft = max(0, $total - $published);
 
-        $hotProductIds = $this->getHotAmazonProductIds($config['hot_product_days']);
+        $hotProductIds = $this->getHotAmazonProductIds($config['hot_product_days'], $config['hot_min_views']);
         $hotCount = count($hotProductIds);
 
         $coldCutoff = now()->subDays($config['cold_threshold_days']);
+        $recentlyViewedIds = $this->getRecentlyViewedAmazonProductIds($config['cold_threshold_days']);
+        $nonColdIds = array_values(array_unique(array_merge($hotProductIds, $recentlyViewedIds)));
+
         $coldCount = (clone $base)
             ->where('status', 'published')
-            ->whereNotIn('id', $hotProductIds ?: [0])
+            ->whereNotIn('id', $nonColdIds ?: [0])
             ->where('created_at', '<', $coldCutoff)
             ->whereDoesntHave('orderItems', function ($q) use ($coldCutoff) {
                 $q->where('created_at', '>=', $coldCutoff);
@@ -378,11 +383,27 @@ class AmazonSmartSyncService
         ];
     }
 
-    protected function getHotAmazonProductIds(int $days): array
+    protected function getRecentlyViewedAmazonProductIds(int $days): array
     {
         $since = now()->subDays($days);
 
-        return OrderItem::query()
+        return UserActivity::query()
+            ->where('activity_type', 'view_product')
+            ->whereIn('entity_type', ['Product', 'product', Product::class])
+            ->where('created_at', '>=', $since)
+            ->whereNotNull('entity_id')
+            ->distinct()
+            ->pluck('entity_id')
+            ->map(fn($id) => (int) $id)
+            ->toArray();
+    }
+
+    protected function getHotAmazonProductIds(int $days, int $minViews = 5): array
+    {
+        $since = now()->subDays($days);
+
+        // 1. Amazon products ordered within last N days
+        $orderedIds = OrderItem::query()
             ->where('created_at', '>=', $since)
             ->whereHas('product', function ($q) {
                 $q->where('is_amazon_product', true)
@@ -393,6 +414,31 @@ class AmazonSmartSyncService
             ->pluck('product_id')
             ->map(fn($id) => (int) $id)
             ->toArray();
+
+        // 2. Most visited Amazon products (>= $minViews views within last N days)
+        $mostVisitedCandidateIds = UserActivity::query()
+            ->select('entity_id')
+            ->where('activity_type', 'view_product')
+            ->whereIn('entity_type', ['Product', 'product', Product::class])
+            ->where('created_at', '>=', $since)
+            ->whereNotNull('entity_id')
+            ->groupBy('entity_id')
+            ->havingRaw('COUNT(*) >= ?', [max(1, $minViews)])
+            ->pluck('entity_id')
+            ->map(fn($id) => (int) $id)
+            ->toArray();
+
+        $mostVisitedAmazonIds = empty($mostVisitedCandidateIds)
+            ? []
+            : Product::whereIn('id', $mostVisitedCandidateIds)
+                ->where('is_amazon_product', true)
+                ->whereNotNull('amazon_asin')
+                ->where('status', 'published')
+                ->pluck('id')
+                ->map(fn($id) => (int) $id)
+                ->toArray();
+
+        return array_values(array_unique(array_merge($orderedIds, $mostVisitedAmazonIds)));
     }
 
     /**
@@ -425,10 +471,11 @@ class AmazonSmartSyncService
             return $query->orderBy('amazon_synced_at', 'asc')->take($limit)->get();
         }
 
-        $hotIds = $this->getHotAmazonProductIds($config['hot_product_days']);
+        $hotIds = $this->getHotAmazonProductIds($config['hot_product_days'], $config['hot_min_views']);
         $hotCutoff = now()->subHours($config['hot_sync_hours']);
         $activeCutoff = now()->subHours($config['active_sync_hours']);
         $coldCutoff = now()->subDays($config['cold_threshold_days']);
+        $recentlyViewedIds = $this->getRecentlyViewedAmazonProductIds($config['cold_threshold_days']);
 
         if ($tier === 'hot') {
             if (empty($hotIds)) {
@@ -466,11 +513,14 @@ class AmazonSmartSyncService
             $activeQuery->whereNotIn('id', $hotIds);
         }
         if ($config['skip_cold_products']) {
-            $activeQuery->where(function ($q) use ($coldCutoff) {
+            $activeQuery->where(function ($q) use ($coldCutoff, $recentlyViewedIds) {
                 $q->where('created_at', '>=', $coldCutoff)
                   ->orWhereHas('orderItems', function ($oq) use ($coldCutoff) {
                       $oq->where('created_at', '>=', $coldCutoff);
                   });
+                if (!empty($recentlyViewedIds)) {
+                    $q->orWhereIn('id', $recentlyViewedIds);
+                }
             });
         }
         if (!$ignoreStaleness) {

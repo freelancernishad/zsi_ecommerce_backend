@@ -59,6 +59,7 @@ class AmazonSyncSettingsController extends Controller
             // Phase 2
             'tiered_sync_enabled' => 'nullable|in:0,1,true,false',
             'hot_product_days' => 'nullable|integer|min:1|max:90',
+            'hot_min_views' => 'nullable|integer|min:1|max:1000',
             'hot_sync_hours' => 'nullable|integer|min:1|max:720',
             'active_sync_hours' => 'nullable|integer|min:1|max:720',
             'skip_cold_products' => 'nullable|in:0,1,true,false',
