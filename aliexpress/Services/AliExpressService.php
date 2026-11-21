@@ -496,7 +496,7 @@ class AliExpressService
         $rawResponse = $this->executeGatewayCall('aliexpress.ds.text.search', $bizParams, true);
 
         $resp = $rawResponse['aliexpress_ds_text_search_response'] ?? $rawResponse;
-        if (!empty($resp['code']) && (string) $resp['code'] !== '0' && (string) $resp['code'] !== '200') {
+        if (!empty($resp['code']) && !in_array((string) $resp['code'], ['0', '00', '200'], true)) {
             $errCode = (string) $resp['code'];
             $errMsg = (string) ($resp['msg'] ?? $resp['sub_msg'] ?? $errCode);
             throw new Exception("AliExpress Search Error [{$errCode}]: {$errMsg}");
