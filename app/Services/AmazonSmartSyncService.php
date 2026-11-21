@@ -89,6 +89,7 @@ class AmazonSmartSyncService
             'estimated_cost_per_1k_requests' => max(0.0, (float) $val('estimated_cost_per_1k_requests', 1.50)),
 
             'default_markup_percent' => max(0.0, (float) $val('default_markup_percent', 20.0)),
+            'markup_mode' => (string) $val('markup_mode', 'product_field_or_preserve'), // product_field_or_preserve | cost_only_keep_price | global_markup
             'default_stock' => max(1, (int) $val('default_stock', 20)),
             'stock_out_action' => (string) $val('stock_out_action', 'variant_zero_keep_visible'),
             'auto_restock_enabled' => $bool('auto_restock_enabled', true),
@@ -830,6 +831,8 @@ class AmazonSmartSyncService
                 'image' => $primaryImg,
                 'price' => (float) $p->price,
                 'cost_per_item' => (float) ($p->cost_per_item ?? 0),
+                'sync_markup_type' => $p->sync_markup_type,
+                'sync_markup_value' => $p->sync_markup_value !== null ? (float) $p->sync_markup_value : null,
                 'stock_quantity' => (int) ($p->stock_quantity ?? 0),
                 'variants_count' => (int) ($p->variants_count ?? 0),
                 'status' => $p->status,
@@ -1155,6 +1158,7 @@ class AmazonSmartSyncService
                 'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36',
                 'Accept' => 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
                 'Accept-Language' => 'en-US,en;q=0.9',
+                'Cookie' => 'i18n-prefs=USD; lc-main=en_US',
             ])->timeout(15)->get($url);
 
             if ($response->status() === 404) {
@@ -1551,6 +1555,67 @@ class AmazonSmartSyncService
     }
 
     /**
+     * Save per-product markup override (percentage / fixed / null=auto) without touching legacy import code.
+     */
+    public function updateProductMarkup(int $productId, ?string $markupType, ?float $markupValue): array
+    {
+        $product = Product::where('id', $productId)->where('is_amazon_product', true)->firstOrFail();
+
+        if (empty($markupType) || $markupType === 'auto') {
+            $product->sync_markup_type = null;
+            $product->sync_markup_value = null;
+        } else {
+            $product->sync_markup_type = $markupType; // 'percentage' | 'fixed'
+            $product->sync_markup_value = max(0.0, (float) ($markupValue ?? 0));
+        }
+        $product->save();
+
+        return [
+            'id' => $product->id,
+            'sync_markup_type' => $product->sync_markup_type,
+            'sync_markup_value' => $product->sync_markup_value !== null ? (float) $product->sync_markup_value : null,
+        ];
+    }
+
+    /**
+     * Calculate target retail price respecting per-product markup fields, preserved margin, or cost-only mode.
+     */
+    protected function calculateTargetRetailPrice(Product $product, float $suppCost, float $oldPrice, array $config): float
+    {
+        if ($suppCost <= 0) {
+            return $oldPrice;
+        }
+
+        $mode = (string) ($config['markup_mode'] ?? 'product_field_or_preserve');
+        if ($mode === 'cost_only_keep_price') {
+            return $oldPrice;
+        }
+
+        if ($mode === 'product_field_or_preserve') {
+            $pType = $product->sync_markup_type;
+            $pVal = $product->sync_markup_value;
+
+            if ($pType === 'fixed' && $pVal !== null) {
+                return round($suppCost + (float) $pVal, 2);
+            }
+            if ($pType === 'percentage' && $pVal !== null) {
+                return round($suppCost * (1 + ((float) $pVal / 100)), 2);
+            }
+
+            // Preserve existing margin if product already has cost_per_item & price
+            $oldCost = (float) ($product->cost_per_item ?? 0);
+            if ($oldCost > 0 && $oldPrice > $oldCost) {
+                $existingMultiplier = $oldPrice / $oldCost;
+                return round($suppCost * $existingMultiplier, 2);
+            }
+        }
+
+        // Global markup fallback
+        $markup = (float) ($config['default_markup_percent'] ?? 20.0);
+        return round($suppCost * (1 + ($markup / 100)), 2);
+    }
+
+    /**
      * Apply price & stock updates to the Product and its variants cleanly in a transaction.
      */
     protected function applyProductUpdate(Product $product, array $data, array $config, string $provider): array
@@ -1562,12 +1627,11 @@ class AmazonSmartSyncService
 
             $suppCost = (float) ($data['price'] ?? 0.0);
             $newStock = max(0, (int) ($data['stock'] ?? 0));
-            $markup = (float) $config['default_markup_percent'];
 
             $newPrice = $oldPrice;
             $priceChanged = false;
-            if ($suppCost > 0) {
-                $calcPrice = round($suppCost * (1 + ($markup / 100)), 2);
+            if ($suppCost > 0 && ($config['markup_mode'] ?? 'product_field_or_preserve') !== 'cost_only_keep_price') {
+                $calcPrice = $this->calculateTargetRetailPrice($product, $suppCost, $oldPrice, $config);
                 if ($calcPrice > $oldPrice && $config['price_increase_action'] === 'auto_update_markup') {
                     $newPrice = $calcPrice;
                     $priceChanged = true;
@@ -1595,8 +1659,8 @@ class AmazonSmartSyncService
                         $vInfo = $variantDataMap[$vAsin];
                         $newVarStock = max(0, (int) ($vInfo['stock'] ?? (!empty($vInfo['available']) ? $config['default_stock'] : 0)));
                         $vCost = (float) ($vInfo['price'] ?? 0);
-                        if ($vCost > 0) {
-                            $vCalc = round($vCost * (1 + ($markup / 100)), 2);
+                        if ($vCost > 0 && ($config['markup_mode'] ?? 'product_field_or_preserve') !== 'cost_only_keep_price') {
+                            $vCalc = $this->calculateTargetRetailPrice($product, $vCost, $oldVarPrice, $config);
                             if ($vCalc > $oldVarPrice && $config['price_increase_action'] === 'auto_update_markup') {
                                 $newVarPrice = $vCalc;
                                 $priceChanged = true;

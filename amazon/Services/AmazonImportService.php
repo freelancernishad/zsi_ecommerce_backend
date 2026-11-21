@@ -159,6 +159,9 @@ class AmazonImportService
             }
 
             // Create or Update Product in DB
+            $resolvedMarkupType = ($markupType === 'fixed' && $fixedMarkupAmount > 0) ? 'fixed' : 'percentage';
+            $resolvedMarkupValue = $resolvedMarkupType === 'fixed' ? $fixedMarkupAmount : $profitMarginPercent;
+
             $productPayload = [
                 'name' => $amazonData['title'],
                 'slug' => $slug,
@@ -167,6 +170,8 @@ class AmazonImportService
                 'price' => $salePrice,
                 'original_price' => $salePrice,
                 'cost_per_item' => $costPrice,
+                'sync_markup_type' => $resolvedMarkupType,
+                'sync_markup_value' => $resolvedMarkupValue,
                 'sku' => $amazonData['sku'] ?? ("AMZ-" . $asin),
                 'stock_quantity' => $defaultStock,
                 'category_id' => $targetCategoryId,
@@ -194,6 +199,9 @@ class AmazonImportService
                         'name' => $amazonData['title'],
                         'price' => $salePrice,
                         'original_price' => $salePrice,
+                        'cost_per_item' => $costPrice,
+                        'sync_markup_type' => $resolvedMarkupType,
+                        'sync_markup_value' => $resolvedMarkupValue,
                         'stock_quantity' => $defaultStock,
                         'amazon_synced_at' => now(),
                     ]);

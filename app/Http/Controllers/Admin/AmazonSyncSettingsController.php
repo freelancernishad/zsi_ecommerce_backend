@@ -87,6 +87,7 @@ class AmazonSyncSettingsController extends Controller
             'estimated_cost_per_1k_requests' => 'nullable|numeric|min:0|max:100',
 
             'default_markup_percent' => 'nullable|numeric|min:0|max:500',
+            'markup_mode' => 'nullable|string|in:product_field_or_preserve,cost_only_keep_price,global_markup',
             'default_stock' => 'nullable|integer|min:1|max:10000',
             'stock_out_action' => 'nullable|string|in:variant_zero_keep_visible,unpublish_product',
             'auto_restock_enabled' => 'nullable|in:0,1,true,false',
@@ -281,6 +282,37 @@ class AmazonSyncSettingsController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Sync failed: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
+     * Save per-product markup override (percentage / fixed / auto).
+     */
+    public function updateProductMarkup(Request $request)
+    {
+        $validated = $request->validate([
+            'product_id' => 'required|integer',
+            'sync_markup_type' => 'nullable|string|in:auto,percentage,fixed',
+            'sync_markup_value' => 'nullable|numeric|min:0|max:10000',
+        ]);
+
+        try {
+            $data = $this->smartSyncService->updateProductMarkup(
+                (int) $validated['product_id'],
+                $validated['sync_markup_type'] ?? null,
+                isset($validated['sync_markup_value']) ? (float) $validated['sync_markup_value'] : null
+            );
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Product sync markup updated.',
+                'data' => $data,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to update product markup: ' . $e->getMessage(),
             ], 500);
         }
     }

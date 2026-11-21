@@ -14,6 +14,7 @@ Route::prefix('admin/settings/amazon-sync')->group(function () {
     Route::get('/products', [AmazonSyncSettingsController::class, 'listProducts']);
     Route::get('/product-ids', [AmazonSyncSettingsController::class, 'productIds']);
     Route::post('/sync-products', [AmazonSyncSettingsController::class, 'syncProducts']);
+    Route::post('/product-markup', [AmazonSyncSettingsController::class, 'updateProductMarkup']);
     Route::get('/logs', [AmazonSyncSettingsController::class, 'syncLogs']);
 });
 
