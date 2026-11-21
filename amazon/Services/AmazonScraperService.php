@@ -618,6 +618,10 @@ class AmazonScraperService
         // 7. Comprehensive Variants Extraction
         $variants = $this->parseVariants($html, $asin, $price, $images, $xpath, $availability);
 
+        // 7b. Enrich per-variant prices when Amazon omits them from initial HTML (e.g. slotsFetched: false)
+        $host = parse_url($url, PHP_URL_HOST) ?: 'www.amazon.com';
+        $variants = $this->enrichVariantPrices($variants, $asin, $price, $host);
+
         // Include any variant swatch images into the main image gallery if missing
         foreach ($variants as $v) {
             if (!empty($v['image']) && !in_array($v['image'], $images)) {
@@ -1273,5 +1277,151 @@ class AmazonScraperService
         }
 
         return $variants;
+    }
+
+    /**
+     * When Amazon omits per-variant prices from the initial HTML (e.g. slotsFetched: false),
+     * fetch the real price for each distinct variant ASIN concurrently in batches using Http::pool().
+     */
+    protected function enrichVariantPrices(array $variants, string $currentAsin, float $basePrice, string $host = 'www.amazon.com'): array
+    {
+        if (count($variants) <= 1) {
+            return $variants;
+        }
+
+        // Collect unique variant ASINs that still have the fallback basePrice (excluding currentAsin)
+        $asinsToFetch = [];
+        $distinctPrices = [];
+        foreach ($variants as $v) {
+            $vp = (float) ($v['price'] ?? 0);
+            if ($vp > 0) {
+                $distinctPrices[(string) $vp] = true;
+            }
+            $vAsin = (string) ($v['asin'] ?? '');
+            if ($vAsin !== '' && strlen($vAsin) === 10 && $vAsin !== $currentAsin && abs($vp - $basePrice) < 0.001) {
+                $asinsToFetch[$vAsin] = true;
+            }
+        }
+
+        // Only enrich when Amazon gave zero price variation across variants
+        if (count($distinctPrices) > 1 || empty($asinsToFetch)) {
+            return $variants;
+        }
+
+        $targetAsins = array_slice(array_keys($asinsToFetch), 0, 40);
+        $useBrightData = !empty($this->brightdataApiKey) && !empty($this->brightdataZone);
+        $fetchedPrices = [];
+        $fetchedAvail = [];
+
+        foreach (array_chunk($targetAsins, 10) as $batch) {
+            try {
+                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($batch, $host, $useBrightData) {
+                    foreach ($batch as $vAsin) {
+                        $vUrl = "https://{$host}/dp/{$vAsin}?th=1&psc=1";
+                        if ($useBrightData) {
+                            $pool->as($vAsin)
+                                ->withHeaders([
+                                    'Authorization' => 'Bearer ' . $this->brightdataApiKey,
+                                    'Content-Type' => 'application/json',
+                                ])
+                                ->timeout(30)
+                                ->post('https://api.brightdata.com/request', [
+                                    'zone' => $this->brightdataZone,
+                                    'url' => $vUrl,
+                                    'format' => 'raw',
+                                ]);
+                        } else {
+                            $pool->as($vAsin)
+                                ->withHeaders([
+                                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                                    'Accept-Language' => 'en-US,en;q=0.9',
+                                ])
+                                ->timeout(15)
+                                ->get($vUrl);
+                        }
+                    }
+                });
+
+                foreach ($batch as $vAsin) {
+                    $resp = $responses[$vAsin] ?? null;
+                    if (!$resp || $resp instanceof \Throwable || !$resp->successful()) {
+                        continue;
+                    }
+                    $body = $resp->body();
+                    if (empty($body) || str_contains($body, 'validateCaptcha') || str_contains($body, 'Robot Check')) {
+                        continue;
+                    }
+
+                    $parsedPrice = $this->extractPriceFromHtml($body);
+                    if ($parsedPrice > 0) {
+                        $fetchedPrices[$vAsin] = $parsedPrice;
+                    } elseif (preg_match('/currently unavailable|temporarily out of stock/i', $body)) {
+                        $fetchedAvail[$vAsin] = false;
+                    }
+                }
+            } catch (Exception $e) {
+                Log::warning('Amazon variant price enrichment batch failed: ' . $e->getMessage());
+            }
+        }
+
+        if (empty($fetchedPrices) && empty($fetchedAvail)) {
+            return $variants;
+        }
+
+        foreach ($variants as &$v) {
+            $vAsin = (string) ($v['asin'] ?? '');
+            if (isset($fetchedPrices[$vAsin])) {
+                $v['price'] = $fetchedPrices[$vAsin];
+                $v['cost_price'] = $fetchedPrices[$vAsin];
+            }
+            if (isset($fetchedAvail[$vAsin]) && $fetchedAvail[$vAsin] === false) {
+                $v['available'] = false;
+                $v['stock'] = 0;
+            }
+        }
+        unset($v);
+
+        return $variants;
+    }
+
+    /**
+     * Fast price extraction from an Amazon product page HTML string.
+     */
+    protected function extractPriceFromHtml(string $html): float
+    {
+        // 1. JSON priceAmount inside apex / twister buybox state
+        if (preg_match('/"priceAmount"\s*:\s*([\d]+\.[\d]{1,2})/', $html, $m)) {
+            $val = (float) $m[1];
+            if ($val > 0) return $val;
+        }
+
+        // 2. priceToPay / corePriceDisplay a-offscreen
+        if (preg_match('/priceToPay[^>]*>.*?a-offscreen[^>]*>\s*\$?([\d,]+\.\d{2})/s', $html, $m)) {
+            $val = (float) str_replace(',', '', $m[1]);
+            if ($val > 0) return $val;
+        }
+
+        // 3. Fallback DOM XPath (same selectors as main parser)
+        libxml_use_internal_errors(true);
+        $dom = new DOMDocument();
+        @$dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
+        $xpath = new DOMXPath($dom);
+        libxml_clear_errors();
+
+        $priceNodes = $xpath->query(
+            '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+            . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-offscreen")]'
+            . ' | //span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+            . ' | //span[@id="priceblock_ourprice"]'
+            . ' | //span[@id="priceblock_dealprice"]'
+        );
+        if ($priceNodes->length > 0) {
+            $rawPrice = $priceNodes->item(0)->nodeValue;
+            if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
+                return (float) str_replace(',', '', $m[0]);
+            }
+        }
+
+        return 0.0;
     }
 }

@@ -294,9 +294,20 @@ class AmazonImportService
 
         $formatted = [];
         foreach ($optionsCollector as $optName => $valsMap) {
+            $vals = array_values(array_keys($valsMap));
+            // Sort numeric counts (e.g. 32, 96, 164, 198) or "Size N" labels naturally
+            $allNumeric = count($vals) > 1 && collect($vals)->every(fn($v) => is_numeric(trim((string) $v)));
+            if ($allNumeric) {
+                usort($vals, fn($a, $b) => (float) $a <=> (float) $b);
+            } else {
+                $hasNumberedSizes = count($vals) > 1 && collect($vals)->contains(fn($v) => (bool) preg_match('/^size\s+\d+/i', (string) $v));
+                if ($hasNumberedSizes) {
+                    usort($vals, fn($a, $b) => strnatcasecmp((string) $a, (string) $b));
+                }
+            }
             $formatted[] = [
                 'name' => ucfirst($optName),
-                'values' => array_values(array_keys($valsMap)),
+                'values' => $vals,
             ];
         }
 
