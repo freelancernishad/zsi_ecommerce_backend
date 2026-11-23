@@ -174,35 +174,12 @@ class AliExpressController extends Controller
         $status = $request->input('status', 'published');
         $isSync = $request->boolean('sync', false);
 
-        // If sync flag is true or item count <= 3, run inline synchronously
-        if ($isSync || count($items) <= 3) {
-            try {
-                $result = $this->importService->bulkImportAliExpressProducts(
-                    $items,
-                    $profitMargin,
-                    $categoryId,
-                    $defaultStock,
-                    $status
-                );
-
-                return response()->json([
-                    'success' => true,
-                    'message' => 'Bulk AliExpress import completed.',
-                    'data' => $result,
-                ]);
-            } catch (Exception $e) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Bulk import failed: ' . $e->getMessage(),
-                ], 500);
-            }
-        }
-
-        // Async Background Batch File
+        // Create Batch File (always recorded so /products/import/history tracks every bulk import)
         $batchId = 'ali_batch_' . uniqid() . '_' . time();
+        $filePath = "aliexpress_imports/{$batchId}.json";
         $batchData = [
             'batch_id' => $batchId,
-            'status' => 'pending',
+            'status' => $isSync ? 'in_progress' : 'pending',
             'total' => count($items),
             'total_items' => count($items),
             'processed_count' => 0,
@@ -220,7 +197,56 @@ class AliExpressController extends Controller
             ], $items),
         ];
 
-        Storage::disk('local')->put("aliexpress_imports/{$batchId}.json", json_encode($batchData, JSON_PRETTY_PRINT));
+        Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+
+        // If sync flag is explicitly requested, run inline and update batch file
+        if ($isSync) {
+            $batchData['started_at'] = now()->toDateTimeString();
+            Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+
+            try {
+                $result = $this->importService->bulkImportAliExpressProducts(
+                    $items,
+                    $profitMargin,
+                    $categoryId,
+                    $defaultStock,
+                    $status,
+                    function ($current, $total, $itemResult) use ($filePath, &$batchData) {
+                        $itemInput = $itemResult['product_id_or_url'];
+                        foreach ($batchData['items'] as $i => $item) {
+                            if (($item['product_id_or_url'] ?? '') === $itemInput) {
+                                $batchData['items'][$i] = $itemResult;
+                                break;
+                            }
+                        }
+                        $batchData['processed_count'] = $current;
+                        $batchData['successful_count'] = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'completed'));
+                        $batchData['failed_count'] = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'failed'));
+                        if ($current >= $total) {
+                            $batchData['status'] = 'completed';
+                            $batchData['completed_at'] = now()->toDateTimeString();
+                        }
+                        Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+                    }
+                );
+
+                return response()->json([
+                    'success' => true,
+                    'message' => 'Bulk AliExpress import completed.',
+                    'batch_id' => $batchId,
+                    'data' => $result,
+                ]);
+            } catch (Exception $e) {
+                $batchData['status'] = 'failed';
+                $batchData['error'] = $e->getMessage();
+                Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Bulk import failed: ' . $e->getMessage(),
+                ], 500);
+            }
+        }
 
         // Spawn background CLI process (works on both Windows & Linux without cron job or queue workers)
         $phpBinary = $this->getPhpCliBinary();
