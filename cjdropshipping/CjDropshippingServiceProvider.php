@@ -41,11 +41,9 @@ class CjDropshippingServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__ . '/Migrations');
 
         // Register Console Commands
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                SyncCjInventoryCommand::class,
-                ProcessBulkImportCommand::class,
-            ]);
-        }
+        $this->commands([
+            SyncCjInventoryCommand::class,
+            ProcessBulkImportCommand::class,
+        ]);
     }
 }

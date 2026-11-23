@@ -39,10 +39,8 @@ class AmazonServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__ . '/Migrations');
 
         // Register Console Commands
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                Commands\ProcessAmazonBulkImportCommand::class,
-            ]);
-        }
+        $this->commands([
+            Commands\ProcessAmazonBulkImportCommand::class,
+        ]);
     }
 }
