@@ -27,7 +27,7 @@ class ProcessAmazonBulkImportCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(AmazonImportService $amazonImportService)
+    public function handle()
     {
         $batchId = $this->argument('batchId');
         $filePath = "amazon_imports/{$batchId}.json";
@@ -43,6 +43,14 @@ class ProcessAmazonBulkImportCommand extends Command
             $this->error("Invalid batch data in {$filePath}.");
             return Command::FAILURE;
         }
+
+        if (!empty($batchData['database'])) {
+            config(['database.connections.mysql.database' => $batchData['database']]);
+            \Illuminate\Support\Facades\DB::purge('mysql');
+            \Illuminate\Support\Facades\DB::reconnect('mysql');
+        }
+
+        $amazonImportService = app(AmazonImportService::class);
 
         $items = $batchData['items'];
         $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 0);

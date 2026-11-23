@@ -224,6 +224,7 @@ class AmazonController extends Controller
         $batchId = 'amz_batch_' . uniqid() . '_' . time();
         $batchPayload = [
             'batch_id' => $batchId,
+            'database' => config('database.connections.mysql.database'),
             'status' => 'pending',
             'created_at' => now()->toDateTimeString(),
             'items' => $items,
@@ -323,6 +324,9 @@ class AmazonController extends Controller
             if (Storage::disk('local')->exists($filePath)) {
                 $batchData = json_decode(Storage::disk('local')->get($filePath), true);
                 if ($batchData) {
+                    if (empty($batchData['database'])) {
+                        $batchData['database'] = config('database.connections.mysql.database');
+                    }
                     $batchData['status'] = 'pending';
                     unset($batchData['completed_at']);
                     unset($batchData['result']);

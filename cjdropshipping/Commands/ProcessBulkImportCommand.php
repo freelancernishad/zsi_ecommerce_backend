@@ -27,7 +27,7 @@ class ProcessBulkImportCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(CjImportService $cjImportService)
+    public function handle()
     {
         $batchId = $this->argument('batchId');
         $filePath = "cj_imports/{$batchId}.json";
@@ -43,6 +43,14 @@ class ProcessBulkImportCommand extends Command
             $this->error("Invalid batch data in {$filePath}.");
             return Command::FAILURE;
         }
+
+        if (!empty($batchData['database'])) {
+            config(['database.connections.mysql.database' => $batchData['database']]);
+            \Illuminate\Support\Facades\DB::purge('mysql');
+            \Illuminate\Support\Facades\DB::reconnect('mysql');
+        }
+
+        $cjImportService = app(CjImportService::class);
 
         $pids = $batchData['pids'];
         $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 0);
