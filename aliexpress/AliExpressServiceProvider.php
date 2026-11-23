@@ -41,11 +41,9 @@ class AliExpressServiceProvider extends ServiceProvider
         $this->loadMigrationsFrom(__DIR__ . '/Migrations');
 
         // Register Console Commands
-        if ($this->app->runningInConsole()) {
-            $this->commands([
-                SyncAliExpressInventoryCommand::class,
-                ProcessAliExpressBulkImportCommand::class,
-            ]);
-        }
+        $this->commands([
+            SyncAliExpressInventoryCommand::class,
+            ProcessAliExpressBulkImportCommand::class,
+        ]);
     }
 }
