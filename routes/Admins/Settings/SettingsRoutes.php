@@ -25,6 +25,7 @@ Route::prefix('admin/settings')->group(function () {
     // Site Wide Settings Routes (Universal & Scalable)
     Route::get('/site-settings/{group}', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'index']);
     Route::post('/site-settings/update', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'update']);
+    Route::post('/site-settings/upload-font', [\App\Http\Controllers\Admin\Settings\AdminSiteSettingController::class, 'uploadFont']);
 
     // Inventory Auto-Sync & Stock Monitoring Routes
     Route::prefix('inventory-sync')->group(function () {
