@@ -76,6 +76,19 @@ Schedule::call(function () {
             }
         }
     }
+
+    // Process pending AliExpress imports
+    $aliFiles = Storage::disk('local')->files('aliexpress_imports');
+    foreach ($aliFiles as $file) {
+        if (str_ends_with($file, '.json')) {
+            $content = Storage::disk('local')->get($file);
+            $data = json_decode($content, true);
+            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+                Artisan::call('aliexpress:process-bulk-import', ['batchId' => $data['batch_id']]);
+                break;
+            }
+        }
+    }
 })->everyMinute()->name('process-pending-bulk-imports')->withoutOverlapping();
 
 // Automatic Supplier Inventory, Stock & Variant Sync (Checks hourly, runs according to configured frequency)
