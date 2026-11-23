@@ -44,6 +44,12 @@ class ProcessAliExpressBulkImportCommand extends Command
             return Command::FAILURE;
         }
 
+        if (!empty($batchData['database'])) {
+            config(['database.connections.mysql.database' => $batchData['database']]);
+            \Illuminate\Support\Facades\DB::purge('mysql');
+            \Illuminate\Support\Facades\DB::reconnect('mysql');
+        }
+
         $itemsInput = $batchData['items_input'];
         $profitMargin = (float)($batchData['profit_margin_percent'] ?? 20);
         $categoryId = isset($batchData['category_id']) ? (int)$batchData['category_id'] : null;

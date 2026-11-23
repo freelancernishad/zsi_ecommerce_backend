@@ -179,6 +179,7 @@ class AliExpressController extends Controller
         $filePath = "aliexpress_imports/{$batchId}.json";
         $batchData = [
             'batch_id' => $batchId,
+            'database' => config('database.connections.mysql.database'),
             'status' => $isSync ? 'in_progress' : 'pending',
             'total' => count($items),
             'total_items' => count($items),
