@@ -221,19 +221,25 @@ class AliExpressController extends Controller
 
         Storage::disk('local')->put("aliexpress_imports/{$batchId}.json", json_encode($batchData, JSON_PRETTY_PRINT));
 
-        // Launch Artisan command in background CLI process
-        try {
-            if (strtoupper(substr(PHP_OS, 0, 3)) === 'WIN') {
-                pclose(popen("start /B php artisan aliexpress:process-bulk-import {$batchId} > NUL 2>&1", "r"));
-            } else {
-                exec("php artisan aliexpress:process-bulk-import {$batchId} > /dev/null 2>&1 &");
+        // Spawn background CLI process (works on both Windows & Linux without cron job or queue workers)
+        $phpBinary = $this->getPhpCliBinary();
+        $artisanPath = base_path('artisan');
+        $cmd = "{$phpBinary} \"{$artisanPath}\" aliexpress:process-bulk-import {$batchId}";
+
+        $spawned = $this->spawnBackgroundProcess($cmd);
+
+        if (!$spawned) {
+            // Fallback to queue if background process spawn failed or exec disabled on live server
+            try {
+                Artisan::queue('aliexpress:process-bulk-import', ['batchId' => $batchId]);
+            } catch (Exception $e) {
+                Log::error("Failed to queue AliExpress bulk import batch {$batchId}: " . $e->getMessage());
             }
-        } catch (Exception $e) {
-            Log::warning("Failed to start background process for batch {$batchId}: " . $e->getMessage());
         }
 
         return response()->json([
             'success' => true,
+            'background' => true,
             'message' => 'AliExpress bulk import batch created and queued for processing in background.',
             'batch_id' => $batchId,
             'data' => $batchData,
@@ -283,7 +289,7 @@ class AliExpressController extends Controller
         return response()->json([
             'success' => true,
             'data' => $content,
-        ]);
+        ])->header('Cache-Control', 'no-cache, no-store, max-age=0, must-revalidate');
     }
 
     /**
@@ -300,12 +306,26 @@ class AliExpressController extends Controller
         }
 
         try {
-            Artisan::call('aliexpress:process-bulk-import', ['batchId' => $batchId]);
+            $batchData = json_decode(Storage::disk('local')->get($filePath), true);
+            if ($batchData) {
+                $batchData['status'] = 'pending';
+                unset($batchData['completed_at']);
+                Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+            }
+
+            $phpBinary = $this->getPhpCliBinary();
+            $artisanPath = base_path('artisan');
+            $cmd = "{$phpBinary} \"{$artisanPath}\" aliexpress:process-bulk-import {$batchId}";
+
+            $spawned = $this->spawnBackgroundProcess($cmd);
+
+            if (!$spawned) {
+                Artisan::call('aliexpress:process-bulk-import', ['batchId' => $batchId]);
+            }
 
             return response()->json([
                 'success' => true,
                 'message' => "Batch {$batchId} process triggered successfully.",
-                'output' => Artisan::output(),
             ]);
         } catch (Exception $e) {
             return response()->json([
@@ -313,6 +333,72 @@ class AliExpressController extends Controller
                 'message' => 'Failed to trigger batch process: ' . $e->getMessage(),
             ], 500);
         }
+    }
+
+    /**
+     * Cross-platform helper to launch asynchronous background CLI command.
+     */
+    protected function spawnBackgroundProcess(string $cmd): bool
+    {
+        $disabled = array_map('trim', explode(',', ini_get('disable_functions') ?: ''));
+
+        try {
+            if (str_starts_with(strtoupper(PHP_OS), 'WIN')) {
+                if (!in_array('popen', $disabled) && function_exists('popen')) {
+                    pclose(popen("start \"\" /B {$cmd}", "r"));
+                    return true;
+                }
+            } else {
+                if (!in_array('exec', $disabled) && function_exists('exec')) {
+                    exec("{$cmd} > /dev/null 2>&1 &");
+                    return true;
+                } elseif (!in_array('shell_exec', $disabled) && function_exists('shell_exec')) {
+                    shell_exec("{$cmd} > /dev/null 2>&1 &");
+                    return true;
+                } elseif (!in_array('popen', $disabled) && function_exists('popen')) {
+                    pclose(popen("{$cmd} > /dev/null 2>&1 &", "r"));
+                    return true;
+                }
+            }
+        } catch (Exception $e) {
+            Log::warning("spawnBackgroundProcess failed: " . $e->getMessage());
+        }
+
+        return false;
+    }
+
+    /**
+     * Resolve the proper PHP CLI binary executable (fixes PHP-FPM / CGI issues on live servers).
+     */
+    protected function getPhpCliBinary(): string
+    {
+        $phpBinary = PHP_BINARY;
+
+        if (preg_match('/fpm|cgi/i', $phpBinary)) {
+            if (defined('PHP_BINDIR') && file_exists(PHP_BINDIR . '/php') && is_executable(PHP_BINDIR . '/php')) {
+                return PHP_BINDIR . '/php';
+            }
+
+            $candidates = [
+                '/usr/local/bin/php',
+                '/usr/bin/php',
+                '/usr/local/bin/ea-php83',
+                '/usr/local/bin/ea-php82',
+                '/usr/local/bin/ea-php81',
+                '/usr/local/bin/ea-php80',
+                '/usr/bin/env php',
+            ];
+
+            foreach ($candidates as $candidate) {
+                if (file_exists($candidate) && is_executable($candidate)) {
+                    return $candidate;
+                }
+            }
+
+            return 'php';
+        }
+
+        return $phpBinary;
     }
 
     /**
