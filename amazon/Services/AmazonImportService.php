@@ -24,7 +24,7 @@ class AmazonImportService
      */
     public function bulkImportAmazonProducts(
         array $asinsOrUrls,
-        float $profitMarginPercent = 15.0,
+        float $profitMarginPercent = 0.0,
         ?int $categoryId = null,
         int $defaultStock = 20,
         string $status = 'published',
@@ -95,7 +95,7 @@ class AmazonImportService
      */
     public function importAmazonProduct(
         string $asinOrUrl,
-        float $profitMarginPercent = 15.0,
+        float $profitMarginPercent = 0.0,
         ?int $categoryId = null,
         int $defaultStock = 20,
         string $status = 'published',
@@ -104,9 +104,6 @@ class AmazonImportService
     ): Product {
         // Load Site Settings for Amazon defaults
         $siteSettings = \App\Models\SiteSetting::where('group', 'amazon')->pluck('value', 'key')->toArray();
-        if ($profitMarginPercent == 15.0 && !empty($siteSettings['amazon_default_profit_margin'])) {
-            $profitMarginPercent = (float) $siteSettings['amazon_default_profit_margin'];
-        }
         if ($defaultStock == 20 && !empty($siteSettings['amazon_default_stock'])) {
             $defaultStock = (int) $siteSettings['amazon_default_stock'];
         }

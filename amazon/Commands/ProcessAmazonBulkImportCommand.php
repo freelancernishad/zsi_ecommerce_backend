@@ -45,7 +45,7 @@ class ProcessAmazonBulkImportCommand extends Command
         }
 
         $items = $batchData['items'];
-        $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 15);
+        $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 0);
         $markupType = $batchData['markup_type'] ?? 'percentage';
         $fixedMarkup = (float) ($batchData['fixed_markup_amount'] ?? 0);
         $categoryId = isset($batchData['category_id']) ? (int) $batchData['category_id'] : null;

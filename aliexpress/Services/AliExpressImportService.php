@@ -25,7 +25,7 @@ class AliExpressImportService
      */
     public function bulkImportAliExpressProducts(
         array $productIdsOrUrls,
-        float $profitMarginPercent = 20.0,
+        float $profitMarginPercent = 0.0,
         ?int $categoryId = null,
         int $defaultStock = 50,
         string $status = 'published',
@@ -93,7 +93,7 @@ class AliExpressImportService
      */
     public function importAliExpressProduct(
         string $productIdOrUrl,
-        float $profitMarginPercent = 20.0,
+        float $profitMarginPercent = 0.0,
         ?int $categoryId = null,
         int $defaultStock = 50,
         string $status = 'published'

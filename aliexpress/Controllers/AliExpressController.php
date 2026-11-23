@@ -125,7 +125,7 @@ class AliExpressController extends Controller
         try {
             $profitMargin = $request->has('profit_margin_percent')
                 ? (float)$request->input('profit_margin_percent')
-                : 20.0;
+                : 0.0;
 
             $categoryId = $request->input('category_id') ? (int)$request->input('category_id') : null;
             $defaultStock = $request->input('default_stock') ? (int)$request->input('default_stock') : 50;
@@ -168,7 +168,7 @@ class AliExpressController extends Controller
         ]);
 
         $items = $request->input('product_ids_or_urls');
-        $profitMargin = $request->has('profit_margin_percent') ? (float)$request->input('profit_margin_percent') : 20.0;
+        $profitMargin = $request->has('profit_margin_percent') ? (float)$request->input('profit_margin_percent') : 0.0;
         $categoryId = $request->input('category_id') ? (int)$request->input('category_id') : null;
         $defaultStock = $request->input('default_stock') ? (int)$request->input('default_stock') : 50;
         $status = $request->input('status', 'published');

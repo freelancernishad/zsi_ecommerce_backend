@@ -100,7 +100,7 @@ class CjDropshippingController extends Controller
         ]);
 
         $cjProductId = $request->input('cj_product_id');
-        $profitMargin = (float) $request->input('profit_margin_percent', 20);
+        $profitMargin = (float) $request->input('profit_margin_percent', 0);
         $categoryId = $request->input('category_id');
 
         try {
@@ -137,7 +137,7 @@ class CjDropshippingController extends Controller
         ]);
 
         $cjProductIds = $request->input('cj_product_ids');
-        $profitMargin = (float) $request->input('profit_margin_percent', 20);
+        $profitMargin = (float) $request->input('profit_margin_percent', 0);
         $categoryId = $request->input('category_id');
         $isSync = $request->boolean('sync', false);
 

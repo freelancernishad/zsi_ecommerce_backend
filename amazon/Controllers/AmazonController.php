@@ -132,7 +132,7 @@ class AmazonController extends Controller
         ]);
 
         $asinOrUrl = $request->input('asin_or_url');
-        $profitMargin = (float) $request->input('profit_margin_percent', 15);
+        $profitMargin = (float) $request->input('profit_margin_percent', 0);
         $markupType = $request->input('markup_type', 'percentage');
         $fixedMarkup = (float) ($request->input('fixed_markup_amount') ?? ($markupType === 'fixed' ? $request->input('markup_value', 0) : 0));
         $categoryId = $request->input('category_id');
@@ -184,7 +184,7 @@ class AmazonController extends Controller
         ]);
 
         $items = $request->input('asins_or_urls');
-        $profitMargin = (float) $request->input('profit_margin_percent', 15);
+        $profitMargin = (float) $request->input('profit_margin_percent', 0);
         $markupType = $request->input('markup_type', 'percentage');
         $fixedMarkup = (float) ($request->input('fixed_markup_amount') ?? ($markupType === 'fixed' ? $request->input('markup_value', 0) : 0));
         $categoryId = $request->input('category_id');

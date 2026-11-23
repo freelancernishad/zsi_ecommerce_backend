@@ -45,7 +45,7 @@ class ProcessBulkImportCommand extends Command
         }
 
         $pids = $batchData['pids'];
-        $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 20);
+        $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 0);
         $categoryId = isset($batchData['category_id']) ? (int) $batchData['category_id'] : null;
 
         // Initialize items array if not present

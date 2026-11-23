@@ -24,7 +24,7 @@ class CjImportService
      */
     public function bulkImportCjProducts(
         array $cjProductIds,
-        float $profitMarginPercent = 20.0,
+        float $profitMarginPercent = 0.0,
         ?int $categoryId = null,
         ?callable $onProgress = null
     ): array {
@@ -80,7 +80,7 @@ class CjImportService
     /**
      * Import or update a CJ Product into Laravel MySQL Database.
      */
-    public function importCjProduct(string $cjProductId, float $profitMarginPercent = 20.0, ?int $categoryId = null): Product
+    public function importCjProduct(string $cjProductId, float $profitMarginPercent = 0.0, ?int $categoryId = null): Product
     {
         $cjData = $this->cjService->getProductDetail($cjProductId);
 

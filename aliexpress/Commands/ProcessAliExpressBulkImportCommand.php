@@ -56,7 +56,7 @@ class ProcessAliExpressBulkImportCommand extends Command
         $importService = app(AliExpressImportService::class);
 
         $itemsInput = $batchData['items_input'];
-        $profitMargin = (float)($batchData['profit_margin_percent'] ?? 20);
+        $profitMargin = (float)($batchData['profit_margin_percent'] ?? 0);
         $categoryId = isset($batchData['category_id']) ? (int)$batchData['category_id'] : null;
         $defaultStock = (int)($batchData['default_stock'] ?? 50);
         $status = $batchData['product_status'] ?? 'published';
