@@ -307,26 +307,22 @@ class AliExpressController extends Controller
         }
 
         try {
+            @set_time_limit(600);
+
             $batchData = json_decode(Storage::disk('local')->get($filePath), true);
             if ($batchData) {
-                $batchData['status'] = 'pending';
+                $batchData['status'] = 'in_progress';
+                $batchData['started_at'] = now()->toDateTimeString();
                 unset($batchData['completed_at']);
                 Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
             }
 
-            $phpBinary = $this->getPhpCliBinary();
-            $artisanPath = base_path('artisan');
-            $cmd = "{$phpBinary} \"{$artisanPath}\" aliexpress:process-bulk-import {$batchId}";
-
-            $spawned = $this->spawnBackgroundProcess($cmd);
-
-            if (!$spawned) {
-                Artisan::call('aliexpress:process-bulk-import', ['batchId' => $batchId]);
-            }
+            Artisan::call('aliexpress:process-bulk-import', ['batchId' => $batchId]);
 
             return response()->json([
                 'success' => true,
-                'message' => "Batch {$batchId} process triggered successfully.",
+                'message' => "Batch {$batchId} processed.",
+                'output' => Artisan::output(),
             ]);
         } catch (Exception $e) {
             return response()->json([
