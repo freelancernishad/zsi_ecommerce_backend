@@ -89,7 +89,7 @@ class AmazonSyncSettingsController extends Controller
             'monthly_budget_usd' => 'nullable|numeric|min:0|max:10000',
             'estimated_cost_per_1k_requests' => 'nullable|numeric|min:0|max:100',
 
-            'default_markup_percent' => 'nullable|numeric|min:0|max:500',
+            'default_markup_percent' => 'nullable|numeric|min:-99|max:500',
             'markup_mode' => 'nullable|string|in:product_field_or_preserve,cost_only_keep_price,global_markup',
             'default_stock' => 'nullable|integer|min:1|max:10000',
             'stock_out_action' => 'nullable|string|in:variant_zero_keep_visible,unpublish_product',
@@ -297,7 +297,7 @@ class AmazonSyncSettingsController extends Controller
         $validated = $request->validate([
             'product_id' => 'required|integer',
             'sync_markup_type' => 'nullable|string|in:auto,percentage,fixed',
-            'sync_markup_value' => 'nullable|numeric|min:0|max:10000',
+            'sync_markup_value' => 'nullable|numeric|min:-10000|max:10000',
         ]);
 
         try {

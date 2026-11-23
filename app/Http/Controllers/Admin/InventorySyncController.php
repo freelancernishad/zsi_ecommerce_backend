@@ -56,7 +56,7 @@ class InventorySyncController extends Controller
             'auto_restock_enabled' => 'nullable|string|in:0,1',
             'price_increase_action' => 'nullable|string|in:auto_update_markup,keep_current_price',
             'price_decrease_action' => 'nullable|string|in:keep_higher_margin,update_lower_price',
-            'default_markup_percent' => 'nullable|numeric|min:0|max:500',
+            'default_markup_percent' => 'nullable|numeric|min:-99|max:500',
         ]);
 
         try {

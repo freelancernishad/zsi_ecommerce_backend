@@ -19,7 +19,7 @@ class ProductImportController extends Controller
             'file'          => 'required|file|mimes:csv,txt|max:51200', // max 50MB
             'category_id'   => 'nullable',
             'default_stock' => 'nullable|numeric|min:0',
-            'price_markup'  => 'nullable|numeric|min:0',
+            'price_markup'  => 'nullable|numeric|min:-99',
             'status'        => 'nullable|string|in:published,draft',
         ]);
 

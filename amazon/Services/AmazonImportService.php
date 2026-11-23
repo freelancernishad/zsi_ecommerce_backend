@@ -123,7 +123,7 @@ class AmazonImportService
 
         return DB::transaction(function () use ($amazonData, $profitMarginPercent, $categoryId, $defaultStock, $status, $affiliateTag, $markupType, $fixedMarkupAmount) {
             $costPrice = (float) ($amazonData['price'] ?? 0.0);
-            if ($markupType === 'fixed' && $fixedMarkupAmount > 0) {
+            if ($markupType === 'fixed') {
                 $salePrice = round($costPrice + $fixedMarkupAmount, 2);
             } else {
                 $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
@@ -159,7 +159,7 @@ class AmazonImportService
             }
 
             // Create or Update Product in DB
-            $resolvedMarkupType = ($markupType === 'fixed' && $fixedMarkupAmount > 0) ? 'fixed' : 'percentage';
+            $resolvedMarkupType = ($markupType === 'fixed') ? 'fixed' : 'percentage';
             $resolvedMarkupValue = $resolvedMarkupType === 'fixed' ? $fixedMarkupAmount : $profitMarginPercent;
 
             $productPayload = [
@@ -235,7 +235,7 @@ class AmazonImportService
 
                 foreach ($amazonData['variants'] as $v) {
                     $vCost = (float) ($v['price'] ?? $costPrice);
-                    if ($markupType === 'fixed' && $fixedMarkupAmount > 0) {
+                    if ($markupType === 'fixed') {
                         $vPrice = round($vCost + $fixedMarkupAmount, 2);
                     } else {
                         $vPrice = round($vCost * (1 + ($profitMarginPercent / 100)), 2);

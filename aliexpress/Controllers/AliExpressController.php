@@ -116,7 +116,7 @@ class AliExpressController extends Controller
     {
         $request->validate([
             'product_id_or_url' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',
@@ -160,7 +160,7 @@ class AliExpressController extends Controller
         $request->validate([
             'product_ids_or_urls' => 'required|array|min:1',
             'product_ids_or_urls.*' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',

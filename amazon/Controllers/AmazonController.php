@@ -122,10 +122,10 @@ class AmazonController extends Controller
     {
         $request->validate([
             'asin_or_url' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'markup_type' => 'nullable|string|in:percentage,fixed',
-            'markup_value' => 'nullable|numeric|min:0',
-            'fixed_markup_amount' => 'nullable|numeric|min:0',
+            'markup_value' => 'nullable|numeric',
+            'fixed_markup_amount' => 'nullable|numeric',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',
@@ -173,10 +173,10 @@ class AmazonController extends Controller
         $request->validate([
             'asins_or_urls' => 'required|array|min:1',
             'asins_or_urls.*' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'markup_type' => 'nullable|string|in:percentage,fixed',
-            'markup_value' => 'nullable|numeric|min:0',
-            'fixed_markup_amount' => 'nullable|numeric|min:0',
+            'markup_value' => 'nullable|numeric',
+            'fixed_markup_amount' => 'nullable|numeric',
             'category_id' => 'nullable|exists:categories,id',
             'default_stock' => 'nullable|integer|min:1',
             'status' => 'nullable|string|in:published,draft',

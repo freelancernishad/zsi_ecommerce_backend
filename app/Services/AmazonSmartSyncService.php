@@ -1800,7 +1800,7 @@ class AmazonSmartSyncService
             $product->sync_markup_value = null;
         } else {
             $product->sync_markup_type = $markupType; // 'percentage' | 'fixed'
-            $product->sync_markup_value = max(0.0, (float) ($markupValue ?? 0));
+            $product->sync_markup_value = (float) ($markupValue ?? 0);
         }
         $product->save();
 

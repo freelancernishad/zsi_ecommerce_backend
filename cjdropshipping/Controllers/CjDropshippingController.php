@@ -95,7 +95,7 @@ class CjDropshippingController extends Controller
     {
         $request->validate([
             'cj_product_id' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'category_id' => 'nullable|exists:categories,id',
         ]);
 
@@ -131,7 +131,7 @@ class CjDropshippingController extends Controller
         $request->validate([
             'cj_product_ids' => 'required|array|min:1',
             'cj_product_ids.*' => 'required|string',
-            'profit_margin_percent' => 'nullable|numeric|min:0',
+            'profit_margin_percent' => 'nullable|numeric|min:-99',
             'category_id' => 'nullable|exists:categories,id',
             'sync' => 'nullable|boolean',
         ]);
