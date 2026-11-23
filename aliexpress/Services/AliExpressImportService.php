@@ -9,6 +9,7 @@ use App\Models\Category;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Exception;
+use Throwable;
 
 class AliExpressImportService
 {
@@ -64,7 +65,7 @@ class AliExpressImportService
                 if (is_callable($onProgress)) {
                     $onProgress($index + 1, $total, $itemResult);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 $itemError = [
                     'product_id_or_url' => $item,
                     'status' => 'failed',

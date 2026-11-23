@@ -4,9 +4,11 @@ namespace AliExpress\Commands;
 
 use Illuminate\Console\Command;
 use AliExpress\Services\AliExpressImportService;
+use AliExpress\Services\AliExpressService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Exception;
+use Throwable;
 
 class ProcessAliExpressBulkImportCommand extends Command
 {
@@ -27,7 +29,7 @@ class ProcessAliExpressBulkImportCommand extends Command
     /**
      * Execute the console command.
      */
-    public function handle(AliExpressImportService $importService)
+    public function handle()
     {
         $batchId = $this->argument('batchId');
         $filePath = "aliexpress_imports/{$batchId}.json";
@@ -49,6 +51,9 @@ class ProcessAliExpressBulkImportCommand extends Command
             \Illuminate\Support\Facades\DB::purge('mysql');
             \Illuminate\Support\Facades\DB::reconnect('mysql');
         }
+
+        app(AliExpressService::class)->loadSettings();
+        $importService = app(AliExpressImportService::class);
 
         $itemsInput = $batchData['items_input'];
         $profitMargin = (float)($batchData['profit_margin_percent'] ?? 20);
@@ -110,7 +115,7 @@ class ProcessAliExpressBulkImportCommand extends Command
 
             $this->info("Completed AliExpress bulk import batch {$batchId}.");
             return Command::SUCCESS;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $batchData['status'] = 'failed';
             $batchData['error'] = $e->getMessage();
             Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
