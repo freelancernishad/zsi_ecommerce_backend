@@ -398,7 +398,7 @@ class AliExpressController extends Controller
     {
         $phpBinary = PHP_BINARY;
 
-        if (preg_match('/fpm|cgi/i', $phpBinary)) {
+        if (preg_match('/fpm|cgi|lsphp/i', $phpBinary)) {
             if (defined('PHP_BINDIR') && file_exists(PHP_BINDIR . '/php') && is_executable(PHP_BINDIR . '/php')) {
                 return PHP_BINDIR . '/php';
             }

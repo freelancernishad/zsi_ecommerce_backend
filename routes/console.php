@@ -51,39 +51,54 @@ use Illuminate\Support\Facades\Schedule;
 use Illuminate\Support\Facades\Storage;
 
 Schedule::call(function () {
-    // Process pending CJ imports
+    $shouldProcess = function (string $file, ?array $data): bool {
+        if (!$data || empty($data['batch_id'])) {
+            return false;
+        }
+        $status = $data['status'] ?? '';
+        if ($status === 'pending') {
+            return true;
+        }
+        // Recover stale in_progress batches stuck for > 3 minutes with no recent update
+        if ($status === 'in_progress' && empty($data['completed_at'])) {
+            $lastMod = Storage::disk('local')->lastModified($file);
+            if ($lastMod && (time() - $lastMod) > 180) {
+                return true;
+            }
+        }
+        return false;
+    };
+
+    // Process pending/stale CJ imports
     $cjFiles = Storage::disk('local')->files('cj_imports');
     foreach ($cjFiles as $file) {
         if (str_ends_with($file, '.json')) {
-            $content = Storage::disk('local')->get($file);
-            $data = json_decode($content, true);
-            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+            $data = json_decode(Storage::disk('local')->get($file), true);
+            if ($shouldProcess($file, $data)) {
                 Artisan::call('cj:process-bulk-import', ['batchId' => $data['batch_id']]);
                 break;
             }
         }
     }
 
-    // Process pending Amazon imports
+    // Process pending/stale Amazon imports
     $amzFiles = Storage::disk('local')->files('amazon_imports');
     foreach ($amzFiles as $file) {
         if (str_ends_with($file, '.json')) {
-            $content = Storage::disk('local')->get($file);
-            $data = json_decode($content, true);
-            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+            $data = json_decode(Storage::disk('local')->get($file), true);
+            if ($shouldProcess($file, $data)) {
                 Artisan::call('amazon:process-bulk-import', ['batchId' => $data['batch_id']]);
                 break;
             }
         }
     }
 
-    // Process pending AliExpress imports
+    // Process pending/stale AliExpress imports
     $aliFiles = Storage::disk('local')->files('aliexpress_imports');
     foreach ($aliFiles as $file) {
         if (str_ends_with($file, '.json')) {
-            $content = Storage::disk('local')->get($file);
-            $data = json_decode($content, true);
-            if ($data && ($data['status'] ?? '') === 'pending' && isset($data['batch_id'])) {
+            $data = json_decode(Storage::disk('local')->get($file), true);
+            if ($shouldProcess($file, $data)) {
                 Artisan::call('aliexpress:process-bulk-import', ['batchId' => $data['batch_id']]);
                 break;
             }

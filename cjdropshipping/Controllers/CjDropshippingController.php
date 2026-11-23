@@ -331,8 +331,8 @@ class CjDropshippingController extends Controller
     {
         $phpBinary = PHP_BINARY;
 
-        // If running under FPM/CGI webserver, PHP_BINARY is php-fpm which cannot run artisan commands
-        if (preg_match('/fpm|cgi/i', $phpBinary)) {
+        // If running under FPM/CGI/LiteSpeed webserver, PHP_BINARY cannot reliably run artisan CLI commands
+        if (preg_match('/fpm|cgi|lsphp/i', $phpBinary)) {
             if (defined('PHP_BINDIR') && file_exists(PHP_BINDIR . '/php') && is_executable(PHP_BINDIR . '/php')) {
                 return PHP_BINDIR . '/php';
             }
