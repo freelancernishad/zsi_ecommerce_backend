@@ -157,18 +157,23 @@ class AliExpressImportService
                 ];
             }
 
+            $productStock = (!empty($aliData['stock']) && (int)$aliData['stock'] > 0)
+                ? (int)$aliData['stock']
+                : $defaultStock;
+
             $productData = [
                 'name' => $productName,
                 'slug' => $slug,
                 'sku' => str_starts_with((string)($aliData['spu'] ?? ''), 'ALI-') ? $aliData['spu'] : ('ALI-' . $productId),
                 'description' => $aliData['description'] ?? '',
-                'summary' => Str::limit(strip_tags($aliData['description'] ?? ''), 250),
-                'cost_price' => $costPrice,
+                'short_description' => Str::limit(strip_tags($aliData['description'] ?? ''), 250),
+                'cost_per_item' => $costPrice,
                 'price' => $retailPrice,
-                'stock' => (int)($aliData['stock'] ?? $defaultStock),
+                'original_price' => $retailPrice,
+                'stock_quantity' => $productStock,
                 'category_id' => $finalCategoryId,
                 'status' => $status,
-                'is_featured' => false,
+                'import_source' => 'aliexpress',
                 'variant_options' => !empty($variantOptions) ? $variantOptions : null,
                 'aliexpress_product_id' => $productId,
                 'aliexpress_url' => $aliData['productUrl'] ?? "https://www.aliexpress.com/item/{$productId}.html",
@@ -220,12 +225,14 @@ class AliExpressImportService
                     $vRetailPrice = round($vCostPrice * (1 + ($profitMarginPercent / 100)), 2);
                     $attrs = is_array($v['attributes'] ?? null) ? $v['attributes'] : [];
 
+                    $vStock = (!empty($v['stock']) && (int)$v['stock'] > 0) ? (int)$v['stock'] : $defaultStock;
                     ProductVariant::create([
                         'product_id' => $product->id,
                         'combination_label' => $v['name'] ?? ('Option ' . ($index + 1)),
                         'sku' => $v['sku_id'] ?? ('ALI-' . $productId . '-' . ($index + 1)),
                         'price' => $vRetailPrice,
-                        'stock' => (int)($v['stock'] ?? $defaultStock),
+                        'stock' => $vStock,
+                        'available_quantity' => $vStock,
                         'color' => $attrs['Color'] ?? $attrs['Colour'] ?? null,
                         'size' => $attrs['Size'] ?? null,
                         'image' => $v['image'] ?? null,

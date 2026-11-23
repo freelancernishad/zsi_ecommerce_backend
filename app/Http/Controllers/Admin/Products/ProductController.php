@@ -86,6 +86,13 @@ class ProductController extends Controller
                       ->orWhere('is_cj_product', 1)
                       ->orWhereNotNull('cj_product_id');
                 });
+            } elseif ($importSource === 'aliexpress') {
+                $query->where(function ($q) {
+                    $q->where('import_source', 'aliexpress')
+                      ->orWhere('is_aliexpress_product', 1)
+                      ->orWhereNotNull('aliexpress_product_id')
+                      ->orWhere('sku', 'LIKE', 'ALI-%');
+                });
             } elseif ($importSource === 'shopify') {
                 $query->where(function ($q) {
                     $q->where('import_source', 'shopify')
