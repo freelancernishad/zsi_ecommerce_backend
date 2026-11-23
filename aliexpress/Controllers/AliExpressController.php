@@ -203,6 +203,7 @@ class AliExpressController extends Controller
         $batchData = [
             'batch_id' => $batchId,
             'status' => 'pending',
+            'total' => count($items),
             'total_items' => count($items),
             'processed_count' => 0,
             'successful_count' => 0,
@@ -268,7 +269,7 @@ class AliExpressController extends Controller
         return response()->json([
             'success' => true,
             'data' => array_slice($batches, 0, 30),
-        ]);
+        ])->header('Cache-Control', 'no-cache, no-store, max-age=0, must-revalidate');
     }
 
     /**
