@@ -107,7 +107,7 @@ class ProductController extends Controller
 
         // Support for other attributes like 'material'
         $allParams = $request->all();
-        $reserved = ['category', 'brand', 'brand_id', 'color', 'size', 'sort', 'page', 'limit', 'price_min', 'price_max', 'q', 'rating', 'in_stock', 'ids'];
+        $reserved = ['category', 'brand', 'brand_id', 'color', 'size', 'sort', 'page', 'limit', 'price_min', 'price_max', 'q', 'rating', 'in_stock', 'ids', 'deals'];
         foreach ($allParams as $key => $val) {
             if (in_array($key, $reserved) || empty($val)) continue;
             
@@ -200,8 +200,25 @@ class ProductController extends Controller
         }
     
 
+        if ($request->get('sort') === 'deals' || $request->boolean('deals')) {
+            $query->where(function ($q) {
+                $q->whereColumn('original_price', '>', 'price')
+                  ->orWhere(function ($sq) {
+                      $sq->whereNotNull('sale_price')
+                         ->where('sale_price', '>', 0)
+                         ->whereColumn('price', '>', 'sale_price');
+                  });
+            });
+        }
+
         // Standard Sorting (Secondary or Primary if no personalization)
         switch ($request->get('sort', 'newest')) {
+            case 'deals':
+                $query->orderByRaw('CASE 
+                    WHEN original_price > price THEN (original_price - price) / original_price 
+                    WHEN price > sale_price AND sale_price > 0 THEN (price - sale_price) / price 
+                    ELSE 0 END DESC');
+                break;
             case 'oldest':         $query->orderBy('created_at', 'asc'); break;
             case 'price_asc':      $query->orderBy('price', 'asc'); break;
             case 'price_desc':     $query->orderBy('price', 'desc'); break;
