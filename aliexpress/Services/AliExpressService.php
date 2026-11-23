@@ -389,7 +389,9 @@ class AliExpressService
                     $foundPrice = true;
                 }
 
-                $skuStock = (int)($skuItem['sku_available_stock'] ?? $skuItem['ipm_sku_stock'] ?? $this->defaultStock);
+                $skuStock = isset($skuItem['sku_available_stock'])
+                    ? (int)$skuItem['sku_available_stock']
+                    : (isset($skuItem['ipm_sku_stock']) ? (int)$skuItem['ipm_sku_stock'] : 0);
                 $skuRetailPrice = round($skuCost * (1 + ($this->defaultProfitMargin / 100)), 2);
 
                 // Option title & structured attributes
@@ -427,7 +429,7 @@ class AliExpressService
                     'name' => $optionName,
                     'cost_price' => $skuCost,
                     'price' => $skuRetailPrice,
-                    'stock' => $skuStock > 0 ? $skuStock : $this->defaultStock,
+                    'stock' => max(0, $skuStock),
                     'image' => $skuImg,
                     'attributes' => $attributes,
                 ];
@@ -445,6 +447,10 @@ class AliExpressService
         }
         unset($v);
 
+        $totalRealStock = !empty($variants)
+            ? array_sum(array_column($variants, 'stock'))
+            : (int)($baseInfo['total_available_stock'] ?? 0);
+
         return [
             'productId' => $productId,
             'spu' => 'ALI-' . $productId,
@@ -457,7 +463,7 @@ class AliExpressService
             'price' => $finalRetailPrice,
             'profitMarginPercent' => $this->defaultProfitMargin,
             'currency' => $this->currency ?: 'USD',
-            'stock' => $this->defaultStock,
+            'stock' => max(0, $totalRealStock),
             'storeName' => 'AliExpress Verified Supplier',
             'rating' => (float)($baseInfo['avg_evaluation_rating'] ?? 4.8),
             'variants' => $variants,

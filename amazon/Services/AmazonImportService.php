@@ -162,6 +162,18 @@ class AmazonImportService
             $resolvedMarkupType = ($markupType === 'fixed') ? 'fixed' : 'percentage';
             $resolvedMarkupValue = $resolvedMarkupType === 'fixed' ? $fixedMarkupAmount : $profitMarginPercent;
 
+            $realProductStock = $defaultStock;
+            if (isset($amazonData['available']) && $amazonData['available'] === false) {
+                $realProductStock = 0;
+            } elseif (isset($amazonData['stock']) && is_numeric($amazonData['stock'])) {
+                $realProductStock = max(0, (int)$amazonData['stock']);
+            } elseif (!empty($amazonData['variants']) && is_array($amazonData['variants'])) {
+                $realProductStock = array_sum(array_map(function ($v) use ($defaultStock) {
+                    if (isset($v['available']) && $v['available'] === false) return 0;
+                    return isset($v['stock']) && is_numeric($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock;
+                }, $amazonData['variants']));
+            }
+
             $productPayload = [
                 'name' => $amazonData['title'],
                 'slug' => $slug,
@@ -173,7 +185,7 @@ class AmazonImportService
                 'sync_markup_type' => $resolvedMarkupType,
                 'sync_markup_value' => $resolvedMarkupValue,
                 'sku' => $amazonData['sku'] ?? ("AMZ-" . $asin),
-                'stock_quantity' => $defaultStock,
+                'stock_quantity' => $realProductStock,
                 'category_id' => $targetCategoryId,
                 'brand_id' => null,
                 'status' => in_array($status, ['published', 'draft']) ? $status : 'published',
@@ -202,7 +214,7 @@ class AmazonImportService
                         'cost_per_item' => $costPrice,
                         'sync_markup_type' => $resolvedMarkupType,
                         'sync_markup_value' => $resolvedMarkupValue,
-                        'stock_quantity' => $defaultStock,
+                        'stock_quantity' => $realProductStock,
                         'amazon_synced_at' => now(),
                     ]);
                     $product = $existingProduct;
@@ -244,7 +256,9 @@ class AmazonImportService
 
                     $vLabel = $v['title'] ?? 'Default Title';
                     $vSku = $v['sku'] ?? ($product->sku . '-' . ($v['id'] ?? Str::random(4)));
-                    $vStock = (isset($v['available']) && $v['available'] === false) ? 0 : $defaultStock;
+                    $vStock = (isset($v['available']) && $v['available'] === false)
+                        ? 0
+                        : (isset($v['stock']) && is_numeric($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock);
 
                     $isDefaultPlaceholder = in_array(strtolower(trim($vLabel)), ['default', 'default title', 'default variant'], true);
                     $vColor = $v['attributes']['Color']

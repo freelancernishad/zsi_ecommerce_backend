@@ -106,15 +106,22 @@ class CjImportService
             // Fallback category if none specified (prevents NOT NULL constraint error)
             $targetCategoryId = $categoryId ?: (Category::query()->value('id') ?: 1);
 
-            // Calculate total stock from variants if available
-            $totalStock = 100;
-            if (isset($cjData['variants']) && is_array($cjData['variants'])) {
+            // Calculate real total stock from CJ variants or product stock
+            $totalStock = (int) ($cjData['productStock'] ?? $cjData['storageNum'] ?? 0);
+            if (isset($cjData['variants']) && is_array($cjData['variants']) && count($cjData['variants']) > 0) {
                 $variantStocks = array_map(function ($v) {
-                    return (int) ($v['variantStandardQuantity'] ?? 10);
+                    if (isset($v['variantStandardQuantity']) && is_numeric($v['variantStandardQuantity'])) {
+                        return max(0, (int) $v['variantStandardQuantity']);
+                    }
+                    if (isset($v['storageNum']) && is_numeric($v['storageNum'])) {
+                        return max(0, (int) $v['storageNum']);
+                    }
+                    if (isset($v['inventoryNum']) && is_numeric($v['inventoryNum'])) {
+                        return max(0, (int) $v['inventoryNum']);
+                    }
+                    return 0;
                 }, $cjData['variants']);
-                if (!empty($variantStocks)) {
-                    $totalStock = max(1, array_sum($variantStocks));
-                }
+                $totalStock = array_sum($variantStocks);
             }
 
             // Build JSON variant options array for storefront selectors
@@ -202,7 +209,11 @@ class CjImportService
                 foreach ($cjData['variants'] as $v) {
                     $variantCost = $this->parsePrice($v['variantSellPrice'] ?? 0);
                     $variantPrice = round($variantCost * (1 + ($profitMarginPercent / 100)), 2);
-                    $vStock = (int) ($v['variantStandardQuantity'] ?? 10);
+                    $vStock = isset($v['variantStandardQuantity']) && is_numeric($v['variantStandardQuantity'])
+                        ? max(0, (int) $v['variantStandardQuantity'])
+                        : (isset($v['storageNum']) && is_numeric($v['storageNum'])
+                            ? max(0, (int) $v['storageNum'])
+                            : max(0, (int) ($v['inventoryNum'] ?? 0)));
 
                     $rawLabel = $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? 'Default Variant';
                     $cleanLabel = $rawLabel;

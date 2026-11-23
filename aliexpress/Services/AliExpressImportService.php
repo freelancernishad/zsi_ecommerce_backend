@@ -157,9 +157,17 @@ class AliExpressImportService
                 ];
             }
 
-            $productStock = (!empty($aliData['stock']) && (int)$aliData['stock'] > 0)
-                ? (int)$aliData['stock']
-                : $defaultStock;
+            $rawVariants = $aliData['variants'] ?? [];
+            if (!empty($rawVariants)) {
+                $productStock = array_sum(array_map(
+                    fn($v) => isset($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock,
+                    $rawVariants
+                ));
+            } else {
+                $productStock = isset($aliData['stock'])
+                    ? max(0, (int)$aliData['stock'])
+                    : $defaultStock;
+            }
 
             $productData = [
                 'name' => $productName,
@@ -225,7 +233,7 @@ class AliExpressImportService
                     $vRetailPrice = round($vCostPrice * (1 + ($profitMarginPercent / 100)), 2);
                     $attrs = is_array($v['attributes'] ?? null) ? $v['attributes'] : [];
 
-                    $vStock = (!empty($v['stock']) && (int)$v['stock'] > 0) ? (int)$v['stock'] : $defaultStock;
+                    $vStock = isset($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock;
                     ProductVariant::create([
                         'product_id' => $product->id,
                         'combination_label' => $v['name'] ?? ('Option ' . ($index + 1)),
