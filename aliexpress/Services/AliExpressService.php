@@ -47,13 +47,13 @@ class AliExpressService
             return (string)($val ?? $default);
         };
 
-        $this->apiKey = $getVal('aliexpress_api_key', config('aliexpress.api_key', ''));
-        $this->appKey = $getVal('aliexpress_app_key', config('aliexpress.app_key', ''));
-        $this->appSecret = $getVal('aliexpress_app_secret', config('aliexpress.app_secret', ''));
-        $this->accessToken = $getVal('aliexpress_access_token', '');
-        $this->refreshToken = $getVal('aliexpress_refresh_token', '');
-        $this->tokenExpiresAt = $getVal('aliexpress_token_expires_at', '');
-        $this->userNick = $getVal('aliexpress_user_nick', '');
+        $this->apiKey = trim($getVal('aliexpress_api_key', config('aliexpress.api_key', '')));
+        $this->appKey = trim($getVal('aliexpress_app_key', config('aliexpress.app_key', '')));
+        $this->appSecret = trim($getVal('aliexpress_app_secret', config('aliexpress.app_secret', '')));
+        $this->accessToken = trim($getVal('aliexpress_access_token', ''));
+        $this->refreshToken = trim($getVal('aliexpress_refresh_token', ''));
+        $this->tokenExpiresAt = trim($getVal('aliexpress_token_expires_at', ''));
+        $this->userNick = trim($getVal('aliexpress_user_nick', ''));
 
         $this->gatewayUrl = 'https://api-sg.aliexpress.com/sync';
         $this->restUrl = 'https://api-sg.aliexpress.com/rest';
