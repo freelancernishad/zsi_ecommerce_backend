@@ -454,9 +454,9 @@ class InventorySyncService
 
         if (!empty($product->sync_markup_type) && $product->sync_markup_value !== null) {
             $val = (float) $product->sync_markup_value;
-            return $product->sync_markup_type === 'fixed'
+            return max(0.01, $product->sync_markup_type === 'fixed'
                 ? round($suppCost + $val, 2)
-                : round($suppCost * (1 + ($val / 100)), 2);
+                : round($suppCost * (1 + ($val / 100)), 2));
         }
 
         $baseCost = (float) ($product->cost_per_item ?? 0);

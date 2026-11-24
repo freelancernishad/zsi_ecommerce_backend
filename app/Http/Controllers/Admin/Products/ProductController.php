@@ -530,11 +530,19 @@ class ProductController extends Controller
             'product_ids' => 'required|array|min:1',
             'product_ids.*' => 'integer|exists:products,id',
             'markup_type' => 'required|in:percentage,fixed',
-            'markup_value' => 'required|numeric|min:0|max:10000',
+            'markup_value' => 'required|numeric|min:-10000|max:10000',
         ]);
 
         $type = $validated['markup_type'];
         $value = (float) $validated['markup_value'];
+
+        if ($type === 'percentage' && $value < -99) {
+            return response()->json([
+                'status' => 'error',
+                'message' => 'Percentage margin cannot be less than -99%.',
+            ], 422);
+        }
+
         $updatedCount = 0;
 
         DB::transaction(function () use ($validated, $type, $value, &$updatedCount) {
@@ -555,9 +563,9 @@ class ProductController extends Controller
                 $product->sync_markup_value = $value;
 
                 if ($cost > 0) {
-                    $newPrice = $type === 'fixed'
+                    $newPrice = max(0.01, $type === 'fixed'
                         ? round($cost + $value, 2)
-                        : round($cost * (1 + ($value / 100)), 2);
+                        : round($cost * (1 + ($value / 100)), 2));
 
                     $oldOriginal = (float) ($product->original_price ?? 0);
                     $product->price = $newPrice;
@@ -570,7 +578,7 @@ class ProductController extends Controller
                             $oldVarPrice = (float) ($variant->price ?? 0);
                             if ($oldVarPrice <= 0) {
                                 $varCost = $cost;
-                            } elseif ($oldMarkupType === 'fixed' && $oldMarkupValue !== null && $oldVarPrice > $oldMarkupValue) {
+                            } elseif ($oldMarkupType === 'fixed' && $oldMarkupValue !== null && ($oldVarPrice - $oldMarkupValue) > 0) {
                                 $varCost = round($oldVarPrice - $oldMarkupValue, 4);
                             } elseif ($oldPrice > 0) {
                                 $varCost = $oldVarPrice * ($cost / $oldPrice);
