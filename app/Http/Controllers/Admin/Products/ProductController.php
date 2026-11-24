@@ -69,6 +69,15 @@ class ProductController extends Controller
             $query->orderByRaw(
                 "(SELECT COALESCE(SUM(oi.quantity * oi.price), 0) FROM order_items oi WHERE oi.product_id = products.id) $sortDir"
             );
+        } elseif ($sortBy === 'profit_margin') {
+            $marginExpr = "CASE
+                WHEN sync_markup_type = 'percentage' AND sync_markup_value IS NOT NULL THEN CAST(sync_markup_value AS DECIMAL(12,4))
+                WHEN sync_markup_type = 'fixed' AND sync_markup_value IS NOT NULL AND cost_per_item > 0 THEN (CAST(sync_markup_value AS DECIMAL(12,4)) / cost_per_item) * 100
+                WHEN cost_per_item > 0 AND price > 0 THEN ((price - cost_per_item) / cost_per_item) * 100
+                ELSE NULL
+            END";
+            $query->orderByRaw("($marginExpr) IS NULL ASC")
+                  ->orderByRaw("($marginExpr) $sortDir");
         } else {
             $query->orderBy($sortColumn, $sortDir);
         }
