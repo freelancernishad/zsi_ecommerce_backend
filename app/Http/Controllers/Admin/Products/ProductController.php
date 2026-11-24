@@ -523,4 +523,84 @@ class ProductController extends Controller
             'message' => count($request->product_ids) . ' products assigned to categories successfully.'
         ]);
     }
+
+    public function bulkUpdateProfitMargin(Request $request)
+    {
+        $validated = $request->validate([
+            'product_ids' => 'required|array|min:1',
+            'product_ids.*' => 'integer|exists:products,id',
+            'markup_type' => 'required|in:percentage,fixed',
+            'markup_value' => 'required|numeric|min:0|max:10000',
+        ]);
+
+        $type = $validated['markup_type'];
+        $value = (float) $validated['markup_value'];
+        $updatedCount = 0;
+
+        DB::transaction(function () use ($validated, $type, $value, &$updatedCount) {
+            $products = Product::with('variants')->whereIn('id', $validated['product_ids'])->get();
+
+            foreach ($products as $product) {
+                $oldPrice = (float) ($product->price ?? 0);
+                $cost = (float) ($product->cost_per_item ?? 0);
+                $oldMarkupType = $product->sync_markup_type;
+                $oldMarkupValue = $product->sync_markup_value !== null ? (float) $product->sync_markup_value : null;
+
+                if ($cost <= 0 && $oldPrice > 0) {
+                    $cost = $oldPrice;
+                    $product->cost_per_item = $cost;
+                }
+
+                $product->sync_markup_type = $type;
+                $product->sync_markup_value = $value;
+
+                if ($cost > 0) {
+                    $newPrice = $type === 'fixed'
+                        ? round($cost + $value, 2)
+                        : round($cost * (1 + ($value / 100)), 2);
+
+                    $oldOriginal = (float) ($product->original_price ?? 0);
+                    $product->price = $newPrice;
+                    if ($oldOriginal <= 0 || abs($oldOriginal - $oldPrice) < 0.01 || $newPrice > $oldOriginal) {
+                        $product->original_price = $newPrice;
+                    }
+
+                    if ($product->variants->isNotEmpty()) {
+                        foreach ($product->variants as $variant) {
+                            $oldVarPrice = (float) ($variant->price ?? 0);
+                            if ($oldVarPrice <= 0) {
+                                $varCost = $cost;
+                            } elseif ($oldMarkupType === 'fixed' && $oldMarkupValue !== null && $oldVarPrice > $oldMarkupValue) {
+                                $varCost = round($oldVarPrice - $oldMarkupValue, 4);
+                            } elseif ($oldPrice > 0) {
+                                $varCost = $oldVarPrice * ($cost / $oldPrice);
+                            } else {
+                                $varCost = $oldVarPrice;
+                            }
+
+                            $newVarPrice = $type === 'fixed'
+                                ? round($varCost + $value, 2)
+                                : round($varCost * (1 + ($value / 100)), 2);
+
+                            $variant->price = max(0.01, $newVarPrice);
+                            $variant->save();
+                        }
+                    }
+                }
+
+                $product->save();
+                $updatedCount++;
+            }
+        });
+
+        return response()->json([
+            'status' => 'success',
+            'message' => "{$updatedCount} product(s) profit margin updated successfully.",
+            'data' => [
+                'updated_count' => $updatedCount,
+                'markup_type' => $type,
+                'markup_value' => $value,
+            ],
+        ]);
+    }
 }
