@@ -38,9 +38,9 @@ return [
 
 
         // everythingpet.org
-        'everythingpet.org'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
-        'www.everythingpet.org'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
-        'admin.everythingpet.org'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_everythingpet'),
+        'everythingpet.org'    => env('DB_DATABASE_EVERYTHINGPET', 'mustgyyu_everythingpet'),
+        'www.everythingpet.org'=> env('DB_DATABASE_EVERYTHINGPET', 'mustgyyu_everythingpet'),
+        'admin.everythingpet.org'=> env('DB_DATABASE_EVERYTHINGPET', 'mustgyyu_everythingpet'),
 
 
         
@@ -48,16 +48,17 @@ return [
         'goldenmarkstorecom.vercel.app'    => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
         'www.goldenmarkstorecom.vercel.app' => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
         'ecommerce-admin-zsi.vercel.app' => env('DB_DATABASE_GOLDENMARK', 'mustgyyu_zsi_ecommerce_db'),
-        'localhost:3000' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
-        'localhost:3001' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
-        'localhost'      => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
-        '127.0.0.1:3000' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
-        '127.0.0.1:3001' => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
-        '127.0.0.1'      => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
+        'localhost:3000' => env('DB_DATABASE', 'goldenmarkstore_db'),
+        'localhost:3001' => env('DB_DATABASE', 'goldenmarkstore_db'),
+        'localhost'      => env('DB_DATABASE', 'goldenmarkstore_db'),
+        '127.0.0.1:3000' => env('DB_DATABASE', 'goldenmarkstore_db'),
+        '127.0.0.1:3001' => env('DB_DATABASE', 'goldenmarkstore_db'),
+        '127.0.0.1'      => env('DB_DATABASE', 'goldenmarkstore_db'),
 
         // Local development hostnames
         'goldenmark.test'            => env('DB_DATABASE_GOLDENMARK', 'goldenmarkstore_db'),
         'bismillah.test'             => env('DB_DATABASE_BISMILLAH', 'bismillahfashionusa_db'),
+        'everythingpet.test'         => env('DB_DATABASE_EVERYTHINGPET', 'mustgyyu_everythingpet'),
     ],
 
     /*

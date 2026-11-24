@@ -7,6 +7,7 @@ use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\ProductVariant;
 use App\Services\FileSystem\FileUploadService;
+use App\Services\ProductVariantSyncService;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -14,10 +15,14 @@ use Illuminate\Support\Facades\DB;
 class ProductController extends Controller
 {
     protected $fileUploadService;
+    protected ProductVariantSyncService $variantSyncService;
 
-    public function __construct(FileUploadService $fileUploadService)
-    {
+    public function __construct(
+        FileUploadService $fileUploadService,
+        ProductVariantSyncService $variantSyncService
+    ) {
         $this->fileUploadService = $fileUploadService;
+        $this->variantSyncService = $variantSyncService;
     }
 
     public function index(Request $request)
@@ -167,6 +172,8 @@ class ProductController extends Controller
             'price' => 'required|numeric',
             'category_id' => 'required|exists:categories,id',
             'images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+            'variant_images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp,gif|max:4096',
+            'variant_combinations.*.image_file' => 'nullable|image|mimes:jpeg,png,jpg,webp,gif|max:4096',
             'sub_category_id' => 'nullable|exists:categories,id',
             'sub_sub_category_id' => 'nullable|exists:categories,id',
             'size_guide' => 'nullable|string',
@@ -192,7 +199,7 @@ class ProductController extends Controller
                 'category_id'           => $request->category_id,
                 'sub_category_id'       => $request->sub_category_id,
                 'sub_sub_category_id'   => $request->sub_sub_category_id,
-                'brand'                 => $request->brand,
+                'brand_id'              => $request->brand_id ?: null,
                 'status'                => $request->status ?? 'published',
                 'weight'                => $request->weight,
                 'weight_unit'           => $request->weight_unit ?? 'kg',
@@ -226,19 +233,15 @@ class ProductController extends Controller
                 }
             }
 
-            // Handle Dynamic Variant Combinations
-            if ($request->has('variant_combinations')) {
-                foreach ($request->variant_combinations as $variant) {
-                    ProductVariant::create([
-                        'product_id'         => $product->id,
-                        'combination_label'  => $variant['label'] ?? null,
-                        'price'              => $variant['price'] ?? $product->price,
-                        'discount_price'     => $variant['discount_price'] ?? null,
-                        'sku'                => $variant['sku'] ?? null,
-                        'available_quantity' => $variant['qty'] ?? 0,
-                        'image'              => $variant['image'] ?? null,
-                    ]);
-                }
+            // Handle Dynamic / Nested Variant Combinations using shared import-grade sync logic
+            $variantInput = $this->extractVariantSyncInput($request);
+            if ($variantInput !== null) {
+                $this->variantSyncService->syncVariants(
+                    $product,
+                    $variantInput['variants'],
+                    $variantInput['files'],
+                    $variantInput['options']
+                );
             }
 
             // Sync categories
@@ -267,8 +270,26 @@ class ProductController extends Controller
     {
         $product = Product::findOrFail($id);
 
+        $request->validate([
+            'images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp|max:2048',
+            'variant_images.*' => 'nullable|image|mimes:jpeg,png,jpg,webp,gif|max:4096',
+            'variant_combinations.*.image_file' => 'nullable|image|mimes:jpeg,png,jpg,webp,gif|max:4096',
+        ]);
+
         return DB::transaction(function () use ($request, $product) {
-            $data = $request->except(['images', 'variant_combinations', 'variant_options', 'size_guide']);
+            $data = $request->except([
+                'images',
+                'variant_combinations',
+                'variant_combinations_json',
+                'variant_images',
+                'sync_variants',
+                'variant_options',
+                'size_guide',
+            ]);
+
+            if (array_key_exists('brand_id', $data)) {
+                $data['brand_id'] = $data['brand_id'] ?: null;
+            }
 
             // Map frontend 'quantity' to 'stock_quantity' for mass assignment
             if ($request->has('quantity')) {
@@ -288,8 +309,10 @@ class ProductController extends Controller
             if ($request->has('is_physical')) $data['is_physical'] = $request->is_physical;
             if ($request->has('charge_tax')) $data['charge_tax'] = $request->charge_tax;
 
-            if ($request->has('variant_options')) {
-                $product->variant_options = json_decode($request->variant_options, true);
+            $variantInput = $this->extractVariantSyncInput($request);
+            if ($variantInput === null && $request->has('variant_options')) {
+                $rawOpts = $request->variant_options;
+                $product->variant_options = is_string($rawOpts) ? json_decode($rawOpts, true) : $rawOpts;
             }
 
             if ($request->has('size_guide')) {
@@ -321,35 +344,14 @@ class ProductController extends Controller
                 }
             }
 
-            // Handle Dynamic Variant Combinations
-            if ($request->has('variant_combinations')) {
-                // Delete missing variants, or purely re-sync.
-                // Safest way for a simple edit: delete and recreate, or update existing by SKU or ID.
-                $incomingIds = collect($request->variant_combinations)->pluck('id')->filter()->toArray();
-                
-                // Delete variants that were removed from the UI
-                $product->variants()->whereNotIn('id', $incomingIds)->delete();
-
-                foreach ($request->variant_combinations as $variant) {
-                    $variantPayload = [
-                        'combination_label'  => $variant['label'] ?? null,
-                        'price'              => $variant['price'] ?? $product->price,
-                        'discount_price'     => $variant['discount_price'] ?? null,
-                        'sku'                => $variant['sku'] ?? null,
-                        'available_quantity' => $variant['qty'] ?? 0,
-                    ];
-                    if (array_key_exists('image', $variant)) {
-                        $variantPayload['image'] = $variant['image'];
-                    }
-
-                    ProductVariant::updateOrCreate(
-                        [
-                            'product_id' => $product->id,
-                            'id' => $variant['id'] ?? null // Match by ID if it exists
-                        ],
-                        $variantPayload
-                    );
-                }
+            // Handle Dynamic / Nested Variant Combinations using shared import-grade sync logic
+            if ($variantInput !== null) {
+                $this->variantSyncService->syncVariants(
+                    $product,
+                    $variantInput['variants'],
+                    $variantInput['files'],
+                    $variantInput['options']
+                );
             }
 
             // Sync categories on update
@@ -373,6 +375,56 @@ class ProductController extends Controller
 
             return response()->json(['status' => 'success', 'data' => $product->load(['images', 'variants', 'categories'])]);
         });
+    }
+
+    private function extractVariantSyncInput(Request $request): ?array
+    {
+        if (
+            !$request->has('variant_combinations_json') &&
+            !$request->has('variant_combinations') &&
+            !$request->boolean('sync_variants')
+        ) {
+            return null;
+        }
+
+        $variants = [];
+        if ($request->has('variant_combinations_json')) {
+            $decoded = json_decode((string) $request->input('variant_combinations_json'), true);
+            if (is_array($decoded)) {
+                $variants = $decoded;
+            }
+        } elseif (is_array($request->input('variant_combinations'))) {
+            $variants = $request->input('variant_combinations');
+        }
+
+        $options = [];
+        if ($request->has('variant_options')) {
+            $rawOptions = $request->input('variant_options');
+            if (is_string($rawOptions)) {
+                $decodedOpts = json_decode($rawOptions, true);
+                if (is_array($decodedOpts)) {
+                    $options = $decodedOpts;
+                }
+            } elseif (is_array($rawOptions)) {
+                $options = $rawOptions;
+            }
+        }
+
+        $files = $request->file('variant_images', []);
+        if (!is_array($files)) {
+            $files = [];
+        }
+        foreach ($variants as $i => $row) {
+            if (!isset($files[$i]) && $request->hasFile("variant_combinations.{$i}.image_file")) {
+                $files[$i] = $request->file("variant_combinations.{$i}.image_file");
+            }
+        }
+
+        return [
+            'variants' => $variants,
+            'files' => $files,
+            'options' => $options,
+        ];
     }
 
     public function destroy($id)
