@@ -194,7 +194,7 @@ class CjDropshippingService
     /**
      * Fetch full product details including variants from CJ.
      */
-    public function getProductDetail(string $cjProductId, int $maxRetries = 3): ?array
+    public function getProductDetail(string $cjProductId, int $maxRetries = 3, int $timeout = 15): ?array
     {
         $token = $this->getAccessToken();
         $attempt = 0;
@@ -204,7 +204,7 @@ class CjDropshippingService
 
             $response = Http::withHeaders([
                 'CJ-Access-Token' => $token,
-            ])->get("{$this->getBaseUrl()}/product/query", [
+            ])->timeout($timeout)->get("{$this->getBaseUrl()}/product/query", [
                 'pid' => $cjProductId,
             ]);
 

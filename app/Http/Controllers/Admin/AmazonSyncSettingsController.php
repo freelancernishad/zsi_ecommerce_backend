@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\Admin;
 
 use App\Http\Controllers\Controller;
+use App\Models\SiteSetting;
 use App\Services\AmazonSmartSyncService;
 use Exception;
 use Illuminate\Http\Request;
@@ -112,6 +113,9 @@ class AmazonSyncSettingsController extends Controller
 
         try {
             $updated = $this->smartSyncService->saveConfig($validated);
+            if (array_key_exists('jit_on_product_view', $validated)) {
+                SiteSetting::setValue('amazon_sync_on_product_view', $validated['jit_on_product_view'], 'amazon');
+            }
             return response()->json([
                 'success' => true,
                 'message' => 'Amazon Sync settings saved successfully!',

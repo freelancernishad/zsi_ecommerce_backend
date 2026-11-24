@@ -26,6 +26,14 @@ class AdminSiteSettingController extends Controller
             $formattedSettings[$setting->key] = $setting->value;
         }
 
+        if ($group === 'amazon' && !array_key_exists('amazon_sync_on_product_view', $formattedSettings)) {
+            $jitSetting = SiteSetting::where('group', 'amazon_sync')
+                ->where('key', 'jit_on_product_view')
+                ->first();
+            $jitRaw = $jitSetting ? $jitSetting->value : '0';
+            $formattedSettings['amazon_sync_on_product_view'] = in_array((string) $jitRaw, ['1', 'true'], true) ? '1' : '0';
+        }
+
         return response()->json([
             'success' => true,
             'group' => $group,
@@ -48,6 +56,18 @@ class AdminSiteSettingController extends Controller
             SiteSetting::updateOrCreate(
                 ['key' => $key],
                 ['value' => $value, 'group' => $group]
+            );
+        }
+
+        if ($group === 'amazon' && array_key_exists('amazon_sync_on_product_view', $settingsData)) {
+            $normalized = in_array((string) $settingsData['amazon_sync_on_product_view'], ['1', 'true'], true) ? '1' : '0';
+            SiteSetting::updateOrCreate(
+                ['key' => 'amazon_sync_on_product_view'],
+                ['value' => $normalized, 'group' => 'amazon']
+            );
+            SiteSetting::updateOrCreate(
+                ['key' => 'jit_on_product_view'],
+                ['value' => $normalized, 'group' => 'amazon_sync']
             );
         }
 

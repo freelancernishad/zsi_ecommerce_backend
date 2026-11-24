@@ -9,12 +9,15 @@ use App\Models\SiteSetting;
 use AliExpress\Services\AliExpressService;
 use CjDropshipping\Services\CjDropshippingService;
 use Amazon\Services\AmazonScraperService;
+use Carbon\Carbon;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\DB;
 use Exception;
 
 class InventorySyncService
 {
+    public const DETAIL_VIEW_COOLDOWN_HOURS = 6;
     protected AliExpressService $aliExpressService;
     protected CjDropshippingService $cjService;
     protected AmazonScraperService $amazonService;
@@ -216,18 +219,135 @@ class InventorySyncService
     }
 
     /**
+     * Check whether a product's detail-view sync is still within the 6-hour cooldown window.
+     */
+    protected function isDetailViewSyncFresh(?string $syncedAt, int $productId): bool
+    {
+        if (Cache::has("detail_view_sync_recent_{$productId}")) {
+            return true;
+        }
+        if (!empty($syncedAt) && Carbon::parse($syncedAt)->gt(now()->subHours(self::DETAIL_VIEW_COOLDOWN_HOURS))) {
+            return true;
+        }
+        return false;
+    }
+
+    /**
+     * Single-call sync triggered on storefront product detail page view,
+     * gated by each supplier's own detail-view sync toggle in Admin Settings (at most once every 6 hours).
+     */
+    public function syncProductOnDetailView(Product $product): array
+    {
+        if ($product->is_amazon_product && !empty($product->amazon_asin)) {
+            return app(AmazonSmartSyncService::class)->syncSingleOnDetailView($product);
+        }
+
+        if ($product->is_cj_product && !empty($product->cj_product_id)) {
+            $enabled = in_array((string) SiteSetting::getValue('cj_sync_on_product_view', '0'), ['1', 'true'], true);
+            if (!$enabled) {
+                return ['synced' => false, 'reason' => 'cj_view_sync_disabled'];
+            }
+
+            if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id)) {
+                return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+            }
+
+            $lock = Cache::lock("cj_view_sync_product_{$product->id}", 30);
+            if (!$lock->get()) {
+                return ['synced' => false, 'reason' => 'sync_in_progress'];
+            }
+
+            try {
+                $product->refresh();
+                if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id)) {
+                    return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+                }
+
+                $config = $this->getConfig();
+                $viewConfig = array_merge($config, [
+                    'retry_attempts' => 1,
+                    'request_timeout_seconds' => min(12, max(5, (int) ($config['request_timeout_seconds'] ?? 12))),
+                ]);
+                $product->loadMissing('variants');
+                $res = $this->syncSingleCjProduct($product, $viewConfig);
+
+                if (($res['status'] ?? '') === 'success') {
+                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                } else {
+                    Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+                }
+
+                return [
+                    'synced' => ($res['status'] ?? '') === 'success',
+                    'supplier' => 'cjdropshipping',
+                    'result' => $res,
+                ];
+            } finally {
+                optional($lock)->release();
+            }
+        }
+
+        if ($product->is_aliexpress_product && !empty($product->aliexpress_product_id)) {
+            $enabled = in_array((string) SiteSetting::getValue('aliexpress_sync_on_product_view', '0'), ['1', 'true'], true);
+            if (!$enabled) {
+                return ['synced' => false, 'reason' => 'aliexpress_view_sync_disabled'];
+            }
+
+            if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id)) {
+                return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+            }
+
+            $lock = Cache::lock("aliexpress_view_sync_product_{$product->id}", 30);
+            if (!$lock->get()) {
+                return ['synced' => false, 'reason' => 'sync_in_progress'];
+            }
+
+            try {
+                $product->refresh();
+                if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id)) {
+                    return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+                }
+
+                $config = $this->getConfig();
+                $viewConfig = array_merge($config, [
+                    'retry_attempts' => 1,
+                ]);
+                $product->loadMissing('variants');
+                $res = $this->syncSingleAliExpressProduct($product, $viewConfig);
+
+                if (($res['status'] ?? '') === 'success') {
+                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                } else {
+                    Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+                }
+
+                return [
+                    'synced' => ($res['status'] ?? '') === 'success',
+                    'supplier' => 'aliexpress',
+                    'result' => $res,
+                ];
+            } finally {
+                optional($lock)->release();
+            }
+        }
+
+        return ['synced' => false, 'reason' => 'not_dropship_product'];
+    }
+
+    /**
      * Synchronize a single CJ Dropshipping product stock and pricing.
      */
     public function syncSingleCjProduct(Product $product, array $config): array
     {
         $supplierId = (string)$product->cj_product_id;
-        $maxRetries = max(1, $config['retry_attempts']);
+        $maxRetries = max(1, (int)($config['retry_attempts'] ?? 1));
+        $timeout = max(5, min(30, (int)($config['request_timeout_seconds'] ?? 15)));
         $rawDetail = null;
         $lastException = null;
 
         for ($attempt = 1; $attempt <= $maxRetries; $attempt++) {
             try {
-                $rawDetail = $this->cjService->getProductDetail($supplierId);
+                $rawDetail = $this->cjService->getProductDetail($supplierId, 1, $timeout);
                 if (!empty($rawDetail)) {
                     break;
                 }
@@ -310,6 +430,57 @@ class InventorySyncService
     }
 
     /**
+     * Parse numeric supplier price or cost strings (e.g. "$12.50", "10.00-15.00").
+     */
+    protected function parseSupplierPrice($raw): float
+    {
+        if (is_numeric($raw)) {
+            return max(0.0, (float) $raw);
+        }
+        if (is_string($raw) && preg_match('/\d+(?:\.\d+)?/', str_replace(',', '', $raw), $m)) {
+            return max(0.0, (float) $m[0]);
+        }
+        return 0.0;
+    }
+
+    /**
+     * Resolve target retail price respecting per-product markup, existing margin ratio, or supplier default margin.
+     */
+    protected function resolveTargetRetailPrice(Product $product, float $suppCost, float $oldPrice, string $channel, array $config): float
+    {
+        if ($suppCost <= 0) {
+            return $oldPrice;
+        }
+
+        if (!empty($product->sync_markup_type) && $product->sync_markup_value !== null) {
+            $val = (float) $product->sync_markup_value;
+            return $product->sync_markup_type === 'fixed'
+                ? round($suppCost + $val, 2)
+                : round($suppCost * (1 + ($val / 100)), 2);
+        }
+
+        $baseCost = (float) ($product->cost_per_item ?? 0);
+        $basePrice = (float) ($product->price ?? 0);
+        if ($baseCost > 0 && $basePrice > $baseCost) {
+            $marginRatio = ($basePrice - $baseCost) / $baseCost;
+            return round($suppCost * (1 + $marginRatio), 2);
+        }
+
+        $supplierDefaultKey = match ($channel) {
+            'cjdropshipping' => 'cj_default_profit_margin',
+            'aliexpress' => 'aliexpress_default_profit_margin',
+            'amazon' => 'amazon_default_profit_margin',
+            default => null,
+        };
+        $supplierMargin = $supplierDefaultKey ? SiteSetting::getValue($supplierDefaultKey, null) : null;
+        $markupPercent = is_numeric($supplierMargin)
+            ? (float) $supplierMargin
+            : (float) ($config['default_markup_percent'] ?? 20.0);
+
+        return round($suppCost * (1 + ($markupPercent / 100)), 2);
+    }
+
+    /**
      * Apply variant-level and parent-level stock and price comparisons and updates.
      */
     protected function applyStockAndPriceChanges(Product $product, array $supplierData, string $channel, string $supplierId, array $config): array
@@ -319,11 +490,15 @@ class InventorySyncService
             $oldProductPrice = (float)($product->price ?? 0);
             $oldProductStatus = (string)$product->status;
 
-            $markupPercent = (float)($config['default_markup_percent'] ?? 20.0);
             $variantLogs = [];
             $stockChanged = false;
             $priceChanged = false;
             $totalNewStock = 0;
+            $newProductPrice = $oldProductPrice;
+            $minInStockVariantPrice = null;
+            $minVariantPrice = null;
+            $minVariantCost = null;
+            $suppCost = 0.0;
 
             $supplierVariants = $supplierData['variants'] ?? [];
             $localVariants = $product->variants()->get();
@@ -334,12 +509,15 @@ class InventorySyncService
                     $matchedSuppVar = null;
                     foreach ($supplierVariants as $sVar) {
                         $sSkuId = (string)($sVar['sku_id'] ?? $sVar['vid'] ?? $sVar['asin'] ?? $sVar['id'] ?? '');
-                        $sVarTitle = (string)($sVar['name'] ?? $sVar['title'] ?? '');
+                        $sVarSku = (string)($sVar['variantSku'] ?? $sVar['sku'] ?? '');
+                        $sVarTitle = (string)($sVar['name'] ?? $sVar['title'] ?? $sVar['variantNameEn'] ?? $sVar['variantKeyEn'] ?? $sVar['variantKey'] ?? '');
                         if (
-                            ($lVar->aliexpress_sku_id && $lVar->aliexpress_sku_id === $sSkuId) ||
-                            ($lVar->cj_vid && $lVar->cj_vid === $sSkuId) ||
-                            ($lVar->amazon_asin && $sSkuId && $lVar->amazon_asin === $sSkuId) ||
-                            ($lVar->sku && $sSkuId && str_ends_with($lVar->sku, $sSkuId)) ||
+                            ($lVar->aliexpress_sku_id && $sSkuId !== '' && $lVar->aliexpress_sku_id === $sSkuId) ||
+                            ($lVar->cj_vid && $sSkuId !== '' && $lVar->cj_vid === $sSkuId) ||
+                            ($lVar->cj_variant_sku && $sVarSku !== '' && $lVar->cj_variant_sku === $sVarSku) ||
+                            ($lVar->amazon_asin && $sSkuId !== '' && $lVar->amazon_asin === $sSkuId) ||
+                            ($lVar->sku && $sVarSku !== '' && $lVar->sku === $sVarSku) ||
+                            ($lVar->sku && $sSkuId !== '' && str_ends_with($lVar->sku, $sSkuId)) ||
                             ($sVarTitle !== '' && strtolower(trim((string)$lVar->combination_label)) === strtolower(trim($sVarTitle)))
                         ) {
                             $matchedSuppVar = $sVar;
@@ -351,22 +529,30 @@ class InventorySyncService
                     $oldVarPrice = (float)($lVar->price ?? 0);
 
                     if ($matchedSuppVar) {
-                        if (array_key_exists('stock', $matchedSuppVar)) {
+                        if (array_key_exists('stock', $matchedSuppVar) && is_numeric($matchedSuppVar['stock'])) {
                             $newVarStock = max(0, (int)$matchedSuppVar['stock']);
+                        } elseif (array_key_exists('variantStandardQuantity', $matchedSuppVar) && is_numeric($matchedSuppVar['variantStandardQuantity'])) {
+                            $newVarStock = max(0, (int)$matchedSuppVar['variantStandardQuantity']);
+                        } elseif (array_key_exists('storageNum', $matchedSuppVar) && is_numeric($matchedSuppVar['storageNum'])) {
+                            $newVarStock = max(0, (int)$matchedSuppVar['storageNum']);
+                        } elseif (array_key_exists('inventoryNum', $matchedSuppVar) && is_numeric($matchedSuppVar['inventoryNum'])) {
+                            $newVarStock = max(0, (int)$matchedSuppVar['inventoryNum']);
                         } elseif (array_key_exists('available', $matchedSuppVar)) {
                             $newVarStock = $matchedSuppVar['available'] ? 20 : 0;
                         } else {
-                            $newVarStock = 0;
+                            $newVarStock = $oldVarStock;
                         }
-                        $suppCostPrice = (float)(
+
+                        $suppCostPrice = $this->parseSupplierPrice(
                             $matchedSuppVar['cost_price']
                             ?? $matchedSuppVar['costPrice']
+                            ?? $matchedSuppVar['variantSellPrice']
                             ?? ($channel === 'amazon' ? ($matchedSuppVar['price'] ?? 0) : 0)
                         );
                     } else {
                         // Variant was removed by supplier -> 0 stock
                         $newVarStock = 0;
-                        $suppCostPrice = 0;
+                        $suppCostPrice = 0.0;
                     }
 
                     $totalNewStock += $newVarStock;
@@ -374,13 +560,25 @@ class InventorySyncService
                     // Calculate updated retail price if cost exists
                     $newVarPrice = $oldVarPrice;
                     if ($suppCostPrice > 0) {
-                        $calcPrice = round($suppCostPrice * (1 + ($markupPercent / 100)), 2);
+                        if ($minVariantCost === null || $suppCostPrice < $minVariantCost) {
+                            $minVariantCost = $suppCostPrice;
+                        }
+                        $calcPrice = $this->resolveTargetRetailPrice($product, $suppCostPrice, $oldVarPrice, $channel, $config);
                         if ($calcPrice > $oldVarPrice && $config['price_increase_action'] === 'auto_update_markup') {
                             $newVarPrice = $calcPrice;
                             $priceChanged = true;
                         } elseif ($calcPrice < $oldVarPrice && $config['price_decrease_action'] === 'update_lower_price') {
                             $newVarPrice = $calcPrice;
                             $priceChanged = true;
+                        }
+                    }
+
+                    if ($newVarPrice > 0) {
+                        if ($minVariantPrice === null || $newVarPrice < $minVariantPrice) {
+                            $minVariantPrice = $newVarPrice;
+                        }
+                        if ($newVarStock > 0 && ($minInStockVariantPrice === null || $newVarPrice < $minInStockVariantPrice)) {
+                            $minInStockVariantPrice = $newVarPrice;
                         }
                     }
 
@@ -408,18 +606,37 @@ class InventorySyncService
                         'is_out_of_stock' => $newVarStock <= 0,
                     ];
                 }
+
+                $targetParentPrice = $minInStockVariantPrice ?? $minVariantPrice;
+                if ($targetParentPrice !== null && ($priceChanged || $oldProductPrice <= 0)) {
+                    $newProductPrice = $targetParentPrice;
+                    if (abs($newProductPrice - $oldProductPrice) > 0.001) {
+                        $priceChanged = true;
+                    }
+                }
+                if ($minVariantCost !== null && $minVariantCost > 0) {
+                    $suppCost = $minVariantCost;
+                }
             } else {
                 // Single/Non-variant product
-                if (array_key_exists('stock', $supplierData)) {
+                if (array_key_exists('stock', $supplierData) && is_numeric($supplierData['stock'])) {
                     $suppStock = max(0, (int)$supplierData['stock']);
+                } elseif (array_key_exists('productStock', $supplierData) && is_numeric($supplierData['productStock'])) {
+                    $suppStock = max(0, (int)$supplierData['productStock']);
+                } elseif (array_key_exists('storageNum', $supplierData) && is_numeric($supplierData['storageNum'])) {
+                    $suppStock = max(0, (int)$supplierData['storageNum']);
+                } elseif (array_key_exists('inventoryNum', $supplierData) && is_numeric($supplierData['inventoryNum'])) {
+                    $suppStock = max(0, (int)$supplierData['inventoryNum']);
                 } elseif (array_key_exists('available', $supplierData)) {
                     $suppStock = $supplierData['available'] ? 20 : 0;
                 } else {
-                    $suppStock = 50;
+                    $suppStock = $oldProductStock;
                 }
-                $suppCost = (float)(
+
+                $suppCost = $this->parseSupplierPrice(
                     $supplierData['costPrice']
                     ?? $supplierData['cost_price']
+                    ?? $supplierData['sellPrice']
                     ?? ($channel === 'amazon' ? ($supplierData['price'] ?? 0) : 0)
                 );
 
@@ -430,7 +647,7 @@ class InventorySyncService
 
                 $newProductPrice = $oldProductPrice;
                 if ($suppCost > 0) {
-                    $calcPrice = round($suppCost * (1 + ($markupPercent / 100)), 2);
+                    $calcPrice = $this->resolveTargetRetailPrice($product, $suppCost, $oldProductPrice, $channel, $config);
                     if ($calcPrice > $oldProductPrice && $config['price_increase_action'] === 'auto_update_markup') {
                         $newProductPrice = $calcPrice;
                         $priceChanged = true;
@@ -460,8 +677,9 @@ class InventorySyncService
 
             // Update Parent Product
             $product->stock_quantity = $totalNewStock;
-            if (isset($newProductPrice)) {
-                $product->price = $newProductPrice;
+            $product->price = $newProductPrice;
+            if ($suppCost > 0) {
+                $product->cost_per_item = $suppCost;
             }
             $product->status = $newProductStatus;
 

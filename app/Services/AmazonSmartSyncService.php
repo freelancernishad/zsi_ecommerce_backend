@@ -24,6 +24,7 @@ class AmazonSmartSyncService
 {
     public const SETTINGS_GROUP = 'amazon_sync';
     public const USAGE_GROUP = 'amazon_sync_usage';
+    public const DETAIL_VIEW_COOLDOWN_HOURS = 6;
 
     /**
      * Load all switchable Amazon Smart Sync settings with sensible cost-saving defaults.
@@ -779,6 +780,80 @@ class AmazonSmartSyncService
     }
 
     /**
+     * Single-call sync on storefront product detail view controlled by the Amazon settings toggle.
+     */
+    public function syncSingleOnDetailView(Product $product): array
+    {
+        $config = $this->getConfig();
+        $setting = SiteSetting::where('key', 'amazon_sync_on_product_view')->first();
+        $enabled = $setting !== null
+            ? in_array((string) $setting->value, ['1', 'true'], true)
+            : ($config['jit_sync_enabled'] && $config['jit_on_product_view']);
+
+        if (!$enabled) {
+            return ['synced' => false, 'reason' => 'amazon_view_sync_disabled'];
+        }
+
+        if (!$product->is_amazon_product || empty($product->amazon_asin)) {
+            return ['synced' => false, 'reason' => 'not_amazon_product'];
+        }
+
+        if ($this->isDailyCapReached($config)) {
+            return ['synced' => false, 'reason' => 'daily_cap_reached'];
+        }
+
+        $isRecentlySynced = function (Product $prod): bool {
+            if (Cache::has("detail_view_sync_recent_{$prod->id}")) {
+                return true;
+            }
+            if (!empty($prod->amazon_synced_at) && Carbon::parse($prod->amazon_synced_at)->gt(now()->subHours(self::DETAIL_VIEW_COOLDOWN_HOURS))) {
+                return true;
+            }
+            return false;
+        };
+
+        if ($isRecentlySynced($product)) {
+            return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+        }
+
+        $lock = Cache::lock("amazon_jit_sync_product_{$product->id}", 30);
+        if (!$lock->get()) {
+            return [
+                'synced' => false,
+                'reason' => 'sync_in_progress',
+                'product_id' => $product->id,
+            ];
+        }
+
+        try {
+            $product->refresh();
+            if ($isRecentlySynced($product)) {
+                return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+            }
+
+            $product->loadMissing('variants');
+            $result = $this->syncSingleProductWithProvider($product, $config);
+            $product->refresh();
+
+            if (($result['status'] ?? '') === 'success') {
+                Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+            } else {
+                Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+            }
+
+            return [
+                'synced' => ($result['status'] ?? '') === 'success',
+                'supplier' => 'amazon',
+                'product_id' => $product->id,
+                'changes_detected' => $result['changes_detected'] ?? false,
+                'error' => $result['error'] ?? null,
+            ];
+        } finally {
+            optional($lock)->release();
+        }
+    }
+
+    /**
      * Sync a single Amazon product using the active provider.
      */
     protected function syncSingleProductWithProvider(Product $product, array $config): array
@@ -791,18 +866,42 @@ class AmazonSmartSyncService
         try {
             $data = null;
 
-            if ($provider === 'paapi') {
-                $batch = $this->fetchBatchViaPaApi([$asin], $config);
+            if (in_array($provider, ['paapi', 'keepa', 'brightdata_dataset'], true)) {
+                $maxBatch = match ($provider) {
+                    'paapi' => 10,
+                    'keepa' => 100,
+                    'brightdata_dataset' => 25,
+                    default => 10,
+                };
+                $asinsToFetch = [$asin];
+                if ($config['sync_variant_stock'] && $product->variants->isNotEmpty()) {
+                    $variantAsins = $product->variants->pluck('amazon_asin')
+                        ->filter()
+                        ->map(fn($a) => strtoupper(trim((string) $a)))
+                        ->unique()
+                        ->values()
+                        ->toArray();
+                    $asinsToFetch = array_slice(array_values(array_unique(array_merge($asinsToFetch, $variantAsins))), 0, $maxBatch);
+                }
+
+                $batch = match ($provider) {
+                    'paapi' => $this->fetchBatchViaPaApi($asinsToFetch, $config),
+                    'keepa' => $this->fetchBatchViaKeepa($asinsToFetch, $config),
+                    'brightdata_dataset' => $this->fetchBatchViaBrightDataDataset($asinsToFetch, $config),
+                };
                 $apiCalls = 1;
                 $data = $batch[$asin] ?? null;
-            } elseif ($provider === 'keepa') {
-                $batch = $this->fetchBatchViaKeepa([$asin], $config);
-                $apiCalls = 1;
-                $data = $batch[$asin] ?? null;
-            } elseif ($provider === 'brightdata_dataset') {
-                $batch = $this->fetchBatchViaBrightDataDataset([$asin], $config);
-                $apiCalls = 1;
-                $data = $batch[$asin] ?? null;
+
+                if ($data && $config['sync_variant_stock'] && $product->variants->isNotEmpty()) {
+                    $variantMap = [];
+                    foreach ($product->variants as $v) {
+                        $vAsin = strtoupper(trim((string) ($v->amazon_asin ?: $asin)));
+                        if (isset($batch[$vAsin])) {
+                            $variantMap[$vAsin] = $batch[$vAsin];
+                        }
+                    }
+                    $data['variants'] = $variantMap;
+                }
             } elseif ($provider === 'direct_http') {
                 $data = $this->fetchViaDirectHttp($asin, $url, $config);
                 $apiCalls = 0; // Free
