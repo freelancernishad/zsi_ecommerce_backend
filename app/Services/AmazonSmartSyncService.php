@@ -1733,8 +1733,9 @@ class AmazonSmartSyncService
         $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
         $buyboxOnlyText = strtolower($extractVisible('//div[@id="buybox"]'));
         $isLocalPickupOnly = !$hasBuyButton
-            && str_contains($buyboxOnlyText, 'amazon fresh')
-            && str_contains($buyboxOnlyText, 'pickup');
+            && (str_contains($buyboxOnlyText, 'amazonfresh')
+                || str_contains($buyboxOnlyText, 'amazon fresh')
+                || str_contains($buyboxOnlyText, 'whole foods'));
 
         // 1. Strictly extract price ONLY from the main product's corePrice / buybox containers
         $price = 0.0;

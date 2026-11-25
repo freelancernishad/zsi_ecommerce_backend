@@ -641,21 +641,29 @@ class AmazonScraperService
         $host = parse_url($url, PHP_URL_HOST) ?: 'www.amazon.com';
         $variants = $this->enrichVariantPrices($variants, $asin, $price, $host);
 
-        // 7c. Backfill parent price / availability from enriched variants if main page had no standard buybox
-        if ($price <= 0 && !empty($variants)) {
+        // 7c. Backfill or reconcile parent price / availability from enriched variants
+        if (!empty($variants)) {
+            $matchedVariant = null;
             foreach ($variants as $v) {
                 if (($v['asin'] ?? '') === $asin && (float) ($v['price'] ?? 0) > 0) {
-                    $price = (float) $v['price'];
+                    $matchedVariant = $v;
                     break;
                 }
             }
+
             if ($price <= 0) {
-                foreach ($variants as $v) {
-                    if ((float) ($v['price'] ?? 0) > 0) {
-                        $price = (float) $v['price'];
-                        break;
+                if ($matchedVariant) {
+                    $price = (float) $matchedVariant['price'];
+                } else {
+                    foreach ($variants as $v) {
+                        if ((float) ($v['price'] ?? 0) > 0) {
+                            $price = (float) $v['price'];
+                            break;
+                        }
                     }
                 }
+            } elseif ($matchedVariant && abs((float) $matchedVariant['price'] - $price) > 0.001) {
+                $price = (float) $matchedVariant['price'];
             }
         }
 
@@ -733,8 +741,9 @@ class AmazonScraperService
         $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
         $buyboxVisibleText = strtolower($this->extractVisibleTextFromNodes($xpath, '//div[@id="buybox"]'));
         $isLocalPickupOnly = !$hasBuyButton
-            && str_contains($buyboxVisibleText, 'amazon fresh')
-            && str_contains($buyboxVisibleText, 'pickup');
+            && (str_contains($buyboxVisibleText, 'amazonfresh')
+                || str_contains($buyboxVisibleText, 'amazon fresh')
+                || str_contains($buyboxVisibleText, 'whole foods'));
 
         $price = 0.0;
 
