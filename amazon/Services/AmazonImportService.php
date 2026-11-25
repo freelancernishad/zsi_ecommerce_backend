@@ -2,6 +2,7 @@
 
 namespace Amazon\Services;
 
+use App\Models\Brand;
 use App\Models\Product;
 use App\Models\ProductVariant;
 use App\Models\ProductImage;
@@ -119,18 +120,39 @@ class AmazonImportService
             throw new Exception("Product details not found or title empty for Amazon item: {$asinOrUrl}");
         }
 
-        return DB::transaction(function () use ($amazonData, $profitMarginPercent, $categoryId, $defaultStock, $status, $affiliateTag, $markupType, $fixedMarkupAmount) {
+        return DB::transaction(function () use ($asinOrUrl, $amazonData, $profitMarginPercent, $categoryId, $defaultStock, $status, $affiliateTag, $markupType, $fixedMarkupAmount) {
+            $asin = $amazonData['asin'] ?? $this->scraperService->extractAsin($asinOrUrl);
             $costPrice = (float) ($amazonData['price'] ?? 0.0);
+
+            if ($costPrice <= 0 && !empty($amazonData['variants']) && is_array($amazonData['variants'])) {
+                $positiveVarPrices = array_values(array_filter(array_map(
+                    fn($v) => (float) ($v['price'] ?? 0.0),
+                    $amazonData['variants']
+                ), fn($p) => $p > 0));
+                if (!empty($positiveVarPrices)) {
+                    $costPrice = min($positiveVarPrices);
+                }
+            }
+
+            if ($costPrice <= 0) {
+                throw new Exception("Unable to extract a valid price from Amazon for ASIN {$asin}. The product may be out of stock or currently unavailable.");
+            }
+
             if ($markupType === 'fixed') {
                 $salePrice = round($costPrice + $fixedMarkupAmount, 2);
             } else {
                 $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
             }
-            if ($salePrice <= 0) {
-                $salePrice = 59.99; // Fallback retail price if cost is 0
+
+            $listCost = (float) ($amazonData['list_price'] ?? 0.0);
+            if ($listCost > $costPrice) {
+                $originalPrice = ($markupType === 'fixed')
+                    ? round($listCost + $fixedMarkupAmount, 2)
+                    : round($listCost * (1 + ($profitMarginPercent / 100)), 2);
+            } else {
+                $originalPrice = $salePrice;
             }
 
-            $asin = $amazonData['asin'] ?? $this->scraperService->extractAsin($asinOrUrl);
             $existingAmazonProduct = Product::where('amazon_asin', $asin)->first();
 
             // Preserve existing slug when updating, or generate safe & unique slug
@@ -146,8 +168,25 @@ class AmazonImportService
                 }
             }
 
-            // Fallback category if none specified
-            $targetCategoryId = $categoryId ?: (Category::query()->value('id') ?: 1);
+            // Preserve existing category on re-import if caller omitted categoryId
+            $targetCategoryId = $categoryId
+                ?: ($existingAmazonProduct?->category_id)
+                ?: (Category::query()->value('id') ?: 1);
+
+            // Resolve Brand entity if brand name is valid
+            $brandId = $existingAmazonProduct?->brand_id ?: null;
+            $rawBrand = trim((string) ($amazonData['brand'] ?? ''));
+            if ($rawBrand !== '' && !in_array(strtolower($rawBrand), ['generic', 'unknown', 'n/a', 'unbranded'], true)) {
+                $brandName = Str::limit($rawBrand, 180, '');
+                $brandSlug = Str::slug($brandName);
+                if ($brandSlug !== '') {
+                    $brand = Brand::firstOrCreate(
+                        ['slug' => $brandSlug],
+                        ['name' => $brandName, 'status' => 'active']
+                    );
+                    $brandId = $brand->id;
+                }
+            }
 
             // Build JSON variant options array
             $variantOptions = $this->buildVariantOptions($amazonData);
@@ -177,23 +216,34 @@ class AmazonImportService
                 $realProductStock = max(0, (int)$amazonData['stock']);
             }
 
+            $rating = min(5.0, max(0.0, round((float) ($amazonData['rating'] ?? 0.0), 2)));
+            $reviewCount = max(0, (int) ($amazonData['review_count'] ?? 0));
+
             $productPayload = [
                 'name' => $amazonData['title'],
                 'slug' => $slug,
                 'description' => $amazonData['description'] ?? '',
                 'short_description' => Str::limit(strip_tags($amazonData['description'] ?? ''), 160),
                 'price' => $salePrice,
-                'original_price' => $salePrice,
+                'original_price' => $originalPrice,
                 'cost_per_item' => $costPrice,
                 'sync_markup_type' => $resolvedMarkupType,
                 'sync_markup_value' => $resolvedMarkupValue,
                 'sku' => $amazonData['sku'] ?? ("AMZ-" . $asin),
                 'stock_quantity' => $realProductStock,
                 'category_id' => $targetCategoryId,
-                'brand_id' => null,
+                'brand_id' => $brandId,
                 'status' => in_array($status, ['published', 'draft']) ? $status : 'published',
+                'rating' => $rating,
+                'review_count' => $reviewCount,
+                'weight' => $amazonData['weight'] ?? null,
+                'weight_unit' => $amazonData['weight_unit'] ?? 'kg',
+                'width' => $amazonData['width'] ?? null,
+                'width_unit' => $amazonData['width_unit'] ?? 'in',
+                'height' => $amazonData['height'] ?? null,
+                'height_unit' => $amazonData['height_unit'] ?? 'in',
                 'variant_options' => $variantOptions,
-                'is_physical' => true,
+                'is_physical' => array_key_exists('is_physical', $amazonData) ? (bool) $amazonData['is_physical'] : true,
                 'is_amazon_product' => true,
                 'import_source' => 'amazon',
                 'amazon_asin' => $asin,
@@ -212,12 +262,25 @@ class AmazonImportService
                 if ($existingProduct) {
                     $existingProduct->update([
                         'name' => $amazonData['title'],
+                        'description' => $productPayload['description'],
+                        'short_description' => $productPayload['short_description'],
                         'price' => $salePrice,
-                        'original_price' => $salePrice,
+                        'original_price' => $originalPrice,
                         'cost_per_item' => $costPrice,
                         'sync_markup_type' => $resolvedMarkupType,
                         'sync_markup_value' => $resolvedMarkupValue,
                         'stock_quantity' => $realProductStock,
+                        'brand_id' => $brandId ?: $existingProduct->brand_id,
+                        'rating' => $rating,
+                        'review_count' => $reviewCount,
+                        'weight' => $productPayload['weight'] ?? $existingProduct->weight,
+                        'weight_unit' => $productPayload['weight_unit'],
+                        'width' => $productPayload['width'] ?? $existingProduct->width,
+                        'width_unit' => $productPayload['width_unit'],
+                        'height' => $productPayload['height'] ?? $existingProduct->height,
+                        'height_unit' => $productPayload['height_unit'],
+                        'variant_options' => $variantOptions ?? $existingProduct->variant_options,
+                        'is_physical' => $productPayload['is_physical'],
                         'amazon_synced_at' => now(),
                     ]);
                     $product = $existingProduct;

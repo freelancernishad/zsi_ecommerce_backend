@@ -172,153 +172,52 @@ class AmazonScraperService
     }
 
     /**
-     * Generate structured search products catalog fallback when Amazon HTML is blocked or anti-bot CAPTCHA is served.
+     * Resolve Amazon short share links (a.co, amzn.to, amzn.eu, amzn.asia) to their destination URL.
      */
-    protected function generateFallbackSearchProducts(
-        string $keyword,
-        ?string $countryCode = 'US',
-        ?float $minPrice = null,
-        ?float $maxPrice = null
-    ): array {
-        $cleanKeyword = ucwords(trim($keyword));
-        if (empty($cleanKeyword)) $cleanKeyword = "Wireless Earbuds";
-
-        $sampleImages = [
-            'https://m.media-amazon.com/images/I/61P4QAI28CL._AC_SY300_SX300_QL70_FMwebp_.jpg',
-            'https://m.media-amazon.com/images/I/71c5L51bA9L._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/61L1EFp85HL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/61g4K46f-nL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/61QeC+2eS7L._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/71lD7p8ySLL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/61S+U7x0eQL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/61x8+kM1HHL._AC_SL1500_.jpg',
-        ];
-
-        $baseAsinSeed = strtoupper(substr(md5(strtolower($keyword)), 0, 8));
-
-        $products = [];
-        for ($i = 1; $i <= 16; $i++) {
-            $asin = "B0" . $baseAsinSeed . sprintf("%02d", $i);
-            $price = round(rand(1299, 9999) / 100, 2);
-
-            if ($minPrice !== null && $price < $minPrice) $price = (float) $minPrice + 2.0;
-            if ($maxPrice !== null && $price > $maxPrice) $price = (float) $maxPrice - 1.0;
-
-            $img = $sampleImages[($i - 1) % count($sampleImages)];
-            $title = "{$cleanKeyword} - Premium High-Performance Series #" . $i;
-
-            $products[] = [
-                'id' => $asin,
-                'pid' => $asin,
-                'asin' => $asin,
-                'title' => $title,
-                'productName' => $title,
-                'productNameEn' => $title,
-                'price' => $price,
-                'sellPrice' => $price,
-                'productPrice' => $price,
-                'image' => $img,
-                'productImage' => $img,
-                'bigImage' => $img,
-                'sku' => "AMZ-{$asin}",
-                'url' => "https://www.amazon.com/dp/{$asin}",
-                'countryCode' => $countryCode ?: 'US',
-            ];
+    protected function resolveShortUrl(string $input): string
+    {
+        $trimmed = trim($input);
+        if (!preg_match('/^https?:\/\/(?:www\.)?(a\.co|amzn\.to|amzn\.eu|amzn\.asia)\//i', $trimmed)) {
+            return $trimmed;
         }
 
-        return $products;
-    }
+        try {
+            $response = Http::withHeaders([
+                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                'Accept-Language' => 'en-US,en;q=0.9',
+            ])->withOptions(['allow_redirects' => ['track_redirects' => true]])->timeout(12)->get($trimmed);
 
-    /**
-     * Check if an ASIN matches a generated fallback catalog pattern
-     */
-    public function isFallbackAsin(string $asin): bool
-    {
-        return str_starts_with($asin, 'B02951F68F') 
-            || str_starts_with($asin, 'B0TEST') 
-            || str_starts_with($asin, 'B0DEMO')
-            || strlen($asin) > 10;
-    }
+            $effective = (string) ($response->effectiveUri() ?: '');
+            if ($effective !== '' && str_contains(strtolower($effective), 'amazon.')) {
+                return $effective;
+            }
+        } catch (Exception $e) {
+            Log::warning("Failed resolving short Amazon URL {$trimmed}: " . $e->getMessage());
+        }
 
-    /**
-     * Generate fallback product details when direct scrape encounters 404 or mock ASIN
-     */
-    public function generateFallbackProductDetail(string $asin, string $url): array
-    {
-        $sampleImages = [
-            'https://m.media-amazon.com/images/I/61f+JAx516L._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/71+tQFNXVLL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/71PfWmYyZBL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/71xLengpfjL._AC_SL1500_.jpg',
-            'https://m.media-amazon.com/images/I/81erCRei0LL._AC_SL1500_.jpg',
-        ];
-
-        $cleanAsin = substr($asin, 0, 10);
-
-        $variants = [
-            [
-                'id' => $cleanAsin,
-                'asin' => $cleanAsin,
-                'title' => 'Mini White',
-                'price' => 18.97,
-                'sku' => "AMZ-{$cleanAsin}-WHITE",
-                'image' => 'https://m.media-amazon.com/images/I/314sks1QkkL.jpg',
-                'attributes' => ['Color' => 'Mini White'],
-                'available' => true,
-            ],
-            [
-                'id' => "B0HDS44JKF",
-                'asin' => 'B0HDS44JKF',
-                'title' => 'Mini Black',
-                'price' => 18.97,
-                'sku' => "AMZ-{$cleanAsin}-BLACK",
-                'image' => 'https://m.media-amazon.com/images/I/41iBcBAgQlL.jpg',
-                'attributes' => ['Color' => 'Mini Black'],
-                'available' => true,
-            ],
-            [
-                'id' => "B0H2VWNKN6",
-                'asin' => 'B0H2VWNKN6',
-                'title' => 'Pure Milk White',
-                'price' => 136.12,
-                'sku' => "AMZ-{$cleanAsin}-PWHITE",
-                'image' => 'https://m.media-amazon.com/images/I/31yDdZ99ToL.jpg',
-                'attributes' => ['Color' => 'Pure Milk White'],
-                'available' => true,
-            ],
-        ];
-
-        return [
-            'pid' => $cleanAsin,
-            'asin' => $cleanAsin,
-            'url' => $url,
-            'title' => 'Wireless earbuds, Bluetooth 5.3 Earbuds Headphones with LED Digital Display',
-            'description' => '<p>Smart LED Display & 50H Sport Headphones: Features dual LED power levels display, HiFi stereo sound, environmental noise canceling, and IPX7 waterproofing.</p>',
-            'brand' => 'Fhumsh Store',
-            'vendor' => 'Fhumsh Store',
-            'price' => 18.97,
-            'images' => $sampleImages,
-            'features' => [
-                'Smart LED Display & 50H Playtime',
-                'HiFi Stereo Sound & Clear ENC Calls',
-                'Bluetooth 5.3 Auto Quick Connect',
-                'IPX7 Waterproof Protection for Workout',
-            ],
-            'sku' => "AMZ-{$cleanAsin}",
-            'variants' => $variants,
-        ];
+        return $trimmed;
     }
 
     public function extractAsin(string $input): string
     {
         $input = trim($input);
+
+        // 1. Canonical Amazon URL product paths (supports Books ISBN-10 and all 10-char ASINs)
+        if (preg_match('/(?:\/dp\/|\/gp\/product\/|\/gp\/aw\/d\/|\/o\/ASIN\/|\/product\/)([A-Z0-9]{10})(?:[\/?&#]|$)/i', $input, $matches)) {
+            return strtoupper($matches[1]);
+        }
+
+        // 2. Standard B0... ASIN anywhere in URL or string
         if (preg_match('/(B0[0-9A-Z]{8})/i', $input, $matches)) {
             return strtoupper($matches[1]);
         }
+
+        // 3. Raw 10-character ASIN / ISBN-10
         if (preg_match('/^[A-Z0-9]{10}$/i', $input)) {
             return strtoupper($input);
         }
-        return $input;
+
+        return '';
     }
 
     /**
@@ -327,7 +226,13 @@ class AmazonScraperService
     public function getProductDetail(string $asinOrUrl): array
     {
         $this->loadSettings();
+        $asinOrUrl = $this->resolveShortUrl($asinOrUrl);
         $asin = $this->extractAsin($asinOrUrl);
+
+        if ($asin === '' || !preg_match('/^[A-Z0-9]{10}$/i', $asin)) {
+            throw new Exception("Invalid Amazon ASIN or URL: {$asinOrUrl}. Could not extract a 10-character ASIN/ISBN.", 422);
+        }
+
         $host = 'www.amazon.com';
         if (str_starts_with($asinOrUrl, 'http')) {
             $parsedHost = parse_url($asinOrUrl, PHP_URL_HOST);
@@ -338,11 +243,6 @@ class AmazonScraperService
         $url = "https://{$host}/dp/{$asin}?th=1&psc=1";
         if ($host === 'www.amazon.com') {
             $url .= "&language=en_US&currency=USD";
-        }
-
-        // If ASIN matches a generated fallback catalog pattern (e.g. B02951F68F), return fallback specs immediately
-        if ($this->isFallbackAsin($asin)) {
-            return $this->generateFallbackProductDetail($asin, $url);
         }
 
         $html = '';
@@ -606,25 +506,53 @@ class AmazonScraperService
 
         $images = array_values(array_unique(array_filter($images)));
 
-        // 4. Description & Feature Bullets
+        // 4. Description, Feature Bullets, Fashion Facts, A+ Content & Specifications
         $features = [];
-        $bulletNodes = $xpath->query('//div[@id="feature-bullets"]//ul/li/span[contains(@class, "a-list-item")]');
+        $seenFeatures = [];
+        $bulletNodes = $xpath->query(
+            '//div[@id="feature-bullets"]//ul/li/span[contains(@class, "a-list-item")]'
+            . ' | //div[@id="productFactsDesktop_feature_div"]//ul/li/span[contains(@class, "a-list-item")]'
+        );
         foreach ($bulletNodes as $bNode) {
-            $feat = trim($bNode->nodeValue);
-            if (!empty($feat) && strlen($feat) > 3) {
+            $feat = trim(preg_replace('/\s+/', ' ', (string) $bNode->nodeValue));
+            if ($feat !== '' && strlen($feat) > 3 && !isset($seenFeatures[$feat])) {
                 $features[] = $feat;
+                $seenFeatures[$feat] = true;
             }
         }
 
-        $descriptionHtml = '';
-        $descNodes = $xpath->query('//div[@id="productDescription"] | //div[@id="featurebullets_feature_div"]');
-        if ($descNodes->length > 0) {
-            $descriptionHtml = trim($dom->saveHTML($descNodes->item(0)));
-        } elseif (!empty($features)) {
-            $descriptionHtml = '<ul>' . implode('', array_map(fn($f) => '<li>' . htmlspecialchars($f) . '</li>', $features)) . '</ul>';
+        $descriptionParts = [];
+        $descNodeList = $xpath->query('//div[@id="productDescription"]');
+        if ($descNodeList->length > 0) {
+            $pdHtml = trim($dom->saveHTML($descNodeList->item(0)));
+            if (trim(strip_tags($pdHtml)) !== '') {
+                $descriptionParts[] = $pdHtml;
+            }
         }
 
-        // 4b. Technical Specifications / Product Details Table
+        if (!empty($features)) {
+            $descriptionParts[] = '<ul>' . implode('', array_map(fn($f) => '<li>' . htmlspecialchars($f) . '</li>', $features)) . '</ul>';
+        } elseif (($fbNodes = $xpath->query('//div[@id="featurebullets_feature_div"]')) && $fbNodes->length > 0) {
+            $fbHtml = trim($dom->saveHTML($fbNodes->item(0)));
+            if (trim(strip_tags($fbHtml)) !== '') {
+                $descriptionParts[] = $fbHtml;
+            }
+        }
+
+        $combinedTextLen = strlen(trim(strip_tags(implode("\n", $descriptionParts))));
+        if ($combinedTextLen < 60) {
+            $aplusText = $this->extractVisibleTextFromNodes(
+                $xpath,
+                '//div[@id="aplus" or @id="aplus_feature_div" or @id="aplus3p_feature_div"]//p | //div[@id="aplus" or @id="aplus_feature_div" or @id="aplus3p_feature_div"]//h3 | //div[@id="aplus" or @id="aplus_feature_div" or @id="aplus3p_feature_div"]//h4'
+            );
+            if (strlen($aplusText) >= 25) {
+                $descriptionParts[] = '<div class="amazon-aplus-description"><p>' . nl2br(htmlspecialchars($aplusText)) . '</p></div>';
+            }
+        }
+
+        $descriptionHtml = implode("\n", $descriptionParts);
+
+        // 4b. Technical Specifications / Product Details Table / Fashion Facts
         $specifications = $this->parseSpecifications($xpath);
         if (!empty($specifications)) {
             $specRows = '';
@@ -638,14 +566,24 @@ class AmazonScraperService
             $descriptionHtml .= '<div class="amazon-specifications" style="margin-top:16px;"><h3>Product Specifications</h3><table style="width:100%;border-collapse:collapse;">' . $specRows . '</table></div>';
         }
 
-        // 5. Brand / Vendor Extraction
-        $brand = 'Generic';
+        // 5. Brand / Vendor Extraction (clean "Visit the ... Store" and "Brand: ...")
+        $brand = '';
         $brandNodes = $xpath->query('//a[@id="bylineInfo"] | //div[contains(@class, "po-brand")]//span[contains(@class, "a-span9")]');
         if ($brandNodes->length > 0) {
-            $rawBrand = trim($brandNodes->item(0)->nodeValue);
-            $brand = preg_replace('/^(Brand:|Visit the|Store)/i', '', $rawBrand);
-            $brand = trim($brand) ?: 'Generic';
+            $rawBrand = trim((string) $brandNodes->item(0)->nodeValue);
+            $brand = preg_replace('/^(?:Brand:|Visit the)\s*/i', '', $rawBrand);
+            $brand = preg_replace('/\s+Store$/i', '', (string) $brand);
+            $brand = trim((string) $brand);
         }
+        if ($brand === '' || strcasecmp($brand, 'Generic') === 0) {
+            $specBrand = $specifications['Brand'] ?? $specifications['Manufacturer'] ?? $specifications['Author'] ?? '';
+            $brand = trim((string) $specBrand) ?: 'Generic';
+        }
+
+        // 5b. Rating, Reviews, Weight/Dimensions & Digital Detection
+        $ratingStats = $this->parseRatingAndReviews($xpath);
+        $physicalDims = $this->extractPhysicalDimensions($specifications);
+        $isPhysical = $this->detectIsPhysical($xpath, $title, $specifications);
 
         // 6. Availability & Stock Extraction
         $availability = $this->parseAvailability($xpath, $price);
@@ -707,6 +645,9 @@ class AmazonScraperService
         }
         $images = array_values(array_unique(array_filter($images)));
 
+        // Extract List / MRP price strictly higher than current selling price
+        $listPrice = $this->extractListPrice($xpath, $price);
+
         return [
             'pid' => $asin,
             'asin' => $asin,
@@ -716,7 +657,17 @@ class AmazonScraperService
             'brand' => $brand,
             'vendor' => $brand,
             'price' => $price,
+            'list_price' => $listPrice,
             'cost_price' => $price,
+            'rating' => $ratingStats['rating'],
+            'review_count' => $ratingStats['review_count'],
+            'weight' => $physicalDims['weight'],
+            'weight_unit' => $physicalDims['weight_unit'],
+            'width' => $physicalDims['width'],
+            'width_unit' => $physicalDims['width_unit'],
+            'height' => $physicalDims['height'],
+            'height_unit' => $physicalDims['height_unit'],
+            'is_physical' => $isPhysical,
             'stock' => $availability['stock'],
             'available' => $availability['available'],
             'images' => $images,
@@ -785,7 +736,84 @@ class AmazonScraperService
     }
 
     /**
-     * Extract main product price strictly from Buy Box / CorePrice / OLP / selected Twister,
+     * Parse localized Amazon prices (US "$19.99", EU "19,99 €" / "1.299,99 €", UK "£45.50", JP "¥2,980", ranges "$14.99 - $29.99").
+     */
+    protected function parseLocalizedPrice(string $raw): float
+    {
+        $clean = trim(str_replace(["\xc2\xa0", "\u{00A0}"], ' ', $raw));
+        if ($clean === '') {
+            return 0.0;
+        }
+
+        // If a range like "$14.99 - $29.99" is given, evaluate the leading price token
+        if (preg_match('/^(.+?)\s*[-–—]\s*(?:[$£€¥￥₹₩]|USD|EUR|GBP)/u', $clean, $rm)) {
+            $clean = trim($rm[1]);
+        }
+
+        $isZeroDecimalCurrency = (bool) preg_match('/[¥￥₩]/u', $clean);
+
+        if (!preg_match('/\d+(?:[.,]\d+)*/', $clean, $m)) {
+            return 0.0;
+        }
+
+        $num = $m[0];
+
+        if (str_contains($num, ',') && str_contains($num, '.')) {
+            $lastComma = strrpos($num, ',');
+            $lastDot = strrpos($num, '.');
+            if ($lastComma > $lastDot) {
+                // European format: 1.299,99
+                $normalized = str_replace('.', '', $num);
+                $normalized = str_replace(',', '.', $normalized);
+            } else {
+                // US/UK format: 1,299.99
+                $normalized = str_replace(',', '', $num);
+            }
+        } elseif (str_contains($num, ',')) {
+            if (preg_match('/,\d{2}$/', $num) && !$isZeroDecimalCurrency) {
+                // European decimal comma: 19,99
+                $normalized = str_replace(',', '.', $num);
+            } else {
+                // Thousands separator: 2,980
+                $normalized = str_replace(',', '', $num);
+            }
+        } else {
+            $normalized = $num;
+        }
+
+        $val = (float) $normalized;
+        return $val > 0 ? round($val, 2) : 0.0;
+    }
+
+    /**
+     * Extract list/original strike-through price if strictly higher than current selling price.
+     */
+    protected function extractListPrice(DOMXPath $xpath, float $sellingPrice): float
+    {
+        if ($sellingPrice <= 0) {
+            return 0.0;
+        }
+
+        $nodes = $xpath->query(
+            '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "basisPrice")]//span[contains(@class, "a-offscreen")]'
+            . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "basisPrice")]//span[contains(@class, "a-offscreen")]'
+            . ' | //div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "a-text-price")]//span[contains(@class, "a-offscreen")]'
+            . ' | //span[@id="listPrice"]'
+            . ' | //span[@id="priceblock_listprice"]'
+        );
+
+        foreach ($nodes as $node) {
+            $val = $this->parseLocalizedPrice((string) $node->textContent);
+            if ($val > $sellingPrice + 0.01 && $val < ($sellingPrice * 5)) {
+                return $val;
+            }
+        }
+
+        return 0.0;
+    }
+
+    /**
+     * Extract main product price strictly from One-Time Buy Box / CorePrice / OLP / selected Twister,
      * never from Sponsored ads or Similar Items carousels, and skip local Amazon Fresh pickup-only prices.
      */
     protected function extractMainProductPrice(DOMXPath $xpath, string $html, string $asin = '', bool $allowLocalGrocery = false): float
@@ -795,26 +823,47 @@ class AmazonScraperService
         $price = 0.0;
 
         if (!$isLocalPickupOnly) {
+            // Priority 0: Explicit "One-time purchase" accordion row (prevents Subscribe & Save discount overriding regular price)
+            $accordionRows = $xpath->query('//div[starts-with(@id, "newAccordionRow")] | //div[@id="oneTimeBuyBox"]');
+            foreach ($accordionRows as $accRow) {
+                $rowId = (string) $accRow->getAttribute('id');
+                $rowText = strtolower(trim((string) $accRow->textContent));
+                if ($rowId !== 'oneTimeBuyBox' && !str_contains($rowText, 'one-time purchase')) {
+                    continue;
+                }
+                $oneTimeNodes = $xpath->query(
+                    './/span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                    . ' | .//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]',
+                    $accRow
+                );
+                foreach ($oneTimeNodes as $pNode) {
+                    $val = $this->parseLocalizedPrice((string) $pNode->nodeValue);
+                    if ($val > 0) {
+                        return $val;
+                    }
+                }
+            }
+
             $mainPriceNodes = $xpath->query(
                 '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
                 . ' | //div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
                 . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
                 . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
                 . ' | //div[@id="apex_desktop"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePrice_desktop"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
                 . ' | //div[@id="buybox"]//span[@id="price_inside_buybox"]'
+                . ' | //span[@id="kindle-price"]'
+                . ' | //div[@id="tmmSwatches"]//li[contains(@class, "swatchElement") and contains(@class, "selected")]//span[contains(@class, "a-color-price") or contains(@class, "slot-price")]'
                 . ' | //span[@id="priceblock_ourprice"]'
                 . ' | //span[@id="priceblock_dealprice"]'
             );
 
             if ($mainPriceNodes->length > 0) {
                 foreach ($mainPriceNodes as $pNode) {
-                    $rawPrice = trim((string) $pNode->nodeValue);
-                    if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
-                        $val = (float) str_replace(',', '', $m[0]);
-                        if ($val > 0) {
-                            $price = $val;
-                            break;
-                        }
+                    $val = $this->parseLocalizedPrice((string) $pNode->nodeValue);
+                    if ($val > 0) {
+                        $price = $val;
+                        break;
                     }
                 }
             }
@@ -854,14 +903,14 @@ class AmazonScraperService
                         foreach ($item['slots'] ?? [] as $slot) {
                             $dd = $slot['displayData'] ?? [];
                             if (!empty($dd['priceWithoutCurrencySymbol'])) {
-                                $pVal = (float) str_replace(',', '', (string) $dd['priceWithoutCurrencySymbol']);
+                                $pVal = $this->parseLocalizedPrice((string) $dd['priceWithoutCurrencySymbol']);
                                 if ($pVal > 0) {
                                     $price = $pVal;
                                     break 3;
                                 }
                             }
-                            if (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
-                                $pVal = (float) str_replace(',', '', $om[1]);
+                            if (!empty($dd['olpMessage'])) {
+                                $pVal = $this->parseLocalizedPrice((string) $dd['olpMessage']);
                                 if ($pVal > 0) {
                                     $price = $pVal;
                                     break 3;
@@ -882,13 +931,10 @@ class AmazonScraperService
                 . ' | //div[@id="all-offers-display"]//span[contains(@class, "a-offscreen")]'
             );
             foreach ($olpNodes as $node) {
-                $raw = trim((string) $node->textContent);
-                if (preg_match('/[\d,]+\.\d{2}/', $raw, $m)) {
-                    $val = (float) str_replace(',', '', $m[0]);
-                    if ($val > 0) {
-                        $price = $val;
-                        break;
-                    }
+                $val = $this->parseLocalizedPrice((string) $node->textContent);
+                if ($val > 0) {
+                    $price = $val;
+                    break;
                 }
             }
         }
@@ -901,19 +947,17 @@ class AmazonScraperService
             $swatchNodes = $xpath->query($swatchQuery);
             foreach ($swatchNodes as $sNode) {
                 $pNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $sNode);
-                if ($pNodes->length > 0 && preg_match('/[\d,]+\.\d{2}/', $pNodes->item(0)->textContent, $m)) {
-                    $val = (float) str_replace(',', '', $m[0]);
+                if ($pNodes->length > 0) {
+                    $val = $this->parseLocalizedPrice((string) $pNodes->item(0)->textContent);
                     if ($val > 0) {
                         $price = $val;
                         break;
                     }
                 }
-                if (preg_match('/(?:from\s+)?\$([\d,]+\.\d{2})/i', (string) $sNode->textContent, $m)) {
-                    $val = (float) str_replace(',', '', $m[1]);
-                    if ($val > 0) {
-                        $price = $val;
-                        break;
-                    }
+                $val = $this->parseLocalizedPrice((string) $sNode->textContent);
+                if ($val > 0) {
+                    $price = $val;
+                    break;
                 }
             }
         }
@@ -1027,13 +1071,13 @@ class AmazonScraperService
                             foreach ($item['slots'] as $slot) {
                                 $displayData = $slot['displayData'] ?? [];
                                 if ($itemPrice <= 0 && !empty($displayData['priceWithoutCurrencySymbol'])) {
-                                    $parsedP = (float) str_replace(',', '', (string) $displayData['priceWithoutCurrencySymbol']);
+                                    $parsedP = $this->parseLocalizedPrice((string) $displayData['priceWithoutCurrencySymbol']);
                                     if ($parsedP > 0) {
                                         $itemPrice = $parsedP;
                                     }
                                 }
-                                if (!empty($displayData['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $displayData['olpMessage'], $pm)) {
-                                    $parsedP = (float) str_replace(',', '', $pm[1]);
+                                if (!empty($displayData['olpMessage'])) {
+                                    $parsedP = $this->parseLocalizedPrice((string) $displayData['olpMessage']);
                                     if ($parsedP > 0) {
                                         $hasOlpOffer = true;
                                         if ($itemPrice <= 0) {
@@ -1179,15 +1223,18 @@ class AmazonScraperService
                     // Price
                     $itemPrice = 0.0;
                     $hasOlpMatch = false;
-                    if (preg_match('/from\s+\$([\d,]+\.\d{2})/i', (string) $node->textContent, $om)) {
-                        $itemPrice = (float) str_replace(',', '', $om[1]);
-                        $hasOlpMatch = true;
+                    if (preg_match('/from\s+([^\n]+)/i', (string) $node->textContent, $om)) {
+                        $parsedFrom = $this->parseLocalizedPrice($om[1]);
+                        if ($parsedFrom > 0) {
+                            $itemPrice = $parsedFrom;
+                            $hasOlpMatch = true;
+                        }
                     } elseif (!$isLocalGroceryOnly) {
                         $priceNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
                         if ($priceNodes->length > 0) {
-                            $rawP = $priceNodes->item(0)->textContent;
-                            if (preg_match('/[\d,]+\.\d{2}/', $rawP, $pm)) {
-                                $itemPrice = (float) str_replace(',', '', $pm[0]);
+                            $parsedNode = $this->parseLocalizedPrice((string) $priceNodes->item(0)->textContent);
+                            if ($parsedNode > 0) {
+                                $itemPrice = $parsedNode;
                             }
                         }
                     }
@@ -1223,6 +1270,63 @@ class AmazonScraperService
             }
         }
 
+        // --- STRATEGY 3b: Books / Media Format Swatches (#tmmSwatches: Hardcover, Paperback, Kindle, Audiobook) ---
+        if (empty($variants)) {
+            $tmmNodes = $xpath->query('//div[@id="tmmSwatches"]//li[contains(@class, "swatchElement")]');
+            foreach ($tmmNodes as $tNode) {
+                $linkNodes = $xpath->query('.//a[contains(@href, "/dp/") or contains(@href, "/gp/product/")]', $tNode);
+                $href = $linkNodes->length > 0 ? (string) $linkNodes->item(0)->getAttribute('href') : '';
+                $itemAsin = $href !== '' ? $this->extractAsin($href) : '';
+
+                $liClass = strtolower((string) $tNode->getAttribute('class'));
+                $isSelected = str_contains($liClass, 'selected');
+                if ($itemAsin === '' && $isSelected) {
+                    $itemAsin = $asin;
+                }
+                if ($itemAsin === '' || strlen($itemAsin) !== 10 || isset($seenAsins[$itemAsin])) {
+                    continue;
+                }
+
+                $labelNodes = $xpath->query('.//span[contains(@class, "slot-title")] | .//a/span[1]', $tNode);
+                $fmtTitle = $labelNodes->length > 0 ? trim(preg_replace('/\s+/', ' ', (string) $labelNodes->item(0)->textContent)) : '';
+                if ($fmtTitle === '') {
+                    continue;
+                }
+
+                $priceNodes = $xpath->query('.//span[contains(@class, "slot-price")] | .//span[contains(@class, "a-color-price")] | .//span[contains(@class, "a-color-base")]', $tNode);
+                $fmtPrice = 0.0;
+                foreach ($priceNodes as $pn) {
+                    $parsedP = $this->parseLocalizedPrice((string) $pn->textContent);
+                    if ($parsedP > 0) {
+                        $fmtPrice = $parsedP;
+                        break;
+                    }
+                }
+                if ($fmtPrice <= 0 && $isSelected && $price > 0) {
+                    $fmtPrice = $price;
+                }
+
+                $isAvailable = !str_contains($liClass, 'unavailable') && ($fmtPrice > 0 || $isSelected);
+                $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+
+                $variants[] = [
+                    'id' => $itemAsin,
+                    'asin' => $itemAsin,
+                    'title' => $fmtTitle,
+                    'price' => $fmtPrice,
+                    'cost_price' => $fmtPrice,
+                    'sku' => "AMZ-{$itemAsin}",
+                    'image' => !empty($images) ? $images[0] : '',
+                    'attributes' => [
+                        'Format' => $fmtTitle,
+                    ],
+                    'available' => $isAvailable,
+                    'stock' => $varStock,
+                ];
+                $seenAsins[$itemAsin] = true;
+            }
+        }
+
         // --- STRATEGY 4: Select dropdown options (Size / Style dropdowns) ---
         if (empty($variants)) {
             $selectOptions = $xpath->query('//select[contains(@name, "dropdown_selected")]/option[@value and not(@value="-1")]');
@@ -1230,12 +1334,12 @@ class AmazonScraperService
                 foreach ($selectOptions as $opt) {
                     $val = $opt->getAttribute('value');
                     $itemAsin = null;
-                    if (preg_match('/(B0[0-9A-Z]{8})/i', $val, $am)) {
-                        $itemAsin = $am[1];
+                    if (preg_match('/(?:,|^|\/)([A-Z0-9]{10})(?:$|,|\?)/i', $val, $am)) {
+                        $itemAsin = strtoupper($am[1]);
                     } else {
-                        $itemAsin = $opt->getAttribute('data-asin');
+                        $itemAsin = strtoupper(trim((string) $opt->getAttribute('data-asin')));
                     }
-                    if (!$itemAsin || isset($seenAsins[$itemAsin])) continue;
+                    if (!$itemAsin || strlen($itemAsin) !== 10 || isset($seenAsins[$itemAsin])) continue;
 
                     $title = trim(preg_replace('/\s+/', ' ', $opt->textContent));
                     if (empty($title)) continue;
@@ -1321,7 +1425,224 @@ class AmazonScraperService
             }
         }
 
+        // Fashion / Apparel Product Facts table (#productFactsDesktop_feature_div .product-facts-detail)
+        $factRows = $xpath->query('//div[@id="productFactsDesktop_feature_div"]//div[contains(@class, "product-facts-detail")]');
+        foreach ($factRows as $factRow) {
+            $cols = $xpath->query('./div', $factRow);
+            if ($cols->length >= 2) {
+                $k = trim(preg_replace('/\s+/', ' ', str_replace(["\u{200E}", "\u{200F}"], '', $cols->item(0)->textContent)));
+                $v = trim(preg_replace('/\s+/', ' ', str_replace(["\u{200E}", "\u{200F}"], '', $cols->item(1)->textContent)));
+                $k = rtrim($k, ':');
+                if ($k !== '' && $v !== '' && !isset($specs[$k])) {
+                    $specs[$k] = $v;
+                }
+            }
+        }
+
         return $specs;
+    }
+
+    /**
+     * Extract star rating (0.0 - 5.0) and total customer review count.
+     */
+    protected function parseRatingAndReviews(DOMXPath $xpath): array
+    {
+        $rating = 0.0;
+        $ratingNodes = $xpath->query(
+            '//span[@id="acrPopover"]/@title'
+            . ' | //div[@id="averageCustomerReviews"]//span[contains(@class, "a-icon-alt")]'
+            . ' | //span[@data-hook="rating-out-of-text"]'
+        );
+        foreach ($ratingNodes as $rn) {
+            $txt = trim((string) $rn->textContent);
+            if (preg_match('/(\d+(?:[.,]\d+)?)\s*(?:out of|von|sur|de|\/\s*5)/i', $txt, $m)) {
+                $val = (float) str_replace(',', '.', $m[1]);
+                if ($val > 0 && $val <= 5.0) {
+                    $rating = round($val, 2);
+                    break;
+                }
+            }
+        }
+
+        $reviewCount = 0;
+        $revNodes = $xpath->query('//span[@id="acrCustomerReviewText"] | //span[@data-hook="total-review-count"]');
+        foreach ($revNodes as $rn) {
+            $digits = preg_replace('/[^\d]/', '', (string) $rn->textContent);
+            if ($digits !== '') {
+                $reviewCount = (int) $digits;
+                break;
+            }
+        }
+
+        return [
+            'rating' => $rating,
+            'review_count' => $reviewCount,
+        ];
+    }
+
+    /**
+     * Extract physical weight & dimensions (width, height) from Amazon specifications table.
+     */
+    protected function extractPhysicalDimensions(array $specifications): array
+    {
+        $weight = null;
+        $weightUnit = 'kg';
+        $width = null;
+        $widthUnit = 'in';
+        $height = null;
+        $heightUnit = 'in';
+
+        $weightValStr = null;
+        $dimValStr = null;
+
+        foreach ($specifications as $k => $v) {
+            $kl = strtolower((string) $k);
+            if (str_contains($kl, 'weight')) {
+                // Prefer Item Weight over Shipping Weight
+                if ($weightValStr === null || !str_contains($kl, 'shipping')) {
+                    $weightValStr = (string) $v;
+                }
+            }
+            if ($dimValStr === null && str_contains($kl, 'dimension')) {
+                $dimValStr = (string) $v;
+            }
+        }
+
+        if ($weightValStr !== null && preg_match('/(\d+(?:\.\d+)?)\s*(kilograms?|kgs?|grams?|g|pounds?|lbs?|ounces?|oz)\b/i', $weightValStr, $wm)) {
+            $weight = round((float) $wm[1], 2);
+            $rawUnit = strtolower($wm[2]);
+            $weightUnit = match (true) {
+                str_starts_with($rawUnit, 'kg'), str_starts_with($rawUnit, 'kilogram') => 'kg',
+                str_starts_with($rawUnit, 'g') => 'g',
+                str_starts_with($rawUnit, 'lb'), str_starts_with($rawUnit, 'pound') => 'lb',
+                str_starts_with($rawUnit, 'oz'), str_starts_with($rawUnit, 'ounce') => 'oz',
+                default => 'kg',
+            };
+        }
+
+        if ($dimValStr !== null && preg_match('/(\d+(?:\.\d+)?)\s*[x×*]\s*(\d+(?:\.\d+)?)(?:\s*[x×*]\s*(\d+(?:\.\d+)?))?\s*(inches?|in\b|centimeters?|cm\b|millimeters?|mm\b)?/i', $dimValStr, $dm)) {
+            $wVal = round((float) $dm[2], 2);
+            $hVal = !empty($dm[3]) ? round((float) $dm[3], 2) : round((float) $dm[1], 2);
+            $rawDimUnit = strtolower((string) ($dm[4] ?? 'in'));
+            $unit = match (true) {
+                str_starts_with($rawDimUnit, 'cm'), str_starts_with($rawDimUnit, 'centimeter') => 'cm',
+                str_starts_with($rawDimUnit, 'mm'), str_starts_with($rawDimUnit, 'millimeter') => 'mm',
+                default => 'in',
+            };
+            $width = $wVal > 0 ? $wVal : null;
+            $height = $hVal > 0 ? $hVal : null;
+            $widthUnit = $unit;
+            $heightUnit = $unit;
+        }
+
+        return [
+            'weight' => $weight,
+            'weight_unit' => $weightUnit,
+            'width' => $width,
+            'width_unit' => $widthUnit,
+            'height' => $height,
+            'height_unit' => $heightUnit,
+        ];
+    }
+
+    /**
+     * Detect whether an Amazon product is a physical shipped item vs digital/eBook/code.
+     */
+    protected function detectIsPhysical(DOMXPath $xpath, string $title, array $specifications): bool
+    {
+        $selectedFormat = strtolower(trim($this->extractVisibleTextFromNodes(
+            $xpath,
+            '//div[@id="tmmSwatches"]//li[contains(@class, "swatchElement") and contains(@class, "selected")] | //div[@id="tmmSwatches"]//li[contains(@class, "swatchElement") and contains(@class, "selected")]//span'
+        )));
+
+        $digitalMarkers = [
+            'kindle edition',
+            'audible audiobook',
+            'digital download',
+            'online game code',
+            'digital code',
+            'egift card',
+            'prime video',
+            'appstore for android',
+        ];
+
+        $haystack = strtolower($selectedFormat . ' ' . $title . ' ' . implode(' ', $specifications));
+        foreach ($digitalMarkers as $marker) {
+            if (str_contains($haystack, $marker)) {
+                return false;
+            }
+        }
+
+        return $xpath->query('//span[@id="kindle-price"]')->length === 0;
+    }
+
+    /**
+     * Extract a JSON object or array following a regex key prefix using balanced brace/bracket matching.
+     */
+    protected function extractBalancedJsonBlock(string $html, string $keyPattern, string $openChar = '{', string $closeChar = '}'): ?array
+    {
+        if (!preg_match('/' . $keyPattern . '/is', $html, $m, PREG_OFFSET_CAPTURE)) {
+            return null;
+        }
+
+        $matchStr = $m[0][0];
+        $matchOffset = $m[0][1];
+        $startPos = $matchOffset + strlen($matchStr) - 1;
+        if (($html[$startPos] ?? '') !== $openChar) {
+            $foundPos = strpos($html, $openChar, $matchOffset);
+            if ($foundPos === false) {
+                return null;
+            }
+            $startPos = $foundPos;
+        }
+
+        $len = strlen($html);
+        $maxScan = min($len, $startPos + 500000);
+        $depth = 0;
+        $inStr = false;
+        $quoteChar = '';
+        $esc = false;
+        $endPos = null;
+
+        for ($i = $startPos; $i < $maxScan; $i++) {
+            $ch = $html[$i];
+            if ($esc) {
+                $esc = false;
+                continue;
+            }
+            if ($ch === '\\') {
+                $esc = true;
+                continue;
+            }
+            if ($inStr) {
+                if ($ch === $quoteChar) {
+                    $inStr = false;
+                }
+                continue;
+            }
+            if ($ch === '"' || $ch === "'") {
+                $inStr = true;
+                $quoteChar = $ch;
+                continue;
+            }
+            if ($ch === $openChar) {
+                $depth++;
+            } elseif ($ch === $closeChar) {
+                $depth--;
+                if ($depth === 0) {
+                    $endPos = $i;
+                    break;
+                }
+            }
+        }
+
+        if ($endPos === null) {
+            return null;
+        }
+
+        $jsonStr = substr($html, $startPos, $endPos - $startPos + 1);
+        $decoded = json_decode($jsonStr, true);
+        return is_array($decoded) ? $decoded : null;
     }
 
     /**
@@ -1434,33 +1755,18 @@ class AmazonScraperService
         $labels = [];
         $colorImages = [];
 
-        if (preg_match('/["\']?dimensionValuesDisplayData["\']?\s*:\s*(\{.*?\})\s*,\s*["\'](?:pwASINs|pwUnavailableMessage|variationDisplayLabels|variationValues|dimensions)/s', $html, $m)) {
-            $dimDisplayData = json_decode($m[1], true);
-        }
+        $dimDisplayData = $this->extractBalancedJsonBlock($html, '["\']?dimensionValuesDisplayData["\']?\s*:\s*\{', '{', '}');
 
         if (empty($dimDisplayData) || !is_array($dimDisplayData)) {
             return [];
         }
 
-        if (preg_match('/["\']?dimensions["\']?\s*:\s*(\[[^\]]+\])/s', $html, $m)) {
-            $dimensions = json_decode($m[1], true) ?: [];
-        }
-
-        if (preg_match('/["\']?variationDisplayLabels["\']?\s*:\s*(\{[^}]+\})/s', $html, $m)) {
-            $labels = json_decode($m[1], true) ?: [];
-        }
-
-        if (preg_match('/[\'"]colorImages[\'"]\s*:\s*(\{.*?\})\s*,\s*[\'"](?:colorToAsin|visualDimensions|heroImage|landingAsinColor|initial)/s', $html, $m)) {
-            $decoded = json_decode($m[1], true);
-            if (!is_array($decoded)) {
-                $decoded = json_decode(str_replace("'", '"', $m[1]), true);
-            }
-            if (is_array($decoded)) {
-                foreach ($decoded as $cKey => $cImgs) {
-                    if (is_string($cKey) && strtolower($cKey) !== 'initial' && is_array($cImgs)) {
-                        $colorImages[strtolower(trim($cKey))] = $cImgs;
-                    }
-                }
+        $dimensions = $this->extractBalancedJsonBlock($html, '["\']?dimensions["\']?\s*:\s*\[', '[', ']') ?: [];
+        $labels = $this->extractBalancedJsonBlock($html, '["\']?variationDisplayLabels["\']?\s*:\s*\{', '{', '}') ?: [];
+        $decodedColorImgs = $this->extractBalancedJsonBlock($html, '["\']colorImages["\']\s*:\s*\{', '{', '}') ?: [];
+        foreach ($decodedColorImgs as $cKey => $cImgs) {
+            if (is_string($cKey) && strtolower($cKey) !== 'initial' && is_array($cImgs)) {
+                $colorImages[strtolower(trim($cKey))] = $cImgs;
             }
         }
 
@@ -1610,7 +1916,7 @@ class AmazonScraperService
             return $variants;
         }
 
-        $targetAsins = array_slice(array_keys($asinsToFetch), 0, 40);
+        $targetAsins = array_slice(array_keys($asinsToFetch), 0, 60);
         $useBrightData = !empty($this->brightdataApiKey) && !empty($this->brightdataZone);
         $country = $this->resolveBrightDataCountry("https://{$host}/");
         $fetchedPrices = [];
@@ -1688,9 +1994,9 @@ class AmazonScraperService
                                     $dd = $slot['displayData'] ?? [];
                                     $sPrice = 0.0;
                                     if (!empty($dd['priceWithoutCurrencySymbol'])) {
-                                        $sPrice = (float) str_replace(',', '', (string) $dd['priceWithoutCurrencySymbol']);
-                                    } elseif (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
-                                        $sPrice = (float) str_replace(',', '', $om[1]);
+                                        $sPrice = $this->parseLocalizedPrice((string) $dd['priceWithoutCurrencySymbol']);
+                                    } elseif (!empty($dd['olpMessage'])) {
+                                        $sPrice = $this->parseLocalizedPrice((string) $dd['olpMessage']);
                                     }
                                     if ($sPrice > 0 && empty($fetchedPrices[$sAsin])) {
                                         $fetchedPrices[$sAsin] = $sPrice;

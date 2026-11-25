@@ -231,7 +231,11 @@ class InventorySyncService
     {
         $product->loadMissing(['variants', 'images']);
 
-        if ((float) ($product->price ?? 0) <= 0) {
+        if ((float) ($product->price ?? 0) <= 0 || (float) ($product->cost_per_item ?? 0) <= 0) {
+            return true;
+        }
+
+        if (trim(strip_tags((string) ($product->description ?? ''))) === '') {
             return true;
         }
 
@@ -799,32 +803,44 @@ class InventorySyncService
                 if (empty($product->variant_options) && !empty($supplierVariants)) {
                     $product->variant_options = $cjImporter->buildVariantOptions($supplierData);
                 }
+                if (trim(strip_tags((string) $product->description)) === '' && !empty($supplierData['description'])) {
+                    $product->description = (string) $supplierData['description'];
+                }
                 if (trim((string) $product->short_description) === '' && !empty($supplierData['description'])) {
                     $product->short_description = $cjImporter->extractCleanShortDescription($supplierData['description']);
                 }
-            } elseif ($channel === 'aliexpress' && empty($product->variant_options) && !empty($supplierVariants)) {
-                $optionsCollector = [];
-                foreach ($supplierVariants as $sv) {
-                    if (empty($sv['attributes']) || !is_array($sv['attributes'])) {
-                        continue;
-                    }
-                    foreach ($sv['attributes'] as $optName => $optVal) {
-                        $cleanOpt = trim((string) $optName);
-                        $cleanVal = trim((string) $optVal);
-                        if ($cleanOpt !== '' && $cleanVal !== '') {
-                            $optionsCollector[$cleanOpt][$cleanVal] = true;
+            } elseif ($channel === 'aliexpress') {
+                if (empty($product->variant_options) && !empty($supplierVariants)) {
+                    $optionsCollector = [];
+                    foreach ($supplierVariants as $sv) {
+                        if (empty($sv['attributes']) || !is_array($sv['attributes'])) {
+                            continue;
+                        }
+                        foreach ($sv['attributes'] as $optName => $optVal) {
+                            $cleanOpt = trim((string) $optName);
+                            $cleanVal = trim((string) $optVal);
+                            if ($cleanOpt !== '' && $cleanVal !== '') {
+                                $optionsCollector[$cleanOpt][$cleanVal] = true;
+                            }
                         }
                     }
-                }
-                if (!empty($optionsCollector)) {
-                    $aliOpts = [];
-                    foreach ($optionsCollector as $optName => $valsMap) {
-                        $aliOpts[] = [
-                            'name' => $optName,
-                            'values' => array_values(array_keys($valsMap)),
-                        ];
+                    if (!empty($optionsCollector)) {
+                        $aliOpts = [];
+                        foreach ($optionsCollector as $optName => $valsMap) {
+                            $aliOpts[] = [
+                                'name' => $optName,
+                                'values' => array_values(array_keys($valsMap)),
+                            ];
+                        }
+                        $product->variant_options = $aliOpts;
                     }
-                    $product->variant_options = $aliOpts;
+                }
+                $aliRawDesc = (string) ($supplierData['detail'] ?? $supplierData['description'] ?? '');
+                if (trim(strip_tags((string) $product->description)) === '' && trim(strip_tags($aliRawDesc)) !== '') {
+                    $product->description = $aliRawDesc;
+                }
+                if (trim((string) $product->short_description) === '' && trim(strip_tags($aliRawDesc)) !== '') {
+                    $product->short_description = \Illuminate\Support\Str::limit(trim(strip_tags($aliRawDesc)), 160);
                 }
             }
 
