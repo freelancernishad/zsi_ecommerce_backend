@@ -802,7 +802,10 @@ class AmazonSmartSyncService
             return ['synced' => false, 'reason' => 'daily_cap_reached'];
         }
 
-        $isRecentlySynced = function (Product $prod): bool {
+        $isRecentlySynced = function (Product $prod, bool $broken = false): bool {
+            if ($broken) {
+                return Cache::has("detail_view_repair_cooldown_{$prod->id}");
+            }
             if (Cache::has("detail_view_sync_recent_{$prod->id}")) {
                 return true;
             }
@@ -812,7 +815,10 @@ class AmazonSmartSyncService
             return false;
         };
 
-        if ($isRecentlySynced($product)) {
+        $syncHelper = app(InventorySyncService::class);
+        $isBroken = $syncHelper->isProductStructurallyBroken($product);
+
+        if ($isRecentlySynced($product, $isBroken)) {
             return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
         }
 
@@ -827,8 +833,72 @@ class AmazonSmartSyncService
 
         try {
             $product->refresh();
-            if ($isRecentlySynced($product)) {
+            $isBroken = $syncHelper->isProductStructurallyBroken($product);
+            if ($isRecentlySynced($product, $isBroken)) {
                 return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+            }
+
+            if ($isBroken) {
+                Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
+
+                $oldStock = (int) ($product->stock_quantity ?? 0);
+                $oldPrice = (float) ($product->price ?? 0);
+                $inferred = $this->inferExistingMarkup($product, (float) $config['default_markup_percent']);
+                $markupType = $inferred['type'] === 'fixed' ? 'fixed' : 'percentage';
+                $pct = $markupType === 'percentage' ? (float) $inferred['value'] : 0.0;
+                $fixed = $markupType === 'fixed' ? (float) $inferred['value'] : 0.0;
+
+                try {
+                    app(\Amazon\Services\AmazonImportService::class)->importAmazonProduct(
+                        (string) $product->amazon_asin,
+                        $pct,
+                        $product->category_id ? (int) $product->category_id : null,
+                        (int) $config['default_stock'],
+                        (string) ($product->status ?: 'published'),
+                        $markupType,
+                        $fixed
+                    );
+                    $this->recordApiRequests(1);
+                    $product->refresh();
+
+                    InventorySyncLog::create([
+                        'product_id' => $product->id,
+                        'product_name' => $product->name,
+                        'supplier' => 'amazon',
+                        'supplier_id' => (string) $product->amazon_asin,
+                        'status' => 'success',
+                        'changes_detected' => true,
+                        'old_stock' => $oldStock,
+                        'new_stock' => (int) ($product->stock_quantity ?? 0),
+                        'old_price' => $oldPrice,
+                        'new_price' => (float) ($product->price ?? 0),
+                        'details' => [
+                            'engine' => 'amazon_detail_view_repair',
+                            'repaired' => true,
+                        ],
+                    ]);
+
+                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+
+                    return [
+                        'synced' => true,
+                        'repaired' => true,
+                        'supplier' => 'amazon',
+                        'product_id' => $product->id,
+                        'changes_detected' => true,
+                        'error' => null,
+                    ];
+                } catch (Exception $e) {
+                    $this->logSyncError($product, $e->getMessage(), 'detail_view_repair');
+                    return [
+                        'synced' => false,
+                        'repaired' => false,
+                        'supplier' => 'amazon',
+                        'product_id' => $product->id,
+                        'changes_detected' => false,
+                        'error' => $e->getMessage(),
+                    ];
+                }
             }
 
             $product->loadMissing('variants');
@@ -843,6 +913,7 @@ class AmazonSmartSyncService
 
             return [
                 'synced' => ($result['status'] ?? '') === 'success',
+                'repaired' => false,
                 'supplier' => 'amazon',
                 'product_id' => $product->id,
                 'changes_detected' => $result['changes_detected'] ?? false,

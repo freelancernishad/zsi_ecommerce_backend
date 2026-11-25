@@ -467,7 +467,7 @@ class CjImportService
     /**
      * Safely parse image URLs handling JSON string arrays, comma separated strings, and arrays.
      */
-    protected function parseImageUrls($imgData): array
+    public function parseImageUrls($imgData): array
     {
         if (empty($imgData)) return [];
 

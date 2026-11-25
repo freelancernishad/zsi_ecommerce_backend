@@ -3,6 +3,7 @@
 namespace App\Services;
 
 use App\Models\Product;
+use App\Models\ProductImage;
 use App\Models\ProductVariant;
 use App\Models\InventorySyncLog;
 use App\Models\SiteSetting;
@@ -219,10 +220,41 @@ class InventorySyncService
     }
 
     /**
-     * Check whether a product's detail-view sync is still within the 6-hour cooldown window.
+     * Detect whether a dropship product is structurally broken (zero price, missing images,
+     * multi-variant product missing variant_options, or variant missing combination_label).
      */
-    protected function isDetailViewSyncFresh(?string $syncedAt, int $productId): bool
+    public function isProductStructurallyBroken(Product $product): bool
     {
+        $product->loadMissing(['variants', 'images']);
+
+        if ((float) ($product->price ?? 0) <= 0) {
+            return true;
+        }
+
+        if ($product->images->isEmpty()) {
+            return true;
+        }
+
+        if ($product->variants->count() > 1 && empty($product->variant_options)) {
+            return true;
+        }
+
+        if ($product->variants->contains(fn($v) => trim((string) $v->combination_label) === '')) {
+            return true;
+        }
+
+        return false;
+    }
+
+    /**
+     * Check whether a product's detail-view sync is still within the cooldown window.
+     * Structurally broken products bypass the 6-hour cooldown (guarded by a 10-minute anti-spam lock).
+     */
+    protected function isDetailViewSyncFresh(?string $syncedAt, int $productId, bool $isBroken = false): bool
+    {
+        if ($isBroken) {
+            return Cache::has("detail_view_repair_cooldown_{$productId}");
+        }
         if (Cache::has("detail_view_sync_recent_{$productId}")) {
             return true;
         }
@@ -234,7 +266,8 @@ class InventorySyncService
 
     /**
      * Single-call sync triggered on storefront product detail page view,
-     * gated by each supplier's own detail-view sync toggle in Admin Settings (at most once every 6 hours).
+     * gated by each supplier's own detail-view sync toggle in Admin Settings (at most once every 6 hours,
+     * or every 10 minutes if the product is structurally broken).
      */
     public function syncProductOnDetailView(Product $product): array
     {
@@ -248,7 +281,8 @@ class InventorySyncService
                 return ['synced' => false, 'reason' => 'cj_view_sync_disabled'];
             }
 
-            if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id)) {
+            $isBroken = $this->isProductStructurallyBroken($product);
+            if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id, $isBroken)) {
                 return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
             }
 
@@ -259,8 +293,13 @@ class InventorySyncService
 
             try {
                 $product->refresh();
-                if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id)) {
+                $isBroken = $this->isProductStructurallyBroken($product);
+                if ($this->isDetailViewSyncFresh($product->cj_synced_at ? (string) $product->cj_synced_at : null, $product->id, $isBroken)) {
                     return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+                }
+
+                if ($isBroken) {
+                    Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
                 }
 
                 $config = $this->getConfig();
@@ -279,6 +318,7 @@ class InventorySyncService
 
                 return [
                     'synced' => ($res['status'] ?? '') === 'success',
+                    'repaired' => $isBroken && (($res['status'] ?? '') === 'success'),
                     'supplier' => 'cjdropshipping',
                     'result' => $res,
                 ];
@@ -293,7 +333,8 @@ class InventorySyncService
                 return ['synced' => false, 'reason' => 'aliexpress_view_sync_disabled'];
             }
 
-            if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id)) {
+            $isBroken = $this->isProductStructurallyBroken($product);
+            if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id, $isBroken)) {
                 return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
             }
 
@@ -304,8 +345,13 @@ class InventorySyncService
 
             try {
                 $product->refresh();
-                if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id)) {
+                $isBroken = $this->isProductStructurallyBroken($product);
+                if ($this->isDetailViewSyncFresh($product->aliexpress_synced_at ? (string) $product->aliexpress_synced_at : null, $product->id, $isBroken)) {
                     return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
+                }
+
+                if ($isBroken) {
+                    Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
                 }
 
                 $config = $this->getConfig();
@@ -323,6 +369,7 @@ class InventorySyncService
 
                 return [
                     'synced' => ($res['status'] ?? '') === 'success',
+                    'repaired' => $isBroken && (($res['status'] ?? '') === 'success'),
                     'supplier' => 'aliexpress',
                     'result' => $res,
                 ];
@@ -574,7 +621,10 @@ class InventorySyncService
                             $minVariantCost = $suppCostPrice;
                         }
                         $calcPrice = $this->resolveTargetRetailPrice($product, $suppCostPrice, $oldVarPrice, $channel, $config);
-                        if ($calcPrice > $oldVarPrice && $config['price_increase_action'] === 'auto_update_markup') {
+                        if ($oldVarPrice <= 0) {
+                            $newVarPrice = $calcPrice;
+                            $priceChanged = true;
+                        } elseif ($calcPrice > $oldVarPrice && $config['price_increase_action'] === 'auto_update_markup') {
                             $newVarPrice = $calcPrice;
                             $priceChanged = true;
                         } elseif ($calcPrice < $oldVarPrice && $config['price_decrease_action'] === 'update_lower_price') {
@@ -596,7 +646,7 @@ class InventorySyncService
                         $stockChanged = true;
                     }
 
-                    // Auto-repair missing CJ variant label / color / size
+                    // Auto-repair missing CJ / AliExpress variant label / color / size
                     if ($cjImporter && $matchedSuppVar && (trim((string) $lVar->combination_label) === '' || ($lVar->color === null && $lVar->size === null))) {
                         $resolvedLabel = $cjImporter->resolveVariantLabel($matchedSuppVar, (string) $product->name);
                         $parsedAttr = $cjImporter->parseVariantAttributes($resolvedLabel, $cjKeyNames);
@@ -608,6 +658,17 @@ class InventorySyncService
                         }
                         if ($lVar->size === null && $parsedAttr['size'] !== null) {
                             $lVar->size = $parsedAttr['size'];
+                        }
+                    } elseif ($channel === 'aliexpress' && $matchedSuppVar && (trim((string) $lVar->combination_label) === '' || ($lVar->color === null && $lVar->size === null))) {
+                        if (trim((string) $lVar->combination_label) === '') {
+                            $lVar->combination_label = trim((string) ($matchedSuppVar['name'] ?? '')) ?: ('Option ' . $lVar->id);
+                        }
+                        $attrs = is_array($matchedSuppVar['attributes'] ?? null) ? $matchedSuppVar['attributes'] : [];
+                        if ($lVar->color === null) {
+                            $lVar->color = $attrs['Color'] ?? $attrs['Colour'] ?? null;
+                        }
+                        if ($lVar->size === null) {
+                            $lVar->size = $attrs['Size'] ?? null;
                         }
                     }
 
@@ -673,7 +734,10 @@ class InventorySyncService
                 $newProductPrice = $oldProductPrice;
                 if ($suppCost > 0) {
                     $calcPrice = $this->resolveTargetRetailPrice($product, $suppCost, $oldProductPrice, $channel, $config);
-                    if ($calcPrice > $oldProductPrice && $config['price_increase_action'] === 'auto_update_markup') {
+                    if ($oldProductPrice <= 0) {
+                        $newProductPrice = $calcPrice;
+                        $priceChanged = true;
+                    } elseif ($calcPrice > $oldProductPrice && $config['price_increase_action'] === 'auto_update_markup') {
                         $newProductPrice = $calcPrice;
                         $priceChanged = true;
                     } elseif ($calcPrice < $oldProductPrice && $config['price_decrease_action'] === 'update_lower_price') {
@@ -718,6 +782,30 @@ class InventorySyncService
                 if (trim((string) $product->short_description) === '' && !empty($supplierData['description'])) {
                     $product->short_description = $cjImporter->extractCleanShortDescription($supplierData['description']);
                 }
+            } elseif ($channel === 'aliexpress' && empty($product->variant_options) && !empty($supplierVariants)) {
+                $optionsCollector = [];
+                foreach ($supplierVariants as $sv) {
+                    if (empty($sv['attributes']) || !is_array($sv['attributes'])) {
+                        continue;
+                    }
+                    foreach ($sv['attributes'] as $optName => $optVal) {
+                        $cleanOpt = trim((string) $optName);
+                        $cleanVal = trim((string) $optVal);
+                        if ($cleanOpt !== '' && $cleanVal !== '') {
+                            $optionsCollector[$cleanOpt][$cleanVal] = true;
+                        }
+                    }
+                }
+                if (!empty($optionsCollector)) {
+                    $aliOpts = [];
+                    foreach ($optionsCollector as $optName => $valsMap) {
+                        $aliOpts[] = [
+                            'name' => $optName,
+                            'values' => array_values(array_keys($valsMap)),
+                        ];
+                    }
+                    $product->variant_options = $aliOpts;
+                }
             }
 
             if ($channel === 'aliexpress') {
@@ -729,6 +817,46 @@ class InventorySyncService
             }
 
             $product->save();
+
+            // Backfill missing product images for CJ / AliExpress broken products
+            if ($product->images()->count() === 0) {
+                if ($cjImporter) {
+                    $rawMainImg = $supplierData['productImage'] ?? $supplierData['bigImage'] ?? null;
+                    $rawGalleryImgs = $supplierData['productImageSet'] ?? [];
+                    $parsedImages = array_values(array_unique(array_filter(array_merge(
+                        $cjImporter->parseImageUrls($rawMainImg),
+                        $cjImporter->parseImageUrls($rawGalleryImgs)
+                    ))));
+                    foreach ($parsedImages as $index => $imgUrl) {
+                        ProductImage::create([
+                            'product_id' => $product->id,
+                            'image_path' => $imgUrl,
+                            'is_primary' => $index === 0,
+                            'sort_order' => $index,
+                        ]);
+                    }
+                } elseif ($channel === 'aliexpress') {
+                    $mainImage = $supplierData['mainImage'] ?? null;
+                    $galleryImages = is_array($supplierData['images'] ?? null) ? $supplierData['images'] : [];
+                    $allAliImgs = [];
+                    if (is_string($mainImage) && trim($mainImage) !== '') {
+                        $allAliImgs[] = trim($mainImage);
+                    }
+                    foreach ($galleryImages as $img) {
+                        if (is_string($img) && trim($img) !== '' && !in_array(trim($img), $allAliImgs, true)) {
+                            $allAliImgs[] = trim($img);
+                        }
+                    }
+                    foreach ($allAliImgs as $index => $imgUrl) {
+                        ProductImage::create([
+                            'product_id' => $product->id,
+                            'image_path' => $imgUrl,
+                            'is_primary' => $index === 0,
+                            'sort_order' => $index,
+                        ]);
+                    }
+                }
+            }
 
             $changesDetected = $stockChanged || $priceChanged || ($oldProductStatus !== $newProductStatus);
 
