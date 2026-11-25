@@ -276,12 +276,16 @@ class ProductImageSearchService
             return ['total' => 0, 'indexed' => 0, 'skipped' => 0, 'failed' => 0];
         }
 
+        $hasRegionCol = Schema::hasColumn('product_image_signatures', 'region_hashes');
+
         $products = Product::with('images')
             ->where('status', 'published')
             ->select(['id', 'status'])
             ->get();
 
-        $existing = ProductImageSignature::pluck('image_url', 'product_id')->toArray();
+        $existing = $hasRegionCol
+            ? ProductImageSignature::whereNotNull('region_hashes')->pluck('image_url', 'product_id')->toArray()
+            : ProductImageSignature::pluck('image_url', 'product_id')->toArray();
 
         $total = $products->count();
         $indexed = 0;
@@ -289,82 +293,84 @@ class ProductImageSearchService
         $failed = 0;
         $remoteQueue = [];
 
-        foreach ($products as $product) {
-            $primary = $product->images->firstWhere('is_primary', true) ?? $product->images->first();
-            $rawPath = $primary ? trim((string) $primary->image_path) : '';
+        try {
+            foreach ($products as $product) {
+                $primary = $product->images->firstWhere('is_primary', true) ?? $product->images->first();
+                $rawPath = $primary ? trim((string) $primary->image_path) : '';
 
-            if ($rawPath === '') {
-                $failed++;
-                continue;
-            }
-
-            if (!$fresh && isset($existing[$product->id]) && $existing[$product->id] === $rawPath) {
-                $skipped++;
-                continue;
-            }
-
-            if (!str_starts_with($rawPath, 'http://') && !str_starts_with($rawPath, 'https://')) {
-                $bytes = $this->readLocalImageBytes($rawPath);
-                if ($bytes !== null && ($sig = $this->extractImageSignature($bytes)) !== null) {
-                    $this->upsertSignature($product->id, $rawPath, $sig);
-                    $indexed++;
-                } else {
+                if ($rawPath === '') {
                     $failed++;
+                    continue;
                 }
-                continue;
+
+                if (!$fresh && isset($existing[$product->id]) && $existing[$product->id] === $rawPath) {
+                    $skipped++;
+                    continue;
+                }
+
+                if (!str_starts_with($rawPath, 'http://') && !str_starts_with($rawPath, 'https://')) {
+                    $bytes = $this->readLocalImageBytes($rawPath);
+                    if ($bytes !== null && ($sig = $this->extractImageSignature($bytes)) !== null) {
+                        $this->upsertSignature($product->id, $rawPath, $sig, $hasRegionCol);
+                        $indexed++;
+                    } else {
+                        $failed++;
+                    }
+                    continue;
+                }
+
+                $remoteQueue[] = [
+                    'product_id' => $product->id,
+                    'url' => $rawPath,
+                ];
             }
 
-            $remoteQueue[] = [
-                'product_id' => $product->id,
-                'url' => $rawPath,
-            ];
-        }
+            foreach (array_chunk($remoteQueue, max(1, $batchSize)) as $chunk) {
+                try {
+                    $responses = Http::pool(function (Pool $pool) use ($chunk) {
+                        $reqs = [];
+                        foreach ($chunk as $item) {
+                            $reqs[] = $pool->as((string) $item['product_id'])
+                                ->withOptions([
+                                    'verify' => false,
+                                    'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                                ])
+                                ->withHeaders([
+                                    'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                                    'Accept' => 'image/webp,image/jpeg,image/png,image/*;q=0.8',
+                                ])
+                                ->timeout(7)
+                                ->get($item['url']);
+                        }
+                        return $reqs;
+                    });
 
-        foreach (array_chunk($remoteQueue, max(1, $batchSize)) as $chunk) {
-            try {
-                $responses = Http::pool(function (Pool $pool) use ($chunk) {
-                    $reqs = [];
                     foreach ($chunk as $item) {
-                        $reqs[] = $pool->as((string) $item['product_id'])
-                            ->withOptions([
-                                'verify' => false,
-                                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
-                            ])
-                            ->withHeaders([
-                                'User-Agent' => 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
-                                'Accept' => 'image/webp,image/jpeg,image/png,image/*;q=0.8',
-                            ])
-                            ->timeout(7)
-                            ->get($item['url']);
-                    }
-                    return $reqs;
-                });
+                        $pid = $item['product_id'];
+                        $resp = $responses[(string) $pid] ?? null;
+                        if (!$resp instanceof \Illuminate\Http\Client\Response || !$resp->successful()) {
+                            $failed++;
+                            continue;
+                        }
 
-                foreach ($chunk as $item) {
-                    $pid = $item['product_id'];
-                    $resp = $responses[(string) $pid] ?? null;
-                    if (!$resp instanceof \Illuminate\Http\Client\Response || !$resp->successful()) {
-                        $failed++;
-                        continue;
-                    }
+                        $bytes = $resp->body();
+                        $sig = $this->extractImageSignature($bytes);
+                        if ($sig === null) {
+                            $failed++;
+                            continue;
+                        }
 
-                    $bytes = $resp->body();
-                    $sig = $this->extractImageSignature($bytes);
-                    if ($sig === null) {
-                        $failed++;
-                        continue;
+                        $this->upsertSignature($pid, $item['url'], $sig, $hasRegionCol);
+                        $indexed++;
                     }
-
-                    $this->upsertSignature($pid, $item['url'], $sig);
-                    $indexed++;
+                } catch (\Throwable $e) {
+                    Log::warning('Batch image indexing chunk failed: ' . $e->getMessage());
+                    $failed += count($chunk);
                 }
-            } catch (\Throwable $e) {
-                Log::warning('Batch image indexing chunk failed: ' . $e->getMessage());
-                $failed += count($chunk);
             }
+        } finally {
+            Cache::forget($this->getSignatureCacheKey());
         }
-
-        Cache::forget($this->getSignatureCacheKey());
 
         return [
             'total' => $total,
@@ -374,8 +380,9 @@ class ProductImageSearchService
         ];
     }
 
-    protected function upsertSignature(int $productId, string $imageUrl, array $sig): void
+    protected function upsertSignature(int $productId, string $imageUrl, array $sig, ?bool $hasRegionCol = null): void
     {
+        $hasRegions = $hasRegionCol ?? Schema::hasColumn('product_image_signatures', 'region_hashes');
         $payload = [
             'image_url' => mb_substr($imageUrl, 0, 1000),
             'dhash' => $sig['dhash'],
@@ -383,7 +390,7 @@ class ProductImageSearchService
             'indexed_at' => now(),
         ];
 
-        if (Schema::hasColumn('product_image_signatures', 'region_hashes')) {
+        if ($hasRegions) {
             $payload['region_hashes'] = $sig['region_hashes'] ?? null;
         }
 
@@ -846,7 +853,7 @@ class ProductImageSearchService
 
         $query = Product::with(['category'])
             ->where('status', 'published')
-            ->where(function ($q) use ($likePhrases, $likeTokens) {
+            ->where(function ($q) use ($likePhrases, $likeTokens, $brand) {
                 foreach ($likePhrases as $phrase) {
                     $like = '%' . $phrase . '%';
                     $q->orWhere('name', 'like', $like)
@@ -858,9 +865,13 @@ class ProductImageSearchService
                     $q->orWhere('name', 'like', $like)
                         ->orWhere('tags', 'like', $like);
                 }
+                if ($brand !== null && strlen($brand) >= 3) {
+                    $like = '%' . $brand . '%';
+                    $q->orWhere('name', 'like', $like)
+                        ->orWhere('tags', 'like', $like);
+                }
             })
             ->select(['id', 'name', 'short_description', 'tags', 'category_id'])
-            ->limit(200)
             ->get();
 
         $coreTypeNorm = !empty($detected['core_type']) ? $normalizePhrase((string) $detected['core_type']) : '';
@@ -1098,13 +1109,13 @@ class ProductImageSearchService
         array $ranked,
         array $exactVisualMap
     ): array {
-        $topCandidates = array_slice($ranked, 0, 6);
+        $topCandidates = array_slice($ranked, 0, 8);
         if (empty($topCandidates)) {
             return ['ranked' => $ranked, 'reranked' => false];
         }
 
         $topIds = array_map(fn ($c) => (int) $c['id'], $topCandidates);
-        $cacheKey = 'store_image_search_rerank_v1:' . $this->getTenantDbKey() . ':' . md5($queryBytes) . ':' . implode(',', $topIds);
+        $cacheKey = 'store_image_search_rerank_v2:' . $this->getTenantDbKey() . ':' . md5($queryBytes) . ':' . implode(',', $topIds);
         $cachedScores = Cache::get($cacheKey);
 
         if (!is_array($cachedScores)) {
@@ -1240,8 +1251,9 @@ class ProductImageSearchService
             $cachedScores = [];
             foreach ($loaded as $c) {
                 $numStr = (string) $c['num'];
-                if (isset($scoreMap[$numStr]) && is_numeric($scoreMap[$numStr])) {
-                    $cachedScores[(string) $c['id']] = max(0, min(99, (int) round((float) $scoreMap[$numStr])));
+                $rawScore = $scoreMap[$numStr] ?? $scoreMap['#' . $numStr] ?? null;
+                if ($rawScore !== null && is_numeric($rawScore)) {
+                    $cachedScores[(string) $c['id']] = max(0, min(99, (int) round((float) $rawScore)));
                 }
             }
 
@@ -1252,12 +1264,16 @@ class ProductImageSearchService
             Cache::put($cacheKey, $cachedScores, now()->addHours(6));
         }
 
+        $maxAiVis = 0;
         foreach ($ranked as &$item) {
             $pidKey = (string) $item['id'];
             if (!isset($cachedScores[$pidKey])) {
                 continue;
             }
             $aiVis = (int) $cachedScores[$pidKey];
+            if ($aiVis > $maxAiVis) {
+                $maxAiVis = $aiVis;
+            }
             $isExactVisual = !empty($exactVisualMap[$item['id']]);
             $textScore = (int) ($item['text_score'] ?? 0);
 
@@ -1279,6 +1295,15 @@ class ProductImageSearchService
         }
         unset($item);
 
+        if ($maxAiVis >= 80) {
+            foreach ($ranked as &$item) {
+                if (!isset($item['ai_visual_score']) && empty($exactVisualMap[$item['id']])) {
+                    $item['match_score'] = min((int) $item['match_score'], 42);
+                }
+            }
+            unset($item);
+        }
+
         usort($ranked, function (array $a, array $b) {
             if ($a['match_score'] !== $b['match_score']) {
                 return $b['match_score'] <=> $a['match_score'];
@@ -1295,7 +1320,7 @@ class ProductImageSearchService
     }
 
     /**
-     * Render up to 6 candidates into a clean 2x3 numbered collage JPEG for Vision AI verification.
+     * Render up to 8 candidates into a clean numbered collage JPEG for Vision AI verification.
      */
     protected function buildNumberedCandidateCollage(array $loadedCandidates): ?string
     {
@@ -1304,7 +1329,7 @@ class ProductImageSearchService
         }
 
         $items = [];
-        foreach (array_slice($loadedCandidates, 0, 6) as $cand) {
+        foreach (array_slice($loadedCandidates, 0, 8) as $cand) {
             $gd = @imagecreatefromstring($cand['bytes']);
             if ($gd !== false) {
                 $items[] = ['num' => $cand['num'], 'gd' => $gd];
@@ -1315,7 +1340,7 @@ class ProductImageSearchService
         }
 
         $count = count($items);
-        $cols = min(3, $count);
+        $cols = $count <= 3 ? $count : ($count <= 6 ? 3 : 4);
         $rows = (int) ceil($count / $cols);
 
         $cellW = 240;
