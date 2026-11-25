@@ -9,6 +9,7 @@ use App\Models\Category;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
 use Exception;
+use Throwable;
 
 class AmazonImportService
 {
@@ -32,7 +33,7 @@ class AmazonImportService
         string $markupType = 'percentage',
         float $fixedMarkupAmount = 0.0
     ): array {
-        @set_time_limit(600);
+        @set_time_limit(PHP_SAPI === 'cli' ? 0 : 600);
 
         $importedProducts = [];
         $errors = [];
@@ -67,7 +68,7 @@ class AmazonImportService
                 if (is_callable($onProgress)) {
                     $onProgress($index + 1, $total, $itemResult);
                 }
-            } catch (Exception $e) {
+            } catch (Throwable $e) {
                 $itemError = [
                     'asin_or_url' => $item,
                     'status' => 'failed',

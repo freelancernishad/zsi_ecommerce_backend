@@ -7,6 +7,7 @@ use Amazon\Services\AmazonImportService;
 use Illuminate\Support\Facades\Storage;
 use Illuminate\Support\Facades\Log;
 use Exception;
+use Throwable;
 
 class ProcessAmazonBulkImportCommand extends Command
 {
@@ -53,6 +54,7 @@ class ProcessAmazonBulkImportCommand extends Command
         $amazonImportService = app(AmazonImportService::class);
 
         $items = $batchData['items'];
+        $totalItems = count($items);
         $profitMargin = (float) ($batchData['profit_margin_percent'] ?? 0);
         $markupType = $batchData['markup_type'] ?? 'percentage';
         $fixedMarkup = (float) ($batchData['fixed_markup_amount'] ?? 0);
@@ -60,55 +62,90 @@ class ProcessAmazonBulkImportCommand extends Command
         $defaultStock = (int) ($batchData['default_stock'] ?? 20);
         $status = $batchData['publish_status'] ?? 'published';
 
+        if (!isset($batchData['items_progress']) || !is_array($batchData['items_progress'])) {
+            $batchData['items_progress'] = [];
+        }
+
+        foreach ($items as $itemKey) {
+            if (!isset($batchData['items_progress'][$itemKey])) {
+                $batchData['items_progress'][$itemKey] = [
+                    'asin_or_url' => $itemKey,
+                    'status' => 'pending',
+                ];
+            }
+        }
+
+        $successfulCount = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'completed'));
+        $failedCount = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'failed'));
+
         $batchData['status'] = 'in_progress';
-        $batchData['started_at'] = $batchData['started_at'] ?? now()->toDateTimeString();
-        $batchData['processed_count'] = $batchData['processed_count'] ?? 0;
-        $batchData['successful_count'] = $batchData['successful_count'] ?? 0;
-        $batchData['failed_count'] = $batchData['failed_count'] ?? 0;
+        $batchData['started_at'] = now()->toDateTimeString();
+        $batchData['processed_count'] = $successfulCount + $failedCount;
+        $batchData['successful_count'] = $successfulCount;
+        $batchData['failed_count'] = $failedCount;
         Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
 
-        Log::info("Starting background CLI Amazon bulk import batch {$batchId} with " . count($items) . " items.");
+        $itemsToProcess = array_values(array_filter($items, function ($itemKey) use ($batchData) {
+            return ($batchData['items_progress'][$itemKey]['status'] ?? 'pending') !== 'completed';
+        }));
+
+        Log::info("Starting background CLI Amazon bulk import batch {$batchId} with " . count($itemsToProcess) . " remaining of {$totalItems} items.");
 
         try {
-            $result = $amazonImportService->bulkImportAmazonProducts(
-                $items,
-                $profitMargin,
-                $categoryId,
-                $defaultStock,
-                $status,
-                function ($current, $total, $itemResult) use ($filePath, &$batchData) {
-                    $itemKey = $itemResult['asin_or_url'];
-
-                    if (isset($batchData['items_progress']) && is_array($batchData['items_progress'])) {
+            if (!empty($itemsToProcess)) {
+                $amazonImportService->bulkImportAmazonProducts(
+                    $itemsToProcess,
+                    $profitMargin,
+                    $categoryId,
+                    $defaultStock,
+                    $status,
+                    function ($current, $total, $itemResult) use ($filePath, $totalItems, &$batchData) {
+                        $itemKey = $itemResult['asin_or_url'];
                         $batchData['items_progress'][$itemKey] = $itemResult;
-                    } else {
-                        $batchData['items_progress'] = [$itemKey => $itemResult];
-                    }
 
-                    $batchData['processed_count'] = $current;
-                    $batchData['successful_count'] = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'completed'));
-                    $batchData['failed_count'] = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'failed'));
+                        $successfulCount = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'completed'));
+                        $failedCount = count(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'failed'));
+                        $processedCount = $successfulCount + $failedCount;
 
-                    if ($current >= $total) {
-                        $batchData['status'] = 'completed';
-                        $batchData['completed_at'] = $batchData['completed_at'] ?? now()->toDateTimeString();
-                    }
+                        $batchData['processed_count'] = $processedCount;
+                        $batchData['successful_count'] = $successfulCount;
+                        $batchData['failed_count'] = $failedCount;
 
-                    Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
-                },
-                $markupType,
-                $fixedMarkup
-            );
+                        if ($processedCount >= $totalItems) {
+                            $batchData['status'] = 'completed';
+                            $batchData['completed_at'] = $batchData['completed_at'] ?? now()->toDateTimeString();
+                        }
 
+                        Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
+                    },
+                    $markupType,
+                    $fixedMarkup
+                );
+            }
+
+            $importedProducts = array_values(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'completed'));
+            $errors = array_values(array_filter($batchData['items_progress'], fn($i) => ($i['status'] ?? '') === 'failed'));
+
+            $finalResult = [
+                'total' => $totalItems,
+                'successful' => count($importedProducts),
+                'failed' => count($errors),
+                'imported_products' => $importedProducts,
+                'errors' => $errors,
+            ];
+
+            $batchData['processed_count'] = count($importedProducts) + count($errors);
+            $batchData['successful_count'] = count($importedProducts);
+            $batchData['failed_count'] = count($errors);
             $batchData['status'] = 'completed';
             $batchData['completed_at'] = now()->toDateTimeString();
-            $batchData['result'] = $result;
+            $batchData['result'] = $finalResult;
             Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
 
-            Log::info("Completed background CLI Amazon bulk import batch {$batchId}: Successful: {$result['successful']}, Failed: {$result['failed']}");
+            Log::info("Completed background CLI Amazon bulk import batch {$batchId}: Successful: {$finalResult['successful']}, Failed: {$finalResult['failed']}");
             $this->info("Batch {$batchId} processed successfully.");
             return Command::SUCCESS;
-        } catch (Exception $e) {
+        } catch (Throwable $e) {
             $batchData['status'] = 'failed';
             $batchData['error'] = $e->getMessage();
             $batchData['failed_at'] = now()->toDateTimeString();
