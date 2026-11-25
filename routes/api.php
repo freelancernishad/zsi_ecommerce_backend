@@ -173,6 +173,11 @@ if (file_exists($AdminProductRoutes = __DIR__.'/Admins/Products/ProductRoutes.ph
     require $AdminProductRoutes;
 }
 
+// Load AdminPriceCompareRoutes
+if (file_exists($PriceCompareRoutes = __DIR__.'/Admins/Products/PriceCompareRoutes.php')) {
+    require $PriceCompareRoutes;
+}
+
 // Load AdminPosRoutes
 if (file_exists($AdminPosRoutes = __DIR__.'/Admins/Pos/PosRoutes.php')) {
     require $AdminPosRoutes;
