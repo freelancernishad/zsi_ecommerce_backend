@@ -9,6 +9,7 @@ Route::prefix('api/admin/aliexpress')->middleware(AuthenticateAdmin::class)->gro
     Route::get('/oauth-url', [AliExpressController::class, 'oauthUrl']);
     Route::post('/exchange-token', [AliExpressController::class, 'exchangeToken']);
     Route::post('/refresh-token', [AliExpressController::class, 'refreshToken']);
+    Route::get('/categories', [AliExpressController::class, 'categories']);
     Route::get('/search', [AliExpressController::class, 'search']);
     Route::get('/parse', [AliExpressController::class, 'parse']);
     Route::get('/product/{productId}', [AliExpressController::class, 'detail']);

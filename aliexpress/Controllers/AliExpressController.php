@@ -23,18 +23,78 @@ class AliExpressController extends Controller
     }
 
     /**
+     * Fetch and search AliExpress product categories.
+     */
+    public function categories(Request $request)
+    {
+        $search = $request->query('q', $request->query('search'));
+        $search = ($search !== null && trim((string)$search) !== '') ? trim((string)$search) : null;
+
+        $parentIdRaw = $request->query('parent_id');
+        $parentId = ($parentIdRaw !== null && $parentIdRaw !== '') ? (int)$parentIdRaw : null;
+
+        $language = (string)$request->query('language', 'en');
+        $refresh = $request->boolean('refresh', false);
+
+        try {
+            $result = $this->aliService->getCategories($search, $parentId, $language, $refresh);
+            return response()->json([
+                'success' => true,
+                'data' => $result,
+            ]);
+        } catch (Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    /**
      * Search products live on AliExpress.
      */
     public function search(Request $request)
     {
-        $keyword = $request->query('keyword', 'hoodie');
-        $page = (int)$request->query('page', 1);
-        $size = (int)$request->query('size', 20);
-        $categoryId = $request->query('category_id');
-        $countryCode = $request->query('country_code');
-        $minPrice = $request->has('min_price') && $request->query('min_price') !== null ? (float)$request->query('min_price') : null;
-        $maxPrice = $request->has('max_price') && $request->query('max_price') !== null ? (float)$request->query('max_price') : null;
-        $freeShipping = $request->has('free_shipping') && $request->query('free_shipping') !== null ? (int)$request->query('free_shipping') : null;
+        $categoryIdRaw = $request->query('category_id');
+        $categoryId = ($categoryIdRaw !== null && trim((string)$categoryIdRaw) !== '') ? trim((string)$categoryIdRaw) : null;
+
+        $keywordParam = $request->query('keyword');
+        if ($keywordParam === null) {
+            $keyword = $categoryId !== null ? '' : 'hoodie';
+        } else {
+            $keyword = trim((string)$keywordParam);
+        }
+
+        $page = max(1, (int)$request->query('page', 1));
+        $size = max(1, min(50, (int)$request->query('size', 20)));
+
+        $countryCodeRaw = $request->query('country_code');
+        $countryCode = ($countryCodeRaw !== null && trim((string)$countryCodeRaw) !== '') ? strtoupper(trim((string)$countryCodeRaw)) : null;
+
+        $currencyRaw = $request->query('currency');
+        $currency = ($currencyRaw !== null && trim((string)$currencyRaw) !== '') ? strtoupper(trim((string)$currencyRaw)) : null;
+
+        $sortByRaw = $request->query('sort_by');
+        $sortBy = ($sortByRaw !== null && trim((string)$sortByRaw) !== '') ? trim((string)$sortByRaw) : null;
+
+        $minPriceRaw = $request->query('min_price');
+        $minPrice = ($minPriceRaw !== null && $minPriceRaw !== '') ? (float)$minPriceRaw : null;
+
+        $maxPriceRaw = $request->query('max_price');
+        $maxPrice = ($maxPriceRaw !== null && $maxPriceRaw !== '') ? (float)$maxPriceRaw : null;
+
+        $minRatingRaw = $request->query('min_rating');
+        $minRating = ($minRatingRaw !== null && $minRatingRaw !== '') ? (float)$minRatingRaw : null;
+
+        $minOrdersRaw = $request->query('min_orders');
+        $minOrders = ($minOrdersRaw !== null && $minOrdersRaw !== '') ? (int)$minOrdersRaw : null;
+
+        $minDiscountRaw = $request->query('min_discount');
+        $minDiscount = ($minDiscountRaw !== null && $minDiscountRaw !== '') ? (int)$minDiscountRaw : null;
+
+        $freeShipping = $request->has('free_shipping') && $request->query('free_shipping') !== null && $request->query('free_shipping') !== ''
+            ? (int)$request->query('free_shipping')
+            : null;
         $videoOnly = $request->has('video_only') && (int)$request->query('video_only') === 1 ? 1 : null;
 
         try {
@@ -47,7 +107,12 @@ class AliExpressController extends Controller
                 $minPrice,
                 $maxPrice,
                 $freeShipping,
-                $videoOnly
+                $videoOnly,
+                $sortBy,
+                $minRating,
+                $minOrders,
+                $minDiscount,
+                $currency
             );
             return response()->json([
                 'success' => true,

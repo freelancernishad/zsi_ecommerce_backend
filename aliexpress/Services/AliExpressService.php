@@ -3,6 +3,7 @@
 namespace AliExpress\Services;
 
 use App\Models\SiteSetting;
+use Illuminate\Support\Facades\Cache;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
 use Exception;
@@ -476,6 +477,117 @@ class AliExpressService
     }
 
     /**
+     * Fetch and search official AliExpress Dropshipping categories via aliexpress.ds.category.get.
+     */
+    public function getCategories(?string $search = null, ?int $parentId = null, string $language = 'en', bool $refresh = false): array
+    {
+        $lang = strtolower(trim($language ?: 'en'));
+        $cacheKey = 'aliexpress_ds_categories_' . $lang;
+
+        if ($refresh) {
+            Cache::forget($cacheKey);
+        }
+
+        $all = Cache::remember($cacheKey, 43200, function () use ($lang) {
+            $this->loadSettings();
+
+            if (empty($this->appKey) || empty($this->appSecret)) {
+                throw new Exception("AliExpress Official API credentials (App Key & App Secret) are not configured in Settings.");
+            }
+
+            $raw = $this->executeGatewayCall('aliexpress.ds.category.get', ['language' => $lang], true);
+            $respResult = $raw['aliexpress_ds_category_get_response']['resp_result'] ?? $raw['resp_result'] ?? [];
+            $result = $respResult['result'] ?? $respResult;
+            $rawCats = $result['categories']['category'] ?? $result['categories'] ?? [];
+
+            if (is_array($rawCats) && isset($rawCats['category_id'])) {
+                $rawCats = [$rawCats];
+            }
+
+            if (!is_array($rawCats)) {
+                return [];
+            }
+
+            $nameById = [];
+            foreach ($rawCats as $cat) {
+                if (!is_array($cat)) continue;
+                $cid = (int)($cat['category_id'] ?? 0);
+                $cname = trim((string)($cat['category_name'] ?? ''));
+                if ($cid > 0 && $cname !== '') {
+                    $nameById[$cid] = $cname;
+                }
+            }
+
+            $normalized = [];
+            foreach ($rawCats as $cat) {
+                if (!is_array($cat)) continue;
+                $cid = (int)($cat['category_id'] ?? 0);
+                $cname = trim((string)($cat['category_name'] ?? ''));
+                if ($cid <= 0 || $cname === '') continue;
+
+                $rawPid = isset($cat['parent_category_id']) ? (int)$cat['parent_category_id'] : 0;
+                $pid = $rawPid > 0 ? $rawPid : null;
+                $parentName = $pid !== null ? ($nameById[$pid] ?? null) : null;
+
+                $normalized[] = [
+                    'id' => (string)$cid,
+                    'category_id' => $cid,
+                    'name' => $cname,
+                    'parent_id' => $pid,
+                    'parent_name' => $parentName,
+                    'full_path' => $parentName ? "{$parentName} > {$cname}" : $cname,
+                    'is_root' => $pid === null,
+                ];
+            }
+
+            return $normalized;
+        });
+
+        $filtered = $all;
+
+        if ($parentId !== null) {
+            if ($parentId === 0) {
+                $filtered = array_filter($filtered, fn($cat) => $cat['is_root'] === true);
+            } elseif ($parentId > 0) {
+                $filtered = array_filter($filtered, fn($cat) => $cat['parent_id'] === $parentId);
+            }
+        }
+
+        $q = $search !== null ? strtolower(trim($search)) : '';
+        if ($q !== '') {
+            $filtered = array_filter($filtered, function ($cat) use ($q) {
+                return str_contains(strtolower($cat['name']), $q)
+                    || ($cat['parent_name'] !== null && str_contains(strtolower($cat['parent_name']), $q))
+                    || str_contains(strtolower($cat['full_path']), $q)
+                    || str_contains(strtolower($cat['id']), $q);
+            });
+
+            $filtered = array_values($filtered);
+            usort($filtered, function ($a, $b) use ($q) {
+                $aName = strtolower($a['name']);
+                $bName = strtolower($b['name']);
+
+                $aExact = $aName === $q ? 0 : (str_starts_with($aName, $q) ? 1 : (str_contains($aName, $q) ? 2 : 3));
+                $bExact = $bName === $q ? 0 : (str_starts_with($bName, $q) ? 1 : (str_contains($bName, $q) ? 2 : 3));
+
+                if ($aExact !== $bExact) {
+                    return $aExact <=> $bExact;
+                }
+                return strcmp($a['full_path'], $b['full_path']);
+            });
+        } else {
+            $filtered = array_values($filtered);
+            usort($filtered, fn($a, $b) => strcmp($a['full_path'], $b['full_path']));
+        }
+
+        return [
+            'total' => count($filtered),
+            'total_all' => count($all),
+            'categories' => $filtered,
+        ];
+    }
+
+    /**
      * Search products live using official AliExpress Open Platform API: aliexpress.ds.text.search
      */
     public function searchViaOfficialApi(
@@ -484,19 +596,42 @@ class AliExpressService
         int $size = 20,
         ?string $categoryId = null,
         ?float $minPrice = null,
-        ?float $maxPrice = null
+        ?float $maxPrice = null,
+        ?string $countryCode = null,
+        ?string $sortBy = null,
+        ?float $minRating = null,
+        ?int $minOrders = null,
+        ?int $minDiscount = null,
+        ?string $currency = null
     ): array {
+        $effectiveCountry = strtoupper(trim($countryCode ?: ($this->shipToCountry ?: 'US')));
+        $effectiveCurrency = strtoupper(trim($currency ?: ($this->currency ?: 'USD')));
+
+        $hasPostFilters = (
+            $minPrice !== null
+            || $maxPrice !== null
+            || $minRating !== null
+            || $minOrders !== null
+            || $minDiscount !== null
+            || in_array($sortBy, ['rating_desc', 'discount_desc'], true)
+        );
+        $requestSize = $hasPostFilters ? min(50, max($size, 50)) : min(50, max(1, $size));
+
         $bizParams = [
-            'keyWord' => $keyword,
-            'countryCode' => $this->shipToCountry ?: 'US',
-            'currency' => $this->currency ?: 'USD',
-            'pageIndex' => (string)$page,
-            'pageSize' => (string)$size,
+            'keyWord' => trim($keyword),
+            'countryCode' => $effectiveCountry,
+            'currency' => $effectiveCurrency,
+            'pageIndex' => (string)max(1, $page),
+            'pageSize' => (string)$requestSize,
             'local' => 'en_US',
         ];
 
         if (!empty($categoryId)) {
             $bizParams['categoryId'] = (string)$categoryId;
+        }
+
+        if (in_array($sortBy, ['min_price,asc', 'min_price,desc', 'orders,desc'], true)) {
+            $bizParams['sortBy'] = $sortBy;
         }
 
         $rawResponse = $this->executeGatewayCall('aliexpress.ds.text.search', $bizParams, true);
@@ -511,13 +646,39 @@ class AliExpressService
         $rawProducts = $data['products'] ?? [];
         $rawItems = $rawProducts['selection_search_product'] ?? $rawProducts ?? $data['items'] ?? $data['product_list'] ?? [];
 
+        if (is_array($rawItems) && isset($rawItems['itemId'])) {
+            $rawItems = [$rawItems];
+        }
+
         $items = [];
         foreach ($rawItems as $item) {
+            if (!is_array($item)) continue;
             $pid = (string)($item['itemId'] ?? $item['product_id'] ?? $item['productId'] ?? '');
             if (empty($pid)) continue;
 
-            $costPrice = (float)($item['salePrice'] ?? $item['target_sale_price'] ?? $item['price'] ?? 10.0);
+            $rawSalePrice = $item['targetSalePrice'] ?? $item['target_sale_price'] ?? $item['salePrice'] ?? $item['price'] ?? 0;
+            $costPrice = is_numeric($rawSalePrice) ? (float)$rawSalePrice : (float)preg_replace('/[^\d.]/', '', (string)$rawSalePrice);
             $retailPrice = round($costPrice * (1 + ($this->defaultProfitMargin / 100)), 2);
+
+            $rawOrigPrice = $item['targetOriginalPrice'] ?? $item['target_original_price'] ?? $item['originalPrice'] ?? null;
+            $originalPrice = ($rawOrigPrice !== null && $rawOrigPrice !== '' && is_numeric($rawOrigPrice))
+                ? (float)$rawOrigPrice
+                : null;
+
+            $discountStr = trim((string)($item['discount'] ?? ''));
+            $discountDigits = preg_replace('/[^\d]/', '', $discountStr);
+            $discountPercent = $discountDigits !== '' ? (int)$discountDigits : 0;
+
+            $ordersRaw = trim((string)($item['orders'] ?? $item['orderCount'] ?? $item['lastest_volume'] ?? ''));
+            $ordersDigits = preg_replace('/[^\d]/', '', $ordersRaw);
+            $ordersCount = $ordersDigits !== '' ? (int)$ordersDigits : 0;
+
+            $scoreRaw = $item['score'] ?? null;
+            $evalRaw = $item['evaluateRate'] ?? null;
+            $rating = (is_numeric($scoreRaw) && (float)$scoreRaw > 0)
+                ? round((float)$scoreRaw, 2)
+                : ((is_numeric($evalRaw) && (float)$evalRaw > 0) ? round(((float)$evalRaw) / 20, 2) : null);
+            $evaluateRate = (is_numeric($evalRaw) && (float)$evalRaw > 0) ? round((float)$evalRaw, 1) : null;
 
             $items[] = [
                 'productId' => $pid,
@@ -526,18 +687,62 @@ class AliExpressService
                 'imageUrl' => $this->formatImageUrl($item['itemMainPic'] ?? $item['mainPicUrl'] ?? $item['product_main_image_url'] ?? $item['imageUrl'] ?? ''),
                 'costPrice' => $costPrice,
                 'price' => $retailPrice,
-                'currency' => $this->currency ?: 'USD',
-                'orders' => $item['orders'] ?? $item['orderCount'] ?? $item['lastest_volume'] ?? '100+ orders',
-                'rating' => (float)($item['score'] ?? $item['evaluateRate'] ?? 4.8),
+                'originalPrice' => $originalPrice,
+                'discount' => $discountStr !== '' ? $discountStr : null,
+                'discountPercent' => $discountPercent,
+                'currency' => $effectiveCurrency,
+                'orders' => $ordersRaw !== '' ? $ordersRaw : null,
+                'ordersCount' => $ordersCount,
+                'rating' => $rating,
+                'evaluateRate' => $evaluateRate,
+                'categoryIds' => $item['cateId'] ?? null,
                 'storeName' => $item['storeName'] ?? 'AliExpress Store',
             ];
         }
 
+        if ($minPrice !== null) {
+            $items = array_filter($items, fn($it) => $it['costPrice'] >= $minPrice);
+        }
+        if ($maxPrice !== null) {
+            $items = array_filter($items, fn($it) => $it['costPrice'] <= $maxPrice);
+        }
+        if ($minRating !== null) {
+            $items = array_filter($items, fn($it) => $it['rating'] !== null && $it['rating'] >= $minRating);
+        }
+        if ($minOrders !== null) {
+            $items = array_filter($items, fn($it) => $it['ordersCount'] >= $minOrders);
+        }
+        if ($minDiscount !== null) {
+            $items = array_filter($items, fn($it) => $it['discountPercent'] >= $minDiscount);
+        }
+
+        $items = array_values($items);
+
+        if ($sortBy === 'rating_desc') {
+            usort($items, function ($a, $b) {
+                $cmp = ($b['rating'] ?? 0) <=> ($a['rating'] ?? 0);
+                return $cmp !== 0 ? $cmp : ($b['ordersCount'] <=> $a['ordersCount']);
+            });
+        } elseif ($sortBy === 'discount_desc') {
+            usort($items, function ($a, $b) {
+                $cmp = $b['discountPercent'] <=> $a['discountPercent'];
+                return $cmp !== 0 ? $cmp : ($b['ordersCount'] <=> $a['ordersCount']);
+            });
+        }
+
+        $filteredAllCount = count($items);
+        $items = array_slice($items, 0, $size);
+
+        $rawTotal = (int)($data['totalCount'] ?? 0);
+        $total = $hasPostFilters ? $filteredAllCount : max($rawTotal, count($items));
+
         return [
-            'total' => (int)($data['totalCount'] ?? count($items)),
+            'total' => $total,
             'page' => $page,
             'size' => $size,
-            'items' => $items,
+            'country' => $effectiveCountry,
+            'currency' => $effectiveCurrency,
+            'items' => array_values($items),
         ];
     }
 
@@ -577,7 +782,12 @@ class AliExpressService
         ?float $minPrice = null,
         ?float $maxPrice = null,
         ?int $freeShipping = null,
-        ?int $videoOnly = null
+        ?int $videoOnly = null,
+        ?string $sortBy = null,
+        ?float $minRating = null,
+        ?int $minOrders = null,
+        ?int $minDiscount = null,
+        ?string $currency = null
     ): array {
         $this->loadSettings();
 
@@ -585,7 +795,20 @@ class AliExpressService
             throw new Exception("AliExpress Official API credentials (App Key & App Secret) are not configured in Settings.");
         }
 
-        return $this->searchViaOfficialApi($keyword, $page, $size, $categoryId, $minPrice, $maxPrice);
+        return $this->searchViaOfficialApi(
+            $keyword,
+            $page,
+            $size,
+            $categoryId,
+            $minPrice,
+            $maxPrice,
+            $countryCode,
+            $sortBy,
+            $minRating,
+            $minOrders,
+            $minDiscount,
+            $currency
+        );
     }
 
     /**
