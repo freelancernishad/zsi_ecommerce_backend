@@ -1712,46 +1712,68 @@ class AmazonSmartSyncService
         $xpath = new DOMXPath($dom);
         libxml_clear_errors();
 
+        // Helper to read visible text excluding <script> and <style> blocks
+        $extractVisible = function (string $query) use ($xpath): string {
+            $nodes = $xpath->query($query);
+            $parts = [];
+            foreach ($nodes as $node) {
+                $tNodes = $xpath->query('.//text()[not(ancestor::script) and not(ancestor::style)]', $node);
+                $buf = '';
+                foreach ($tNodes as $tn) {
+                    $buf .= ' ' . $tn->nodeValue;
+                }
+                $clean = trim(preg_replace('/\s+/', ' ', $buf));
+                if ($clean !== '') {
+                    $parts[] = $clean;
+                }
+            }
+            return implode(' ', $parts);
+        };
+
+        $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
+        $buyboxOnlyText = strtolower($extractVisible('//div[@id="buybox"]'));
+        $isLocalPickupOnly = !$hasBuyButton
+            && str_contains($buyboxOnlyText, 'amazon fresh')
+            && str_contains($buyboxOnlyText, 'pickup');
+
         // 1. Strictly extract price ONLY from the main product's corePrice / buybox containers
         $price = 0.0;
-        $mainPriceNodes = $xpath->query(
-            '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
-            . ' | //div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
-            . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
-            . ' | //div[@id="apex_desktop"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
-            . ' | //div[@id="buybox"]//span[@id="price_inside_buybox"]'
-            . ' | //span[@id="priceblock_ourprice"]'
-            . ' | //span[@id="priceblock_dealprice"]'
-        );
+        if (!$isLocalPickupOnly) {
+            $mainPriceNodes = $xpath->query(
+                '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="apex_desktop"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="buybox"]//span[@id="price_inside_buybox"]'
+                . ' | //span[@id="priceblock_ourprice"]'
+                . ' | //span[@id="priceblock_dealprice"]'
+            );
 
-        if ($mainPriceNodes->length > 0) {
-            $rawPrice = trim((string) $mainPriceNodes->item(0)->nodeValue);
-            if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
-                $price = (float) str_replace(',', '', $m[0]);
+            if ($mainPriceNodes->length > 0) {
+                $rawPrice = trim((string) $mainPriceNodes->item(0)->nodeValue);
+                if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
+                    $price = (float) str_replace(',', '', $m[0]);
+                }
             }
-        }
 
-        // Fallback: check whole + fraction inside corePriceDisplay_desktop_feature_div (some pages omit a-offscreen)
-        if ($price <= 0) {
-            $wholeNodes = $xpath->query('//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-price-whole")]');
-            $fracNodes = $xpath->query('//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-price-fraction")]');
-            if ($wholeNodes->length > 0) {
-                $whole = preg_replace('/[^\d]/', '', (string) $wholeNodes->item(0)->textContent);
-                $frac = $fracNodes->length > 0 ? preg_replace('/[^\d]/', '', (string) $fracNodes->item(0)->textContent) : '00';
-                if ($whole !== '') {
-                    $price = (float) "{$whole}.{$frac}";
+            // Fallback: check whole + fraction inside corePriceDisplay_desktop_feature_div (some pages omit a-offscreen)
+            if ($price <= 0) {
+                $wholeNodes = $xpath->query('//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-price-whole")]');
+                $fracNodes = $xpath->query('//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-price-fraction")]');
+                if ($wholeNodes->length > 0) {
+                    $whole = preg_replace('/[^\d]/', '', (string) $wholeNodes->item(0)->textContent);
+                    $frac = $fracNodes->length > 0 ? preg_replace('/[^\d]/', '', (string) $fracNodes->item(0)->textContent) : '00';
+                    if ($whole !== '') {
+                        $price = (float) "{$whole}.{$frac}";
+                    }
                 }
             }
         }
 
         // 2. Check for Geo-restriction ("cannot be shipped to your selected delivery location")
-        $buyboxText = '';
-        $buyboxNodes = $xpath->query(
+        $buyboxText = $extractVisible(
             '//div[@id="outOfStock"] | //div[@id="deliveryBlockMessage"] | //div[@id="mir-layout-DELIVERY_BLOCK"] | //div[@id="rightCol"] | //div[@id="availability"] | //div[@id="availabilityInsideBuyBox_feature_div"]'
         );
-        foreach ($buyboxNodes as $node) {
-            $buyboxText .= ' ' . trim(preg_replace('/\s+/', ' ', (string) $node->textContent));
-        }
         $buyboxLower = strtolower(trim($buyboxText));
 
         if ($price <= 0 && str_contains($buyboxLower, 'cannot be shipped to your selected delivery location')) {
@@ -1760,15 +1782,10 @@ class AmazonSmartSyncService
             );
         }
 
-        // 3. Availability & Stock detection scoped to availability/outOfStock nodes
-        $availNodes = $xpath->query('//div[@id="availability"] | //div[@id="availabilityInsideBuyBox_feature_div"] | //div[@id="outOfStock"]');
-        $availText = '';
-        foreach ($availNodes as $node) {
-            $availText .= ' ' . trim(preg_replace('/\s+/', ' ', $node->textContent));
-        }
+        // 3. Availability & Stock detection scoped to availability/outOfStock nodes (excluding scripts)
+        $availText = $extractVisible('//div[@id="availability"] | //div[@id="availabilityInsideBuyBox_feature_div"] | //div[@id="outOfStock"]');
         $availLower = strtolower(trim($availText));
 
-        $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
         $hasBuyingOptions = $xpath->query('//a[contains(@id, "buybox-see-all-buying-choices")] | //span[@id="buybox-see-all-buying-choices"]')->length > 0
             || str_contains($buyboxLower, 'see all buying options');
 
@@ -1792,6 +1809,7 @@ class AmazonSmartSyncService
 
         // Extract per-variant availability & price from the SAME single HTML page (0 extra API calls!)
         $variants = [];
+        $selectedAsin = null;
 
         // Strategy A: twister-sort-filter-data JSON (including "options from $XX.XX" olpMessage!)
         if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $tm)) {
@@ -1808,31 +1826,64 @@ class AmazonSmartSyncService
                         }
                         $state = strtoupper((string) ($item['dimensionValueState'] ?? ''));
                         $isSelected = ($state === 'SELECTED');
+                        if ($isSelected && $selectedAsin === null) {
+                            $selectedAsin = $vAsin;
+                        }
                         $vAvail = $isSelected ? $available : ($state !== 'UNAVAILABLE');
                         $vPrice = $isSelected && $price > 0 ? $price : null;
                         foreach ($item['slots'] ?? [] as $slot) {
                             $dd = $slot['displayData'] ?? [];
-                            if (!empty($dd['priceWithoutCurrencySymbol'])) {
-                                $pVal = (float) str_replace(',', '', $dd['priceWithoutCurrencySymbol']);
+                            if ($vPrice === null && !empty($dd['priceWithoutCurrencySymbol'])) {
+                                $pVal = (float) str_replace(',', '', (string) $dd['priceWithoutCurrencySymbol']);
                                 if ($pVal > 0) {
                                     $vPrice = $pVal;
-                                    break;
                                 }
                             }
                             if (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
                                 $pVal = (float) str_replace(',', '', $om[1]);
                                 if ($pVal > 0) {
-                                    $vPrice = $pVal;
                                     $vAvail = true;
-                                    break;
+                                    if ($vPrice === null) {
+                                        $vPrice = $pVal;
+                                    }
                                 }
                             }
                         }
                         $variants[$vAsin] = [
                             'available' => $vAvail,
-                            'stock' => $isSelected ? $stock : ($vAvail ? $defaultStock : 0),
+                            'stock' => $vAvail ? ($isSelected && $stock > 0 ? $stock : $defaultStock) : 0,
                             'price' => $vPrice,
                         ];
+                    }
+                }
+            }
+        }
+
+        // Fallback: if main Buy Box price was 0 (suppressed Buy Box or local-pickup-only),
+        // promote the selected variant's OLP/twister price (or OLP widget price)
+        if ($price <= 0 && $selectedAsin !== null && !empty($variants[$selectedAsin]['price']) && (float) $variants[$selectedAsin]['price'] > 0) {
+            $price = (float) $variants[$selectedAsin]['price'];
+            if (!empty($variants[$selectedAsin]['available'])) {
+                $available = true;
+                $stock = (int) ($variants[$selectedAsin]['stock'] ?? $defaultStock) ?: $defaultStock;
+            }
+        }
+        if ($price <= 0) {
+            $olpNodes = $xpath->query(
+                '//div[@id="olp_feature_div"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+                . ' | //div[@id="olpLinkWidget_feature_div"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+                . ' | //div[@id="unqualifiedBuyBox"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+            );
+            foreach ($olpNodes as $oNode) {
+                if (preg_match('/[\d,]+\.\d{2}/', (string) $oNode->textContent, $om)) {
+                    $val = (float) str_replace(',', '', $om[0]);
+                    if ($val > 0) {
+                        $price = $val;
+                        if ($hasBuyingOptions && !$explicitlyOutOfStock) {
+                            $available = true;
+                            $stock = $defaultStock;
+                        }
+                        break;
                     }
                 }
             }

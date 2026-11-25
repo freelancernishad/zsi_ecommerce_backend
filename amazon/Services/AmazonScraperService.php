@@ -336,6 +336,9 @@ class AmazonScraperService
             }
         }
         $url = "https://{$host}/dp/{$asin}?th=1&psc=1";
+        if ($host === 'www.amazon.com') {
+            $url .= "&language=en_US&currency=USD";
+        }
 
         // If ASIN matches a generated fallback catalog pattern (e.g. B02951F68F), return fallback specs immediately
         if ($this->isFallbackAsin($asin)) {
@@ -377,6 +380,25 @@ class AmazonScraperService
         return $parsed;
     }
 
+    protected function resolveBrightDataCountry(string $url): string
+    {
+        $host = strtolower((string) parse_url($url, PHP_URL_HOST));
+        return match (true) {
+            str_contains($host, 'amazon.co.uk') => 'gb',
+            str_contains($host, 'amazon.ca') => 'ca',
+            str_contains($host, 'amazon.de') => 'de',
+            str_contains($host, 'amazon.fr') => 'fr',
+            str_contains($host, 'amazon.it') => 'it',
+            str_contains($host, 'amazon.es') => 'es',
+            str_contains($host, 'amazon.co.jp') => 'jp',
+            str_contains($host, 'amazon.com.au') => 'au',
+            str_contains($host, 'amazon.in') => 'in',
+            str_contains($host, 'amazon.com.br') => 'br',
+            str_contains($host, 'amazon.com.mx') => 'mx',
+            default => 'us',
+        };
+    }
+
     /**
      * Scrape page HTML using Bright Data Web Unlocker API
      */
@@ -386,6 +408,8 @@ class AmazonScraperService
             return '';
         }
 
+        $country = $this->resolveBrightDataCountry($url);
+
         try {
             $response = Http::withHeaders([
                 'Authorization' => 'Bearer ' . $this->brightdataApiKey,
@@ -393,6 +417,7 @@ class AmazonScraperService
             ])->timeout(45)->post("https://api.brightdata.com/request", [
                 'zone' => $this->brightdataZone,
                 'url' => $url,
+                'country' => $country,
                 'format' => 'raw',
             ]);
 
@@ -408,6 +433,7 @@ class AmazonScraperService
                 ])->timeout(45)->post("https://api.brightdata.com/request", [
                     'zone' => $this->brightdataZone,
                     'url' => $url,
+                    'country' => $country,
                     'format' => 'json',
                 ]);
 
@@ -507,15 +533,8 @@ class AmazonScraperService
             $title = trim($titleNodes->item(0)->nodeValue);
         }
 
-        // 2. Price Extraction
-        $price = 0.0;
-        $priceNodes = $xpath->query('//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | //span[@id="priceblock_ourprice"] | //span[@id="priceblock_dealprice"] | //span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]');
-        if ($priceNodes->length > 0) {
-            $rawPrice = $priceNodes->item(0)->nodeValue;
-            if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
-                $price = (float) str_replace(',', '', $m[0]);
-            }
-        }
+        // 2. Price Extraction (strictly scoped to main buybox / corePrice / OLP, never Sponsored banners)
+        $price = $this->extractMainProductPrice($xpath, $html, $asin);
 
         // 3. Images Extraction
         $images = [];
@@ -622,6 +641,40 @@ class AmazonScraperService
         $host = parse_url($url, PHP_URL_HOST) ?: 'www.amazon.com';
         $variants = $this->enrichVariantPrices($variants, $asin, $price, $host);
 
+        // 7c. Backfill parent price / availability from enriched variants if main page had no standard buybox
+        if ($price <= 0 && !empty($variants)) {
+            foreach ($variants as $v) {
+                if (($v['asin'] ?? '') === $asin && (float) ($v['price'] ?? 0) > 0) {
+                    $price = (float) $v['price'];
+                    break;
+                }
+            }
+            if ($price <= 0) {
+                foreach ($variants as $v) {
+                    if ((float) ($v['price'] ?? 0) > 0) {
+                        $price = (float) $v['price'];
+                        break;
+                    }
+                }
+            }
+        }
+
+        if ($price > 0 && !empty($variants)) {
+            foreach ($variants as &$v) {
+                if ((float) ($v['price'] ?? 0) <= 0) {
+                    $v['price'] = $price;
+                    $v['cost_price'] = $price;
+                }
+                if (($v['asin'] ?? '') === $asin && !$availability['available'] && !empty($v['available']) && (float) ($v['price'] ?? 0) > 0) {
+                    $availability = [
+                        'available' => true,
+                        'stock' => (int) ($v['stock'] ?? $this->defaultStock) ?: $this->defaultStock,
+                    ];
+                }
+            }
+            unset($v);
+        }
+
         // Include any variant swatch images into the main image gallery if missing
         foreach ($variants as $v) {
             if (!empty($v['image']) && !in_array($v['image'], $images)) {
@@ -651,21 +704,176 @@ class AmazonScraperService
     }
 
     /**
+     * Extract visible text from DOM nodes while ignoring inline <script> and <style> elements.
+     */
+    protected function extractVisibleTextFromNodes(DOMXPath $xpath, string $query): string
+    {
+        $nodes = $xpath->query($query);
+        $parts = [];
+        foreach ($nodes as $node) {
+            $textNodes = $xpath->query('.//text()[not(ancestor::script) and not(ancestor::style)]', $node);
+            $buf = '';
+            foreach ($textNodes as $tn) {
+                $buf .= ' ' . $tn->nodeValue;
+            }
+            $clean = trim(preg_replace('/\s+/', ' ', $buf));
+            if ($clean !== '') {
+                $parts[] = $clean;
+            }
+        }
+        return implode(' ', $parts);
+    }
+
+    /**
+     * Extract main product price strictly from Buy Box / CorePrice / OLP / selected Twister,
+     * never from Sponsored ads or Similar Items carousels, and skip local Amazon Fresh pickup-only prices.
+     */
+    protected function extractMainProductPrice(DOMXPath $xpath, string $html, string $asin = ''): float
+    {
+        $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
+        $buyboxVisibleText = strtolower($this->extractVisibleTextFromNodes($xpath, '//div[@id="buybox"]'));
+        $isLocalPickupOnly = !$hasBuyButton
+            && str_contains($buyboxVisibleText, 'amazon fresh')
+            && str_contains($buyboxVisibleText, 'pickup');
+
+        $price = 0.0;
+
+        if (!$isLocalPickupOnly) {
+            $mainPriceNodes = $xpath->query(
+                '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-price") and not(contains(@class, "a-text-price"))]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="apex_desktop"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
+                . ' | //div[@id="buybox"]//span[@id="price_inside_buybox"]'
+                . ' | //span[@id="priceblock_ourprice"]'
+                . ' | //span[@id="priceblock_dealprice"]'
+            );
+
+            if ($mainPriceNodes->length > 0) {
+                foreach ($mainPriceNodes as $pNode) {
+                    $rawPrice = trim((string) $pNode->nodeValue);
+                    if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
+                        $val = (float) str_replace(',', '', $m[0]);
+                        if ($val > 0) {
+                            $price = $val;
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if ($price <= 0) {
+                foreach (['corePriceDisplay_desktop_feature_div', 'corePrice_feature_div'] as $divId) {
+                    $wholeNodes = $xpath->query("//div[@id=\"{$divId}\"]//span[contains(@class, \"priceToPay\")]//span[contains(@class, \"a-price-whole\")]");
+                    $fracNodes = $xpath->query("//div[@id=\"{$divId}\"]//span[contains(@class, \"priceToPay\")]//span[contains(@class, \"a-price-fraction\")]");
+                    if ($wholeNodes->length > 0) {
+                        $whole = preg_replace('/[^\d]/', '', (string) $wholeNodes->item(0)->textContent);
+                        $frac = $fracNodes->length > 0 ? preg_replace('/[^\d]/', '', (string) $fracNodes->item(0)->textContent) : '00';
+                        if ($whole !== '') {
+                            $val = (float) "{$whole}.{$frac}";
+                            if ($val > 0) {
+                                $price = $val;
+                                break;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback for suppressed Buy Box / "See All Buying Options" / local-pickup-only pages:
+        // check twister-sort-filter-data for the current/selected ASIN
+        if ($price <= 0 && preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $tm)) {
+            $tJson = json_decode(html_entity_decode($tm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
+            if (!empty($tJson['sortedDimValuesForAllDims']) && is_array($tJson['sortedDimValuesForAllDims'])) {
+                foreach ($tJson['sortedDimValuesForAllDims'] as $items) {
+                    if (!is_array($items)) continue;
+                    foreach ($items as $item) {
+                        $itemAsin = strtoupper(trim((string) ($item['defaultAsin'] ?? '')));
+                        $isMatch = ($asin !== '' && $itemAsin === strtoupper($asin))
+                            || strtoupper((string) ($item['dimensionValueState'] ?? '')) === 'SELECTED';
+                        if (!$isMatch) continue;
+
+                        foreach ($item['slots'] ?? [] as $slot) {
+                            $dd = $slot['displayData'] ?? [];
+                            if (!empty($dd['priceWithoutCurrencySymbol'])) {
+                                $pVal = (float) str_replace(',', '', (string) $dd['priceWithoutCurrencySymbol']);
+                                if ($pVal > 0) {
+                                    $price = $pVal;
+                                    break 3;
+                                }
+                            }
+                            if (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
+                                $pVal = (float) str_replace(',', '', $om[1]);
+                                if ($pVal > 0) {
+                                    $price = $pVal;
+                                    break 3;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // Fallback: OLP / buying choices / unqualifiedBuyBox containers
+        if ($price <= 0) {
+            $olpNodes = $xpath->query(
+                '//div[@id="olp_feature_div"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+                . ' | //div[@id="olpLinkWidget_feature_div"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+                . ' | //div[@id="unqualifiedBuyBox"]//span[contains(@class, "a-color-price") or contains(@class, "a-offscreen")]'
+                . ' | //div[@id="all-offers-display"]//span[contains(@class, "a-offscreen")]'
+            );
+            foreach ($olpNodes as $node) {
+                $raw = trim((string) $node->textContent);
+                if (preg_match('/[\d,]+\.\d{2}/', $raw, $m)) {
+                    $val = (float) str_replace(',', '', $m[0]);
+                    if ($val > 0) {
+                        $price = $val;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fallback: selected DOM swatch <li> for $asin
+        if ($price <= 0) {
+            $swatchQuery = $asin !== ''
+                ? "//li[@data-asin=\"{$asin}\" or @data-defaultasin=\"{$asin}\" or @data-csa-c-item-id=\"{$asin}\"]"
+                : '//li[contains(@class, "swatchSelect") or contains(@class, "selected")]';
+            $swatchNodes = $xpath->query($swatchQuery);
+            foreach ($swatchNodes as $sNode) {
+                $pNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $sNode);
+                if ($pNodes->length > 0 && preg_match('/[\d,]+\.\d{2}/', $pNodes->item(0)->textContent, $m)) {
+                    $val = (float) str_replace(',', '', $m[0]);
+                    if ($val > 0) {
+                        $price = $val;
+                        break;
+                    }
+                }
+                if (preg_match('/(?:from\s+)?\$([\d,]+\.\d{2})/i', (string) $sNode->textContent, $m)) {
+                    $val = (float) str_replace(',', '', $m[1]);
+                    if ($val > 0) {
+                        $price = $val;
+                        break;
+                    }
+                }
+            }
+        }
+
+        return $price;
+    }
+
+    /**
      * Extract page-level availability and estimated stock from Amazon buybox/availability DOM.
      */
     protected function parseAvailability(DOMXPath $xpath, float $price): array
     {
-        $availNodes = $xpath->query(
+        $availText = $this->extractVisibleTextFromNodes(
+            $xpath,
             '//div[@id="availability"] | //div[@id="availabilityInsideBuyBox_feature_div"] | //div[@id="outOfStock"]'
         );
-
-        $availText = '';
-        foreach ($availNodes as $node) {
-            $text = trim(preg_replace('/\s+/', ' ', $node->textContent));
-            if ($text !== '') {
-                $availText .= ' ' . $text;
-            }
-        }
         $availLower = strtolower(trim($availText));
 
         if ($availLower !== '') {
@@ -683,6 +891,16 @@ class AmazonScraperService
         // Fallback: check Add to Cart / Buy Now buttons
         $buyButtons = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]');
         if ($buyButtons->length > 0) {
+            return ['available' => true, 'stock' => $this->defaultStock];
+        }
+
+        // Fallback: check "See All Buying Options" / unqualifiedBuyBox when a valid OLP price exists
+        $buyingOptions = $xpath->query(
+            '//a[contains(@id, "buybox-see-all-buying-choices")]'
+            . ' | //span[@id="buybox-see-all-buying-choices"]'
+            . ' | //div[@id="unqualifiedBuyBox"]//a[contains(translate(., "ABCDEFGHIJKLMNOPQRSTUVWXYZ", "abcdefghijklmnopqrstuvwxyz"), "buying options")]'
+        );
+        if ($buyingOptions->length > 0 && $price > 0) {
             return ['available' => true, 'stock' => $this->defaultStock];
         }
 
@@ -745,33 +963,40 @@ class AmazonScraperService
                             $itemImg = !empty($images) ? $images[0] : '';
                         }
 
-                        // Extract price from slots if available
-                        $itemPrice = $price;
+                        // Extract price from slots if available (do NOT pre-seed with parent fallback price)
+                        $itemPrice = 0.0;
+                        $hasOlpOffer = false;
                         if (!empty($item['slots']) && is_array($item['slots'])) {
                             foreach ($item['slots'] as $slot) {
                                 $displayData = $slot['displayData'] ?? [];
-                                if (!empty($displayData['priceWithoutCurrencySymbol'])) {
-                                    $parsedP = (float) str_replace(',', '', $displayData['priceWithoutCurrencySymbol']);
+                                if ($itemPrice <= 0 && !empty($displayData['priceWithoutCurrencySymbol'])) {
+                                    $parsedP = (float) str_replace(',', '', (string) $displayData['priceWithoutCurrencySymbol']);
                                     if ($parsedP > 0) {
                                         $itemPrice = $parsedP;
-                                        break;
                                     }
                                 }
-                                if (!empty($displayData['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', $displayData['olpMessage'], $pm)) {
+                                if (!empty($displayData['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $displayData['olpMessage'], $pm)) {
                                     $parsedP = (float) str_replace(',', '', $pm[1]);
                                     if ($parsedP > 0) {
-                                        $itemPrice = $parsedP;
-                                        break;
+                                        $hasOlpOffer = true;
+                                        if ($itemPrice <= 0) {
+                                            $itemPrice = $parsedP;
+                                        }
                                     }
                                 }
                             }
                         }
+                        if ($itemPrice <= 0 && $itemAsin === $asin && $price > 0) {
+                            $itemPrice = $price;
+                        }
 
                         $isAvailable = ($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE';
-                        if ($itemAsin === $asin && !$pageAvailable) {
+                        if ($hasOlpOffer) {
+                            $isAvailable = true;
+                        } elseif ($itemAsin === $asin && !$pageAvailable) {
                             $isAvailable = false;
                         }
-                        $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+                        $varStock = $isAvailable ? ($itemAsin === $asin && $pageStock > 0 ? $pageStock : $this->defaultStock) : 0;
 
                         $existingMeta = $asinMeta[$itemAsin] ?? [];
                         $asinMeta[$itemAsin] = [
@@ -895,21 +1120,28 @@ class AmazonScraperService
                     }
 
                     // Price
-                    $itemPrice = $price;
+                    $itemPrice = 0.0;
+                    $hasOlpMatch = false;
                     $priceNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
                     if ($priceNodes->length > 0) {
                         $rawP = $priceNodes->item(0)->textContent;
                         if (preg_match('/[\d,]+\.\d{2}/', $rawP, $pm)) {
                             $itemPrice = (float) str_replace(',', '', $pm[0]);
                         }
+                    } elseif (preg_match('/from\s+\$([\d,]+\.\d{2})/i', (string) $node->textContent, $om)) {
+                        $itemPrice = (float) str_replace(',', '', $om[1]);
+                        $hasOlpMatch = true;
+                    }
+                    if ($itemPrice <= 0 && $itemAsin === $asin && $price > 0) {
+                        $itemPrice = $price;
                     }
 
                     $liClass = strtolower((string) $node->getAttribute('class'));
-                    $isAvailable = !str_contains($liClass, 'unavailable');
-                    if ($itemAsin === $asin && !$pageAvailable) {
+                    $isAvailable = !str_contains($liClass, 'unavailable') || $hasOlpMatch;
+                    if ($itemAsin === $asin && !$pageAvailable && !$hasOlpMatch) {
                         $isAvailable = false;
                     }
-                    $varStock = $isAvailable ? ($itemAsin === $asin ? $pageStock : $this->defaultStock) : 0;
+                    $varStock = $isAvailable ? ($itemAsin === $asin && $pageStock > 0 ? $pageStock : $this->defaultStock) : 0;
 
                     $variants[] = [
                         'id' => $itemAsin,
@@ -1243,9 +1475,10 @@ class AmazonScraperService
                 $varImg = $meta['image'] ?? (!empty($images) ? $images[0] : '');
             }
 
-            $itemPrice = ($itemAsin === $currentAsin && $price > 0)
-                ? $price
-                : ($meta['price'] ?? $price);
+            $metaPrice = (float) ($meta['price'] ?? 0);
+            $itemPrice = $metaPrice > 0
+                ? $metaPrice
+                : (($itemAsin === $currentAsin && $price > 0) ? $price : 0.0);
 
             // For multi-dimension products, twister-sort-filter-data marks other-dimension values as UNAVAILABLE
             // relative to the currently selected sibling option, NOT globally out of stock.
@@ -1285,12 +1518,13 @@ class AmazonScraperService
      */
     protected function enrichVariantPrices(array $variants, string $currentAsin, float $basePrice, string $host = 'www.amazon.com'): array
     {
-        if (count($variants) <= 1) {
+        if (empty($variants)) {
             return $variants;
         }
 
-        // Collect unique variant ASINs that still have the fallback basePrice (excluding currentAsin)
-        $asinsToFetch = [];
+        // Always enrich variants with missing price (<= 0); also enrich fallback-priced variants when there is no price variation yet
+        $missingPriceAsins = [];
+        $fallbackPriceAsins = [];
         $distinctPrices = [];
         foreach ($variants as $v) {
             $vp = (float) ($v['price'] ?? 0);
@@ -1298,26 +1532,39 @@ class AmazonScraperService
                 $distinctPrices[(string) $vp] = true;
             }
             $vAsin = (string) ($v['asin'] ?? '');
-            if ($vAsin !== '' && strlen($vAsin) === 10 && $vAsin !== $currentAsin && abs($vp - $basePrice) < 0.001) {
-                $asinsToFetch[$vAsin] = true;
+            if ($vAsin === '' || strlen($vAsin) !== 10) {
+                continue;
+            }
+            if ($vp <= 0) {
+                $missingPriceAsins[$vAsin] = true;
+            } elseif (count($variants) > 1 && $vAsin !== $currentAsin && $basePrice > 0 && abs($vp - $basePrice) < 0.001) {
+                $fallbackPriceAsins[$vAsin] = true;
             }
         }
 
-        // Only enrich when Amazon gave zero price variation across variants
-        if (count($distinctPrices) > 1 || empty($asinsToFetch)) {
+        $asinsToFetch = $missingPriceAsins;
+        if (count($distinctPrices) <= 1) {
+            $asinsToFetch = array_merge($asinsToFetch, $fallbackPriceAsins);
+        }
+
+        if (empty($asinsToFetch)) {
             return $variants;
         }
 
         $targetAsins = array_slice(array_keys($asinsToFetch), 0, 40);
         $useBrightData = !empty($this->brightdataApiKey) && !empty($this->brightdataZone);
+        $country = $this->resolveBrightDataCountry("https://{$host}/");
         $fetchedPrices = [];
         $fetchedAvail = [];
 
         foreach (array_chunk($targetAsins, 10) as $batch) {
             try {
-                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($batch, $host, $useBrightData) {
+                $responses = Http::pool(function (\Illuminate\Http\Client\Pool $pool) use ($batch, $host, $useBrightData, $country) {
                     foreach ($batch as $vAsin) {
                         $vUrl = "https://{$host}/dp/{$vAsin}?th=1&psc=1";
+                        if ($host === 'www.amazon.com') {
+                            $vUrl .= "&language=en_US&currency=USD";
+                        }
                         if ($useBrightData) {
                             $pool->as($vAsin)
                                 ->withHeaders([
@@ -1328,6 +1575,7 @@ class AmazonScraperService
                                 ->post('https://api.brightdata.com/request', [
                                     'zone' => $this->brightdataZone,
                                     'url' => $vUrl,
+                                    'country' => $country,
                                     'format' => 'raw',
                                 ]);
                         } else {
@@ -1352,11 +1600,37 @@ class AmazonScraperService
                         continue;
                     }
 
-                    $parsedPrice = $this->extractPriceFromHtml($body);
+                    $parsedPrice = $this->extractPriceFromHtml($body, $vAsin);
                     if ($parsedPrice > 0) {
                         $fetchedPrices[$vAsin] = $parsedPrice;
+                        $fetchedAvail[$vAsin] = true;
                     } elseif (preg_match('/currently unavailable|temporarily out of stock/i', $body)) {
                         $fetchedAvail[$vAsin] = false;
+                    }
+
+                    // Opportunistically harvest sibling variant OLP/prices from twister-sort-filter-data on this page
+                    if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $body, $tm)) {
+                        $tJson = json_decode(html_entity_decode($tm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
+                        foreach ($tJson['sortedDimValuesForAllDims'] ?? [] as $items) {
+                            if (!is_array($items)) continue;
+                            foreach ($items as $item) {
+                                $sAsin = strtoupper(trim((string) ($item['defaultAsin'] ?? '')));
+                                if (strlen($sAsin) !== 10) continue;
+                                foreach ($item['slots'] ?? [] as $slot) {
+                                    $dd = $slot['displayData'] ?? [];
+                                    $sPrice = 0.0;
+                                    if (!empty($dd['priceWithoutCurrencySymbol'])) {
+                                        $sPrice = (float) str_replace(',', '', (string) $dd['priceWithoutCurrencySymbol']);
+                                    } elseif (!empty($dd['olpMessage']) && preg_match('/\$([\d,]+\.\d{2})/', (string) $dd['olpMessage'], $om)) {
+                                        $sPrice = (float) str_replace(',', '', $om[1]);
+                                    }
+                                    if ($sPrice > 0 && empty($fetchedPrices[$sAsin])) {
+                                        $fetchedPrices[$sAsin] = $sPrice;
+                                        $fetchedAvail[$sAsin] = true;
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             } catch (Exception $e) {
@@ -1369,14 +1643,19 @@ class AmazonScraperService
         }
 
         foreach ($variants as &$v) {
-            $vAsin = (string) ($v['asin'] ?? '');
+            $vAsin = strtoupper((string) ($v['asin'] ?? ''));
             if (isset($fetchedPrices[$vAsin])) {
                 $v['price'] = $fetchedPrices[$vAsin];
                 $v['cost_price'] = $fetchedPrices[$vAsin];
             }
-            if (isset($fetchedAvail[$vAsin]) && $fetchedAvail[$vAsin] === false) {
-                $v['available'] = false;
-                $v['stock'] = 0;
+            if (isset($fetchedAvail[$vAsin])) {
+                if ($fetchedAvail[$vAsin] === false) {
+                    $v['available'] = false;
+                    $v['stock'] = 0;
+                } elseif (empty($v['available']) || (int) ($v['stock'] ?? 0) <= 0) {
+                    $v['available'] = true;
+                    $v['stock'] = $this->defaultStock;
+                }
             }
         }
         unset($v);
@@ -1385,43 +1664,16 @@ class AmazonScraperService
     }
 
     /**
-     * Fast price extraction from an Amazon product page HTML string.
+     * Fast price extraction from an Amazon product page HTML string (strictly scoped to main buybox/OLP).
      */
-    protected function extractPriceFromHtml(string $html): float
+    protected function extractPriceFromHtml(string $html, string $asin = ''): float
     {
-        // 1. JSON priceAmount inside apex / twister buybox state
-        if (preg_match('/"priceAmount"\s*:\s*([\d]+\.[\d]{1,2})/', $html, $m)) {
-            $val = (float) $m[1];
-            if ($val > 0) return $val;
-        }
-
-        // 2. priceToPay / corePriceDisplay a-offscreen
-        if (preg_match('/priceToPay[^>]*>.*?a-offscreen[^>]*>\s*\$?([\d,]+\.\d{2})/s', $html, $m)) {
-            $val = (float) str_replace(',', '', $m[1]);
-            if ($val > 0) return $val;
-        }
-
-        // 3. Fallback DOM XPath (same selectors as main parser)
         libxml_use_internal_errors(true);
         $dom = new DOMDocument();
         @$dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
         $xpath = new DOMXPath($dom);
         libxml_clear_errors();
 
-        $priceNodes = $xpath->query(
-            '//div[@id="corePriceDisplay_desktop_feature_div"]//span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
-            . ' | //div[@id="corePrice_feature_div"]//span[contains(@class, "a-offscreen")]'
-            . ' | //span[contains(@class, "priceToPay")]//span[contains(@class, "a-offscreen")]'
-            . ' | //span[@id="priceblock_ourprice"]'
-            . ' | //span[@id="priceblock_dealprice"]'
-        );
-        if ($priceNodes->length > 0) {
-            $rawPrice = $priceNodes->item(0)->nodeValue;
-            if (preg_match('/[\d,]+\.\d{2}/', $rawPrice, $m)) {
-                return (float) str_replace(',', '', $m[0]);
-            }
-        }
-
-        return 0.0;
+        return $this->extractMainProductPrice($xpath, $html, $asin);
     }
 }

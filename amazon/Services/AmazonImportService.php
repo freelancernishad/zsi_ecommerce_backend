@@ -161,15 +161,15 @@ class AmazonImportService
             $resolvedMarkupValue = $resolvedMarkupType === 'fixed' ? $fixedMarkupAmount : $profitMarginPercent;
 
             $realProductStock = $defaultStock;
-            if (isset($amazonData['available']) && $amazonData['available'] === false) {
-                $realProductStock = 0;
-            } elseif (isset($amazonData['stock']) && is_numeric($amazonData['stock'])) {
-                $realProductStock = max(0, (int)$amazonData['stock']);
-            } elseif (!empty($amazonData['variants']) && is_array($amazonData['variants'])) {
+            if (!empty($amazonData['variants']) && is_array($amazonData['variants'])) {
                 $realProductStock = array_sum(array_map(function ($v) use ($defaultStock) {
                     if (isset($v['available']) && $v['available'] === false) return 0;
                     return isset($v['stock']) && is_numeric($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock;
                 }, $amazonData['variants']));
+            } elseif (isset($amazonData['available']) && $amazonData['available'] === false) {
+                $realProductStock = 0;
+            } elseif (isset($amazonData['stock']) && is_numeric($amazonData['stock'])) {
+                $realProductStock = max(0, (int)$amazonData['stock']);
             }
 
             $productPayload = [
