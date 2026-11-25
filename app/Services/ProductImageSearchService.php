@@ -118,6 +118,7 @@ class ProductImageSearchService
         )));
 
         if (empty($candidateIds)) {
+            $similarData = $this->findSimilarProducts([], [], $detected, 8);
             return [
                 'detected' => $detected,
                 'ai_model_used' => $aiModelUsed,
@@ -125,6 +126,8 @@ class ProductImageSearchService
                 'indexed_products_count' => $indexedCount,
                 'total_matches' => 0,
                 'products' => [],
+                'similar_products' => $similarData['products'],
+                'similar_category_label' => $similarData['category_label'],
             ];
         }
 
@@ -257,6 +260,8 @@ class ProductImageSearchService
             $limit
         );
 
+        $similarData = $this->findSimilarProducts($finalList, $ranked, $detected, 8);
+
         return [
             'detected' => $detected,
             'ai_model_used' => $aiModelUsed,
@@ -264,6 +269,254 @@ class ProductImageSearchService
             'indexed_products_count' => $indexedCount,
             'total_matches' => count($finalList),
             'products' => $finalList,
+            'similar_products' => $similarData['products'],
+            'similar_category_label' => $similarData['category_label'],
+        ];
+    }
+
+    /**
+     * Format a Product Eloquent model cleanly for storefront visual search results.
+     */
+    protected function formatProductCard(
+        Product $product,
+        int $matchScore,
+        ?int $visualScore = null,
+        int $textScore = 0,
+        string $matchType = 'exact'
+    ): array {
+        return [
+            'id' => $product->id,
+            'name' => $product->name,
+            'slug' => $product->slug,
+            'price' => (float) $product->price,
+            'sale_price' => $product->sale_price !== null ? (float) $product->sale_price : null,
+            'original_price' => $product->original_price !== null ? (float) $product->original_price : null,
+            'stock_quantity' => (int) ($product->stock_quantity ?? 0),
+            'rating' => (float) ($product->rating ?? 0),
+            'images' => $product->images->map(fn ($img) => [
+                'id' => $img->id,
+                'image_path' => $img->image_path,
+                'is_primary' => (bool) $img->is_primary,
+            ])->values()->all(),
+            'category' => $product->category ? [
+                'id' => $product->category->id,
+                'name' => $product->category->name,
+                'slug' => $product->category->slug,
+            ] : null,
+            'match_score' => $matchScore,
+            'visual_score' => $visualScore,
+            'text_score' => $textScore,
+            'match_type' => $matchType,
+        ];
+    }
+
+    /**
+     * Find up to $targetCount genuinely related products in the same store category when exact matches are few (< 8).
+     */
+    protected function findSimilarProducts(
+        array $finalList,
+        array $ranked,
+        ?array $detected,
+        int $targetCount = 8
+    ): array {
+        if (count($finalList) >= $targetCount) {
+            return ['products' => [], 'category_label' => null];
+        }
+
+        $excludeIds = [];
+        foreach ($finalList as $item) {
+            $excludeIds[(int) $item['id']] = true;
+        }
+
+        $targetCategoryIds = [];
+        $categoryLabel = null;
+
+        foreach (array_slice($finalList, 0, 2) as $item) {
+            if (!empty($item['category']['id'])) {
+                $cid = (int) $item['category']['id'];
+                $targetCategoryIds[$cid] = true;
+                if ($categoryLabel === null && !empty($item['category']['name'])) {
+                    $categoryLabel = (string) $item['category']['name'];
+                }
+            }
+        }
+
+        if (empty($targetCategoryIds) && is_array($detected)) {
+            $hints = array_merge(
+                (array) ($detected['store_categories'] ?? []),
+                (array) ($detected['category_hints'] ?? [])
+            );
+            $normHints = array_values(array_filter(array_map(
+                fn ($h) => trim((string) preg_replace('/\s+/', ' ', strtolower((string) $h))),
+                $hints
+            )));
+
+            if (!empty($normHints)) {
+                $cats = Category::query()->get(['id', 'name']);
+                foreach ($normHints as $hint) {
+                    foreach ($cats as $cat) {
+                        $cName = trim((string) preg_replace('/\s+/', ' ', strtolower((string) $cat->name)));
+                        if ($cName === '') {
+                            continue;
+                        }
+                        if ($cName === $hint || (strlen($hint) >= 4 && $cName !== 'accessories' && $hint !== 'accessories' && (str_contains($cName, $hint) || str_contains($hint, $cName)))) {
+                            $targetCategoryIds[(int) $cat->id] = true;
+                            if ($categoryLabel === null) {
+                                $categoryLabel = trim((string) $cat->name);
+                            }
+                            if (count($targetCategoryIds) >= 2) {
+                                break 2;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        if (empty($targetCategoryIds)) {
+            return ['products' => [], 'category_label' => null];
+        }
+
+        $catIdList = array_keys($targetCategoryIds);
+
+        // Build related keyword terms & pet guard so non-pet queries don't show Dog/Cat chew toys
+        $simTerms = [];
+        $stop = ['the', 'and', 'for', 'with', 'from', 'this', 'that', 'product', 'item', 'photo', 'image', 'null'];
+        if (is_array($detected)) {
+            $sources = array_merge(
+                [$detected['label'] ?? '', $detected['core_type'] ?? '', $detected['brand'] ?? ''],
+                (array) ($detected['keywords'] ?? [])
+            );
+            foreach ($sources as $src) {
+                foreach (preg_split('/[^a-z0-9]+/', strtolower((string) $src)) ?: [] as $w) {
+                    if (strlen($w) >= 3 && !in_array($w, $stop, true)) {
+                        $simTerms[$w] = true;
+                    }
+                }
+            }
+        }
+        $simTermList = array_keys($simTerms);
+
+        $brandLower = (is_array($detected) && !empty($detected['brand']) && strtolower((string) $detected['brand']) !== 'null')
+            ? strtolower(trim((string) $detected['brand']))
+            : null;
+
+        $petWords = ['dog', 'dogs', 'cat', 'cats', 'pet', 'pets', 'puppy', 'puppies', 'kitten', 'chew', 'canine'];
+        $queryIsPet = false;
+        foreach ($simTermList as $st) {
+            if (in_array($st, $petWords, true)) {
+                $queryIsPet = true;
+                break;
+            }
+        }
+
+        $isPetItem = function (string $nameLower) use ($petWords): bool {
+            foreach ($petWords as $pw) {
+                if ($this->containsWordOrPhrase($nameLower, $pw)) {
+                    return true;
+                }
+            }
+            return false;
+        };
+
+        $similar = [];
+        $addedIds = $excludeIds;
+
+        // 1. Pull non-exact semantic hits from $ranked that share the target category
+        foreach ($ranked as $rItem) {
+            $pid = (int) $rItem['id'];
+            if (isset($addedIds[$pid])) {
+                continue;
+            }
+            $rCatId = isset($rItem['category']['id']) ? (int) $rItem['category']['id'] : 0;
+            if (!isset($targetCategoryIds[$rCatId])) {
+                continue;
+            }
+            $nameLower = strtolower((string) ($rItem['name'] ?? ''));
+            if (!$queryIsPet && $isPetItem($nameLower)) {
+                continue;
+            }
+            $addedIds[$pid] = true;
+            $rItem['match_score'] = 0;
+            $rItem['match_type'] = 'similar';
+            $similar[] = $rItem;
+            if (count($similar) >= $targetCount) {
+                return ['products' => $similar, 'category_label' => $categoryLabel];
+            }
+        }
+
+        // 2. Fetch published products from the same category & rank by keyword/brand relevance + stock + rating
+        $relations = ['images', 'category'];
+        if (method_exists(Product::class, 'brand')) {
+            $relations[] = 'brand';
+        }
+
+        $catProducts = Product::with($relations)
+            ->where('status', 'published')
+            ->whereIn('category_id', $catIdList)
+            ->whereNotIn('id', array_keys($addedIds))
+            ->limit(150)
+            ->get();
+
+        $scoredCat = [];
+        foreach ($catProducts as $prod) {
+            $nameLower = strtolower((string) $prod->name);
+            if (!$queryIsPet && $isPetItem($nameLower)) {
+                continue;
+            }
+
+            $tagsLower = is_array($prod->tags) ? strtolower(implode(' ', $prod->tags)) : strtolower((string) $prod->tags);
+            $descLower = strtolower((string) ($prod->short_description ?? ''));
+            $metaLower = trim($tagsLower . ' ' . $descLower);
+
+            $rel = 0.0;
+            if ($brandLower !== null && $this->containsWordOrPhrase($nameLower, $brandLower)) {
+                $rel += 25.0;
+            }
+            foreach ($simTermList as $term) {
+                if ($this->containsWordOrPhrase($nameLower, $term)) {
+                    $rel += 14.0;
+                } elseif ($this->containsWordOrPhrase($metaLower, $term)) {
+                    $rel += 5.0;
+                }
+            }
+            if ((int) ($prod->stock_quantity ?? 0) > 0) {
+                $rel += 4.0;
+            }
+            $rel += min(5.0, (float) ($prod->rating ?? 0));
+
+            $scoredCat[] = [
+                'product' => $prod,
+                'rel' => $rel,
+                'in_stock' => ((int) ($prod->stock_quantity ?? 0) > 0) ? 1 : 0,
+                'rating' => (float) ($prod->rating ?? 0),
+                'id' => (int) $prod->id,
+            ];
+        }
+
+        usort($scoredCat, function (array $a, array $b) {
+            if ($a['rel'] !== $b['rel']) {
+                return $b['rel'] <=> $a['rel'];
+            }
+            if ($a['in_stock'] !== $b['in_stock']) {
+                return $b['in_stock'] <=> $a['in_stock'];
+            }
+            if ($a['rating'] !== $b['rating']) {
+                return $b['rating'] <=> $a['rating'];
+            }
+            return $b['id'] <=> $a['id'];
+        });
+
+        foreach ($scoredCat as $entry) {
+            $similar[] = $this->formatProductCard($entry['product'], 0, null, 0, 'similar');
+            if (count($similar) >= $targetCount) {
+                break;
+            }
+        }
+
+        return [
+            'products' => $similar,
+            'category_label' => $categoryLabel,
         ];
     }
 
