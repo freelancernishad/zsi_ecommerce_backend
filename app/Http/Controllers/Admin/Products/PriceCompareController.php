@@ -16,12 +16,12 @@ class PriceCompareController extends Controller
     }
 
     /**
-     * Compare a previewed product across AliExpress, CJ Dropshipping, and Amazon.
+     * Compare a product across AliExpress, CJ Dropshipping, and Amazon.
      */
     public function compare(Request $request): JsonResponse
     {
         $validated = $request->validate([
-            'source_supplier' => 'required|string|in:aliexpress,amazon,cj',
+            'source_supplier' => 'required|string|in:aliexpress,amazon,cj,store',
             'product_id' => 'nullable|string|max:150',
             'title' => 'required|string|max:500',
             'price' => 'nullable|numeric|min:0',
@@ -30,6 +30,7 @@ class PriceCompareController extends Controller
             'brand' => 'nullable|string|max:200',
             'custom_query' => 'nullable|string|max:250',
             'limit' => 'nullable|integer|min:1|max:25',
+            'page' => 'nullable|integer|min:1|max:5',
             'refresh' => 'nullable|boolean',
         ]);
 
@@ -50,6 +51,49 @@ class PriceCompareController extends Controller
                 'success' => false,
                 'message' => 'Failed to compare supplier prices: ' . $e->getMessage(),
             ], 500);
+        }
+    }
+
+    /**
+     * Fetch live verified price, shipping cost, and stock for a single supplier candidate.
+     */
+    public function checkDetails(Request $request): JsonResponse
+    {
+        $validated = $request->validate([
+            'supplier' => 'required|string|in:aliexpress,amazon,cj',
+            'product_id' => 'required|string|max:150',
+            'country_code' => 'nullable|string|size:2',
+        ]);
+
+        try {
+            $details = $this->compareService->checkCandidateDetails(
+                $validated['supplier'],
+                $validated['product_id'],
+                $validated['country_code'] ?? 'US'
+            );
+
+            return response()->json([
+                'success' => true,
+                'data' => $details,
+            ]);
+        } catch (\Throwable $e) {
+            return response()->json([
+                'success' => true,
+                'data' => [
+                    'supplier' => $validated['supplier'],
+                    'product_id' => $validated['product_id'],
+                    'verified_price' => null,
+                    'shipping' => null,
+                    'total_cost' => null,
+                    'delivery_estimate' => null,
+                    'available' => null,
+                    'stock' => null,
+                    'rating' => null,
+                    'variants_count' => null,
+                    'checked_at' => now()->toIso8601String(),
+                    'warning' => 'Live detail check skipped: ' . $e->getMessage(),
+                ],
+            ]);
         }
     }
 }
