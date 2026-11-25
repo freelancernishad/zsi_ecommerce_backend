@@ -80,7 +80,7 @@ class CjImportService
     /**
      * Import or update a CJ Product into Laravel MySQL Database.
      */
-    public function importCjProduct(string $cjProductId, float $profitMarginPercent = 0.0, ?int $categoryId = null): Product
+    public function importCjProduct(string $cjProductId, ?float $profitMarginPercent = null, ?int $categoryId = null): Product
     {
         $cjData = $this->cjService->getProductDetail($cjProductId);
 
@@ -88,36 +88,48 @@ class CjImportService
             throw new Exception("Product details not found on CJ Dropshipping for PID: {$cjProductId}");
         }
 
-        return DB::transaction(function () use ($cjData, $profitMarginPercent, $categoryId) {
+        $existing = Product::where('cj_product_id', $cjProductId)->first();
+
+        if ($profitMarginPercent !== null) {
+            $resolvedMargin = (float) $profitMarginPercent;
+        } elseif ($existing && $existing->sync_markup_type === 'percentage' && $existing->sync_markup_value !== null) {
+            $resolvedMargin = (float) $existing->sync_markup_value;
+        } elseif ($existing && (float) ($existing->cost_per_item ?? 0) > 0 && (float) $existing->price > (float) $existing->cost_per_item) {
+            $resolvedMargin = round((((float) $existing->price - (float) $existing->cost_per_item) / (float) $existing->cost_per_item) * 100, 2);
+        } else {
+            $resolvedMargin = 0.0;
+        }
+
+        return DB::transaction(function () use ($cjData, $resolvedMargin, $categoryId, $existing) {
             $costPrice = $this->parsePrice($cjData['sellPrice'] ?? 0);
-            $salePrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
+            $salePrice = round($costPrice * (1 + ($resolvedMargin / 100)), 2);
 
             $pid = $cjData['pid'] ?? '';
             $productName = $cjData['productNameEn'] ?? $cjData['productName'] ?? ('cj-product-' . $pid);
 
-            // Generate safe & unique slug (limited to 120 chars to prevent MySQL VARCHAR truncation duplicate key errors)
-            $baseSlug = Str::limit(Str::slug($productName), 120, '');
-            $slug = $baseSlug;
+            // Preserve existing slug when updating, or generate a safe unique slug
+            if ($existing && !empty($existing->slug)) {
+                $slug = $existing->slug;
+            } else {
+                $baseSlug = Str::limit(Str::slug($productName), 120, '');
+                $slug = $baseSlug;
 
-            while (Product::where('slug', $slug)->where('cj_product_id', '!=', $pid)->exists()) {
-                $slug = $baseSlug . '-' . Str::random(6);
+                while (Product::where('slug', $slug)->where('cj_product_id', '!=', $pid)->exists()) {
+                    $slug = $baseSlug . '-' . Str::random(6);
+                }
             }
 
-            // Fallback category if none specified (prevents NOT NULL constraint error)
-            $targetCategoryId = $categoryId ?: (Category::query()->value('id') ?: 1);
+            // Preserve existing category or use requested/fallback category
+            $targetCategoryId = $categoryId ?: ($existing?->category_id ?: (Category::query()->value('id') ?: 1));
 
             // Calculate real total stock from CJ variants or product stock
-            $totalStock = (int) ($cjData['productStock'] ?? $cjData['storageNum'] ?? 0);
+            $totalStock = (int) ($cjData['productStock'] ?? $cjData['storageNum'] ?? $cjData['inventoryNum'] ?? 0);
             if (isset($cjData['variants']) && is_array($cjData['variants']) && count($cjData['variants']) > 0) {
                 $variantStocks = array_map(function ($v) {
-                    if (isset($v['variantStandardQuantity']) && is_numeric($v['variantStandardQuantity'])) {
-                        return max(0, (int) $v['variantStandardQuantity']);
-                    }
-                    if (isset($v['storageNum']) && is_numeric($v['storageNum'])) {
-                        return max(0, (int) $v['storageNum']);
-                    }
-                    if (isset($v['inventoryNum']) && is_numeric($v['inventoryNum'])) {
-                        return max(0, (int) $v['inventoryNum']);
+                    foreach (['stock', 'variantStandardQuantity', 'storageNum', 'inventoryNum'] as $stockKey) {
+                        if (isset($v[$stockKey]) && is_numeric($v[$stockKey])) {
+                            return max(0, (int) $v[$stockKey]);
+                        }
                     }
                     return 0;
                 }, $cjData['variants']);
@@ -126,13 +138,14 @@ class CjImportService
 
             // Build JSON variant options array for storefront selectors
             $variantOptions = $this->buildVariantOptions($cjData);
+            $shortDesc = $this->extractCleanShortDescription($cjData['description'] ?? '');
 
             // Create or Update Product
             $cjPayload = [
                 'name' => $cjData['productNameEn'] ?? $cjData['productName'] ?? 'CJ Product',
                 'slug' => $slug,
                 'description' => $cjData['description'] ?? '',
-                'short_description' => Str::limit(strip_tags($cjData['description'] ?? ''), 160),
+                'short_description' => $shortDesc,
                 'price' => $salePrice,
                 'original_price' => $salePrice,
                 'cost_per_item' => $costPrice,
@@ -140,7 +153,7 @@ class CjImportService
                 'stock_quantity' => $totalStock,
                 'category_id' => $targetCategoryId,
                 'brand_id' => null,
-                'status' => 'published',
+                'status' => $existing?->status ?: 'published',
                 'weight' => (float) ($cjData['productWeight'] ?? 0),
                 'weight_unit' => $cjData['productUnit'] ?? 'g',
                 'variant_options' => $variantOptions,
@@ -164,6 +177,9 @@ class CjImportService
                     $existingProduct->update([
                         'price' => $salePrice,
                         'original_price' => $salePrice,
+                        'cost_per_item' => $costPrice,
+                        'short_description' => $shortDesc,
+                        'variant_options' => $variantOptions,
                         'stock_quantity' => $totalStock,
                         'cj_synced_at' => now(),
                     ]);
@@ -205,29 +221,25 @@ class CjImportService
                 $product->variants()->delete();
 
                 $productName = trim($cjData['productNameEn'] ?? $cjData['productName'] ?? '');
+                $rawKeys = $cjData['variantKeyEn'] ?? $cjData['productKeyEn'] ?? $cjData['variantKey'] ?? $cjData['productKey'] ?? null;
+                $keyNames = ($rawKeys && is_string($rawKeys))
+                    ? array_values(array_filter(array_map('trim', preg_split('/[,;\/-]+/', $rawKeys))))
+                    : [];
 
                 foreach ($cjData['variants'] as $v) {
                     $variantCost = $this->parsePrice($v['variantSellPrice'] ?? 0);
-                    $variantPrice = round($variantCost * (1 + ($profitMarginPercent / 100)), 2);
-                    $vStock = isset($v['variantStandardQuantity']) && is_numeric($v['variantStandardQuantity'])
-                        ? max(0, (int) $v['variantStandardQuantity'])
-                        : (isset($v['storageNum']) && is_numeric($v['storageNum'])
-                            ? max(0, (int) $v['storageNum'])
-                            : max(0, (int) ($v['inventoryNum'] ?? 0)));
+                    $variantPrice = round($variantCost * (1 + ($resolvedMargin / 100)), 2);
 
-                    $rawLabel = $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? 'Default Variant';
-                    $cleanLabel = $rawLabel;
-                    if (!empty($productName)) {
-                        $cleanLabel = trim(preg_replace('/^' . preg_quote($productName, '/') . '\s*/i', '', $rawLabel));
+                    $vStock = 0;
+                    foreach (['stock', 'variantStandardQuantity', 'storageNum', 'inventoryNum'] as $stockKey) {
+                        if (isset($v[$stockKey]) && is_numeric($v[$stockKey])) {
+                            $vStock = max(0, (int) $v[$stockKey]);
+                            break;
+                        }
                     }
 
-                    $colorVal = null;
-                    $sizeVal = null;
-
-                    if (preg_match('/^(.*?)\s+(XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $cleanLabel, $m)) {
-                        $colorVal = trim($m[1]);
-                        $sizeVal = strtoupper(trim($m[2]));
-                    }
+                    $resolvedLabel = $this->resolveVariantLabel($v, $productName);
+                    $parsedAttr = $this->parseVariantAttributes($resolvedLabel, $keyNames);
 
                     $vImage = null;
                     $rawVarImg = $v['variantImage'] ?? $v['image'] ?? null;
@@ -238,14 +250,14 @@ class CjImportService
 
                     ProductVariant::create([
                         'product_id' => $product->id,
-                        'combination_label' => $cleanLabel,
+                        'combination_label' => $parsedAttr['combination_label'],
                         'price' => $variantPrice,
                         'discount_price' => null,
                         'sku' => $v['variantSku'] ?? ($product->sku . '-' . ($v['vid'] ?? Str::random(4))),
                         'stock' => $vStock,
                         'available_quantity' => $vStock,
-                        'color' => $colorVal,
-                        'size' => $sizeVal,
+                        'color' => $parsedAttr['color'],
+                        'size' => $parsedAttr['size'],
                         'image' => $vImage,
                         'cj_vid' => $v['vid'] ?? null,
                         'cj_variant_sku' => $v['variantSku'] ?? null,
@@ -259,65 +271,172 @@ class CjImportService
     }
 
     /**
+     * Resolve first non-empty variant label from CJ variant payload (handles empty-string variantNameEn: "").
+     */
+    public function resolveVariantLabel(array $v, string $productName = ''): string
+    {
+        $label = '';
+        foreach (['variantNameEn', 'variantKeyEn', 'variantKey', 'variantName'] as $field) {
+            $candidate = trim((string) ($v[$field] ?? ''));
+            if ($candidate !== '') {
+                $label = $candidate;
+                break;
+            }
+        }
+
+        if ($label !== '' && $productName !== '') {
+            $stripped = trim(preg_replace('/^' . preg_quote($productName, '/') . '\s*/i', '', $label));
+            if ($stripped !== '') {
+                $label = $stripped;
+            }
+        }
+
+        $label = trim($label, " \t\n\r\0\x0B-/");
+
+        return $label !== '' ? $label : 'Default Variant';
+    }
+
+    /**
+     * Parse structured attributes, color, size, and normalized combination_label from a CJ variant label.
+     */
+    public function parseVariantAttributes(string $label, array $keyNames = []): array
+    {
+        $label = trim($label);
+        if ($label === '' || strcasecmp($label, 'Default Variant') === 0) {
+            return [
+                'attributes' => [],
+                'color' => null,
+                'size' => null,
+                'combination_label' => 'Default Variant',
+            ];
+        }
+
+        $attributes = [];
+        $color = null;
+        $size = null;
+
+        if (str_contains($label, ':')) {
+            $pairs = preg_split('/[,;\n]+/', $label);
+            foreach ($pairs as $p) {
+                if (str_contains($p, ':')) {
+                    [$k, $val] = explode(':', $p, 2);
+                    $k = ucfirst(trim($k));
+                    $val = trim($val);
+                    if ($k !== '' && $val !== '') {
+                        $attributes[$k] = $val;
+                        $lowerK = strtolower($k);
+                        if (($lowerK === 'color' || $lowerK === 'colour') && $color === null) {
+                            $color = $val;
+                        } elseif ($lowerK === 'size' && $size === null) {
+                            $size = $val;
+                        }
+                    }
+                }
+            }
+            $comb = !empty($attributes) ? implode(' / ', array_values($attributes)) : $label;
+            return [
+                'attributes' => $attributes,
+                'color' => $color,
+                'size' => $size,
+                'combination_label' => $comb,
+            ];
+        }
+
+        if (preg_match('/^(.*?)[\s\-\/]+(XXS|XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $label, $m)) {
+            $color = trim($m[1], " \t\n\r\0\x0B-/");
+            $size = strtoupper(trim($m[2]));
+            if ($color !== '') {
+                $attributes['Color'] = $color;
+            }
+            $attributes['Size'] = $size;
+            return [
+                'attributes' => $attributes,
+                'color' => $color !== '' ? $color : null,
+                'size' => $size,
+                'combination_label' => $color !== '' ? "{$color} / {$size}" : $size,
+            ];
+        }
+
+        if (preg_match('/^(XXS|XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $label)) {
+            $size = strtoupper($label);
+            $attributes['Size'] = $size;
+            return [
+                'attributes' => $attributes,
+                'color' => null,
+                'size' => $size,
+                'combination_label' => $size,
+            ];
+        }
+
+        $parts = array_values(array_filter(array_map('trim', preg_split('/\s*[\/\-,]\s*/', $label)), fn($p) => $p !== ''));
+        if (empty($parts)) {
+            return [
+                'attributes' => [],
+                'color' => null,
+                'size' => null,
+                'combination_label' => $label,
+            ];
+        }
+
+        foreach ($parts as $idx => $part) {
+            $optName = !empty($keyNames[$idx])
+                ? ucfirst(trim((string) $keyNames[$idx]))
+                : (count($parts) === 1 ? 'Option' : ('Option ' . ($idx + 1)));
+            $attributes[$optName] = $part;
+            $lowerOpt = strtolower($optName);
+            if (($lowerOpt === 'color' || $lowerOpt === 'colour') && $color === null) {
+                $color = $part;
+            } elseif ($lowerOpt === 'size' && $size === null) {
+                $size = $part;
+            }
+        }
+
+        return [
+            'attributes' => $attributes,
+            'color' => $color,
+            'size' => $size,
+            'combination_label' => implode(' / ', $parts),
+        ];
+    }
+
+    /**
+     * Extract clean single-line short description or null when CJ HTML only has images/whitespace.
+     */
+    public function extractCleanShortDescription(?string $html): ?string
+    {
+        if ($html === null || trim($html) === '') {
+            return null;
+        }
+        $plain = html_entity_decode(strip_tags($html), ENT_QUOTES | ENT_HTML5, 'UTF-8');
+        $clean = trim((string) preg_replace('/\s+/u', ' ', $plain));
+        if ($clean === '') {
+            return null;
+        }
+        return Str::limit($clean, 160);
+    }
+
+    /**
      * Build variant_options JSON structure for Product model from CJ API data.
      */
-    protected function buildVariantOptions(array $cjData): ?array
+    public function buildVariantOptions(array $cjData): ?array
     {
         if (empty($cjData['variants']) || !is_array($cjData['variants'])) {
             return null;
         }
 
         $optionsCollector = [];
-        $productName = trim($cjData['productNameEn'] ?? $cjData['productName'] ?? '');
+        $productName = trim((string) ($cjData['productNameEn'] ?? $cjData['productName'] ?? ''));
 
-        // Check if CJ provides explicit option keys, e.g. "Color,Size"
         $rawKeys = $cjData['variantKeyEn'] ?? $cjData['productKeyEn'] ?? $cjData['variantKey'] ?? $cjData['productKey'] ?? null;
-        $keyNames = [];
-        if ($rawKeys && is_string($rawKeys)) {
-            $keyNames = array_map('trim', preg_split('/[,;\/-]+/', $rawKeys));
-        }
+        $keyNames = ($rawKeys && is_string($rawKeys))
+            ? array_values(array_filter(array_map('trim', preg_split('/[,;\/-]+/', $rawKeys))))
+            : [];
 
         foreach ($cjData['variants'] as $v) {
-            $label = $v['variantNameEn'] ?? $v['variantKeyEn'] ?? $v['variantKey'] ?? $v['variantName'] ?? '';
-            if (empty($label)) continue;
-
-            // Strip leading product name if present
-            if (!empty($productName)) {
-                $cleanLabel = trim(preg_replace('/^' . preg_quote($productName, '/') . '\s*/i', '', $label));
-                if (!empty($cleanLabel)) {
-                    $label = $cleanLabel;
-                }
-            }
-
-            // Check if label has key-value pairs like "Color: Black, Size: M"
-            if (str_contains($label, ':')) {
-                $pairs = preg_split('/[,;\n]+/', $label);
-                foreach ($pairs as $p) {
-                    if (str_contains($p, ':')) {
-                        [$k, $val] = explode(':', $p, 2);
-                        $k = trim($k);
-                        $val = trim($val);
-                        if (!empty($k) && !empty($val)) {
-                            $optionsCollector[ucfirst($k)][$val] = true;
-                        }
-                    }
-                }
-            } else if (preg_match('/^(.*?)\s+(XS|S|M|L|XL|2XL|XXL|3XL|4XL|5XL|6XL)$/i', $label, $matches)) {
-                // Intelligent Color & Size Extractor
-                $color = trim($matches[1]);
-                $size = strtoupper(trim($matches[2]));
-                if (!empty($color)) {
-                    $optionsCollector['Color'][$color] = true;
-                }
-                $optionsCollector['Size'][$size] = true;
-            } else {
-                // Split label by ' / ', '-', ','
-                $parts = array_map('trim', preg_split('/[\/\-,]+/', $label));
-                foreach ($parts as $idx => $part) {
-                    if (empty($part)) continue;
-                    $optName = $keyNames[$idx] ?? (count($parts) === 1 ? 'Option' : ('Option ' . ($idx + 1)));
-                    $optionsCollector[ucfirst($optName)][$part] = true;
-                }
+            $label = $this->resolveVariantLabel($v, $productName);
+            $parsed = $this->parseVariantAttributes($label, $keyNames);
+            foreach ($parsed['attributes'] as $optName => $val) {
+                $optionsCollector[ucfirst($optName)][$val] = true;
             }
         }
 
@@ -325,11 +444,20 @@ class CjImportService
             return null;
         }
 
+        $sizeOrder = ['XXS' => 1, 'XS' => 2, 'S' => 3, 'M' => 4, 'L' => 5, 'XL' => 6, '2XL' => 7, 'XXL' => 8, '3XL' => 9, '4XL' => 10, '5XL' => 11, '6XL' => 12];
+
         $formatted = [];
         foreach ($optionsCollector as $optName => $valsMap) {
+            $vals = array_values(array_map('strval', array_keys($valsMap)));
+            if (strtolower($optName) === 'size' && count($vals) > 1) {
+                $allClothingSizes = collect($vals)->every(fn($v) => isset($sizeOrder[strtoupper(trim($v))]));
+                if ($allClothingSizes) {
+                    usort($vals, fn($a, $b) => ($sizeOrder[strtoupper(trim($a))] ?? 999) <=> ($sizeOrder[strtoupper(trim($b))] ?? 999));
+                }
+            }
             $formatted[] = [
                 'name' => ucfirst($optName),
-                'values' => array_values(array_keys($valsMap)),
+                'values' => $vals,
             ];
         }
 

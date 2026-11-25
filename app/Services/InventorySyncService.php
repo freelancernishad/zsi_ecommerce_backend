@@ -502,6 +502,16 @@ class InventorySyncService
 
             $supplierVariants = $supplierData['variants'] ?? [];
             $localVariants = $product->variants()->get();
+            $cjImporter = ($channel === 'cjdropshipping')
+                ? app(\CjDropshipping\Services\CjImportService::class)
+                : null;
+            $cjKeyNames = [];
+            if ($cjImporter) {
+                $rawKeys = $supplierData['variantKeyEn'] ?? $supplierData['productKeyEn'] ?? $supplierData['variantKey'] ?? $supplierData['productKey'] ?? null;
+                if ($rawKeys && is_string($rawKeys)) {
+                    $cjKeyNames = array_values(array_filter(array_map('trim', preg_split('/[,;\/-]+/', $rawKeys))));
+                }
+            }
 
             // Match variants by supplier SKU / ID or label
             if ($localVariants->isNotEmpty() && !empty($supplierVariants)) {
@@ -584,6 +594,21 @@ class InventorySyncService
 
                     if ($newVarStock !== $oldVarStock) {
                         $stockChanged = true;
+                    }
+
+                    // Auto-repair missing CJ variant label / color / size
+                    if ($cjImporter && $matchedSuppVar && (trim((string) $lVar->combination_label) === '' || ($lVar->color === null && $lVar->size === null))) {
+                        $resolvedLabel = $cjImporter->resolveVariantLabel($matchedSuppVar, (string) $product->name);
+                        $parsedAttr = $cjImporter->parseVariantAttributes($resolvedLabel, $cjKeyNames);
+                        if (trim((string) $lVar->combination_label) === '') {
+                            $lVar->combination_label = $parsedAttr['combination_label'];
+                        }
+                        if ($lVar->color === null && $parsedAttr['color'] !== null) {
+                            $lVar->color = $parsedAttr['color'];
+                        }
+                        if ($lVar->size === null && $parsedAttr['size'] !== null) {
+                            $lVar->size = $parsedAttr['size'];
+                        }
                     }
 
                     // Save updated variant record
@@ -678,10 +703,22 @@ class InventorySyncService
             // Update Parent Product
             $product->stock_quantity = $totalNewStock;
             $product->price = $newProductPrice;
+            if ($product->sale_price === null && $product->original_price !== null && (float) $product->original_price < $newProductPrice) {
+                $product->original_price = $newProductPrice;
+            }
             if ($suppCost > 0) {
                 $product->cost_per_item = $suppCost;
             }
             $product->status = $newProductStatus;
+
+            if ($cjImporter) {
+                if (empty($product->variant_options) && !empty($supplierVariants)) {
+                    $product->variant_options = $cjImporter->buildVariantOptions($supplierData);
+                }
+                if (trim((string) $product->short_description) === '' && !empty($supplierData['description'])) {
+                    $product->short_description = $cjImporter->extractCleanShortDescription($supplierData['description']);
+                }
+            }
 
             if ($channel === 'aliexpress') {
                 $product->aliexpress_synced_at = now();

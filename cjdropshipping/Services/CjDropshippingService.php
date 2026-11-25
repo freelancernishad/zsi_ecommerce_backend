@@ -192,9 +192,9 @@ class CjDropshippingService
     }
 
     /**
-     * Fetch full product details including variants from CJ.
+     * Fetch full product details including variants (and optionally live inventory) from CJ.
      */
-    public function getProductDetail(string $cjProductId, int $maxRetries = 3, int $timeout = 15): ?array
+    public function getProductDetail(string $cjProductId, int $maxRetries = 3, int $timeout = 15, bool $includeInventory = true): ?array
     {
         $token = $this->getAccessToken();
         $attempt = 0;
@@ -212,7 +212,28 @@ class CjDropshippingService
             $code = $json['code'] ?? 0;
 
             if ($response->successful() && $code === 200) {
-                return $json['data'] ?? null;
+                $data = $json['data'] ?? null;
+                if (is_array($data) && $includeInventory) {
+                    $hasInlineStock = false;
+                    foreach ($data['variants'] ?? [] as $v) {
+                        if (
+                            (isset($v['variantStandardQuantity']) && is_numeric($v['variantStandardQuantity']))
+                            || (isset($v['storageNum']) && is_numeric($v['storageNum']))
+                            || (isset($v['inventoryNum']) && is_numeric($v['inventoryNum']))
+                        ) {
+                            $hasInlineStock = true;
+                            break;
+                        }
+                    }
+                    if (!$hasInlineStock) {
+                        try {
+                            $data = $this->attachInventoryToProductDetail($data, null, $timeout);
+                        } catch (Exception $e) {
+                            Log::warning('CJ inventory attach failed: ' . $e->getMessage(), ['pid' => $cjProductId]);
+                        }
+                    }
+                }
+                return $data;
             }
 
             // Check if rate limited (1600200 or Too Many Requests)
@@ -229,6 +250,98 @@ class CjDropshippingService
         }
 
         return null;
+    }
+
+    /**
+     * Fetch live multi-warehouse inventory by CJ Product ID.
+     */
+    public function getProductInventory(string $cjProductId, int $maxRetries = 2, int $timeout = 15): ?array
+    {
+        $token = $this->getAccessToken();
+        $attempt = 0;
+
+        while ($attempt < $maxRetries) {
+            $attempt++;
+
+            $response = Http::withHeaders([
+                'CJ-Access-Token' => $token,
+            ])->timeout($timeout)->get("{$this->getBaseUrl()}/product/stock/getInventoryByPid", [
+                'pid' => $cjProductId,
+            ]);
+
+            $json = $response->json() ?? [];
+            $code = $json['code'] ?? 0;
+
+            if ($response->successful() && $code === 200) {
+                return $json['data'] ?? null;
+            }
+
+            $message = $json['message'] ?? '';
+            if ($code === 1600200 || str_contains(strtolower($message), 'too many requests') || str_contains(strtolower($message), 'qps limit')) {
+                if ($attempt < $maxRetries) {
+                    usleep(1200000);
+                    continue;
+                }
+            }
+
+            Log::warning('CJ Product Inventory Error:', ['pid' => $cjProductId, 'response' => $json]);
+            break;
+        }
+
+        return null;
+    }
+
+    /**
+     * Attach live variant and product warehouse stock from getInventoryByPid onto a CJ product detail payload.
+     */
+    public function attachInventoryToProductDetail(array $productData, ?array $inventoryData = null, int $timeout = 15): array
+    {
+        if ($inventoryData === null && !empty($productData['pid'])) {
+            usleep(1100000); // Respect CJ 1 QPS rate limit after /product/query
+            $inventoryData = $this->getProductInventory((string) $productData['pid'], 2, $timeout);
+        }
+
+        if (!is_array($inventoryData)) {
+            return $productData;
+        }
+
+        $vidStockMap = [];
+        foreach ($inventoryData['variantInventories'] ?? [] as $varInv) {
+            $vid = (string) ($varInv['vid'] ?? '');
+            if ($vid === '') {
+                continue;
+            }
+            $sum = 0;
+            foreach ($varInv['inventory'] ?? [] as $wh) {
+                $sum += max(0, (int) ($wh['totalInventory'] ?? $wh['cjInventory'] ?? 0));
+            }
+            $vidStockMap[$vid] = $sum;
+        }
+
+        if (!empty($productData['variants']) && is_array($productData['variants'])) {
+            foreach ($productData['variants'] as &$v) {
+                $vid = (string) ($v['vid'] ?? '');
+                if ($vid !== '' && array_key_exists($vid, $vidStockMap)) {
+                    $v['inventoryNum'] = $vidStockMap[$vid];
+                    $v['stock'] = $vidStockMap[$vid];
+                }
+            }
+            unset($v);
+        }
+
+        if (!empty($vidStockMap)) {
+            $totalProductStock = array_sum($vidStockMap);
+        } else {
+            $totalProductStock = 0;
+            foreach ($inventoryData['inventories'] ?? [] as $wh) {
+                $totalProductStock += max(0, (int) ($wh['totalInventoryNum'] ?? $wh['cjInventoryNum'] ?? 0));
+            }
+        }
+
+        $productData['productStock'] = $totalProductStock;
+        $productData['inventoryNum'] = $totalProductStock;
+
+        return $productData;
     }
 
     /**
