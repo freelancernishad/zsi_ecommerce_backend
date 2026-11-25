@@ -108,7 +108,7 @@ class SupplierPriceCompareService
             'details_checked' => false,
         ];
 
-        $cacheKey = 'price_compare_result_v3:' . md5(json_encode([
+        $cacheKey = 'price_compare_result_v4:' . md5(json_encode([
             $sourceSupplier,
             $productId,
             strtolower($query),
@@ -179,6 +179,7 @@ class SupplierPriceCompareService
                     $item['match_score'] = $score;
                     $item['match_reason'] = $lex['reason'];
                     $item['detected_size'] = $candMeas['label'] ?? null;
+                    $item['size_matched'] = ($measComparison['status'] === 'match');
                     $item['unit_price_label'] = $this->formatUnitPrice($item['total_cost'], $candMeas);
                     $item['size_warning'] = $measComparison['warning'];
                     $item['quality_warning'] = $this->computeQualityWarning($item);
@@ -724,7 +725,7 @@ class SupplierPriceCompareService
             ];
         }
 
-        $cacheKey = 'price_compare_query_v3:' . md5($title . '|' . ($brand ?? '') . '|' . ($geminiKey !== null ? '1' : '0') . '|' . ($sourceImageData !== null ? 'img' : 'noimg'));
+        $cacheKey = 'price_compare_query_v4:' . md5($title . '|' . ($brand ?? '') . '|' . ($geminiKey !== null ? '1' : '0') . '|' . ($sourceImageData !== null ? 'img' : 'noimg'));
         $cached = Cache::get($cacheKey);
         if (is_array($cached) && !empty($cached['query'])) {
             if ($cached['source'] === 'ai') {
@@ -781,8 +782,8 @@ class SupplierPriceCompareService
         try {
             $brandLine = ($brand && strtolower($brand) !== 'generic') ? "Known Brand: {$brand}\n" : '';
             $prompt = "Look at this product image and title. Extract:\n"
-                . "1) \"query\": A concise 4 to 7 word English search query to find this exact product on Amazon/CJ (include real brand printed on packaging if clearly readable, core product type, and target audience like Dogs Cats; exclude spam words like Premium, Hot Sale, Free Shipping).\n"
-                . "2) \"ocr_brand\": Brand name printed on the product packaging (or null if none).\n"
+                . "1) \"query\": A concise 4 to 7 word English search query to find this exact product on Amazon and CJ Dropshipping (include core product type + key target audience like Dogs Cats; ONLY include a brand name if it is a widely recognized major brand or explicitly appears in the product title — do NOT guess or prefix obscure/blurry label words onto the query; exclude spam words like Premium, Hot Sale, Free Shipping).\n"
+                . "2) \"ocr_brand\": Brand name printed on the product packaging (or null if unclear).\n"
                 . "3) \"ocr_size\": Net weight/volume/pack size printed on the packaging like \"8.8 fl oz\" or \"250 ml\" (or null if none).\n"
                 . "Output ONLY strict valid JSON.\n\n"
                 . $brandLine
@@ -1294,8 +1295,7 @@ class SupplierPriceCompareService
                 if (($bucket['status'] ?? '') === 'source' || empty($bucket['items'])) {
                     continue;
                 }
-                $itemsCopy = $bucket['items'];
-                foreach ($itemsCopy as $idx => $item) {
+                foreach ($bucket['items'] as $idx => $item) {
                     $respKey = "{$supplierKey}:{$idx}";
                     if (isset($downloadedImages[$respKey]) && !empty($item['product_id'])) {
                         $candidates[] = [
@@ -1313,31 +1313,54 @@ class SupplierPriceCompareService
                 return false;
             }
 
-            usort($candidates, fn (array $a, array $b) => ($b['item']['match_score'] ?? 0) <=> ($a['item']['match_score'] ?? 0));
-            $top = array_slice($candidates, 0, 4);
+            // Pick top 4 by visual_score + top 2 by match_score (deduplicated, up to 6 total)
+            $byVisual = $candidates;
+            usort($byVisual, fn (array $a, array $b) => ($b['item']['visual_score'] ?? 0) <=> ($a['item']['visual_score'] ?? 0));
+            $byMatch = $candidates;
+            usort($byMatch, fn (array $a, array $b) => ($b['item']['match_score'] ?? 0) <=> ($a['item']['match_score'] ?? 0));
 
-            $parts = [];
-            $candLines = [];
-            foreach ($top as $i => $c) {
-                $num = $i + 1;
-                $candLines[] = "Candidate {$num} (key: {$c['key']}): {$c['item']['title']}";
+            $top = [];
+            $seenKeys = [];
+            foreach (array_slice($byVisual, 0, 4) as $c) {
+                $top[] = $c;
+                $seenKeys[$c['key']] = true;
+            }
+            foreach ($byMatch as $c) {
+                if (count($top) >= 6) {
+                    break;
+                }
+                if (!isset($seenKeys[$c['key']])) {
+                    $top[] = $c;
+                    $seenKeys[$c['key']] = true;
+                }
             }
 
+            $sourceMeas = $this->extractMeasurements($sourceTitle);
+            $sourceSize = $sourceMeas['label'] ?? 'unknown';
             $brandText = ($brand && strtolower($brand) !== 'generic') ? " (Brand: {$brand})" : '';
-            $prompt = "Compare Image 1 (Source Product: {$sourceTitle}{$brandText}) against the candidate product images that follow.\n"
-                . implode("\n", $candLines) . "\n\n"
-                . "Return ONLY valid JSON mapping each candidate key to: "
-                . "{\"same_product\": true/false, \"score\": 0-100, \"reason\": \"short reason <= 50 chars\"}.\n"
-                . "Mark same_product=true ONLY if it is genuinely the exact same product/brand/packaging.";
 
-            $parts[] = ['text' => $prompt];
+            $parts = [];
+            $parts[] = [
+                'text' => "You are a visual product matching expert for e-commerce dropshipping.\n"
+                    . "Below is ONE Source Product image followed by labelled Candidate Product images.\n"
+                    . "Compare the ACTUAL bottle/box shape, color scheme, label layout, cap/pump, and graphics in the images.\n"
+                    . "IMPORTANT: Private-label/OEM products often omit the brand name in AliExpress titles. Do NOT mark them as 'different brand' merely because a brand word is missing from the text title — judge primarily by the visual packaging and product appearance in the images!\n"
+                    . "If the packaging/bottle/label design in a candidate image matches the Source Image, set same_product=true and score between 88 and 99.",
+            ];
+
+            $parts[] = ['text' => "SOURCE PRODUCT IMAGE — Title: {$sourceTitle}{$brandText} | Size: {$sourceSize}"];
             $parts[] = [
                 'inlineData' => [
                     'mimeType' => $sourceImageData['mime'],
                     'data' => base64_encode($sourceImageData['bytes']),
                 ],
             ];
-            foreach ($top as $c) {
+
+            foreach ($top as $i => $c) {
+                $num = $i + 1;
+                $priceStr = $c['item']['price'] !== null ? ('$' . number_format((float) $c['item']['price'], 2)) : 'N/A';
+                $candSize = $c['item']['detected_size'] ?? 'unknown';
+                $parts[] = ['text' => "CANDIDATE {$num} (key: {$c['key']}) — Title: {$c['item']['title']} | Price: {$priceStr} | Size: {$candSize}"];
                 $parts[] = [
                     'inlineData' => [
                         'mimeType' => $c['img']['mime'],
@@ -1346,13 +1369,18 @@ class SupplierPriceCompareService
                 ];
             }
 
+            $parts[] = [
+                'text' => "Return ONLY valid JSON (no markdown) mapping every candidate key to:\n"
+                    . "{\"same_product\": true/false, \"score\": 0-100, \"reason\": \"<= 50 chars\"}.",
+            ];
+
             $resp = Http::withHeaders(['Content-Type' => 'application/json'])
-                ->timeout(12)
+                ->timeout(15)
                 ->post($this->geminiBaseUrl . '?key=' . $apiKey, [
                     'contents' => [['parts' => $parts]],
                     'generationConfig' => [
                         'temperature' => 0.1,
-                        'maxOutputTokens' => 512,
+                        'maxOutputTokens' => 768,
                     ],
                 ]);
 
@@ -1385,12 +1413,24 @@ class SupplierPriceCompareService
                 $idx = $c['idx'];
                 if (isset($suppliers[$sKey]['items'][$idx])) {
                     $item = &$suppliers[$sKey]['items'][$idx];
-                    $item['ai_verified'] = ($same && $aiScore >= 75);
-                    if ($item['visual_score'] !== null) {
-                        $item['match_score'] = (int) round(0.65 * $aiScore + 0.35 * $item['visual_score']);
+                    $vis = $item['visual_score'] ?? $aiScore;
+
+                    if ($same && $aiScore >= 75) {
+                        $item['ai_verified'] = true;
+                        $score = max($aiScore, (int) round(0.75 * $aiScore + 0.25 * $vis));
                     } else {
-                        $item['match_score'] = $aiScore;
+                        $item['ai_verified'] = false;
+                        $score = (int) round(0.65 * $aiScore + 0.35 * $vis);
                     }
+
+                    if (!empty($item['size_matched'])) {
+                        $score += 6;
+                    }
+                    if (!empty($item['size_warning'])) {
+                        $score -= 8;
+                    }
+
+                    $item['match_score'] = max(0, min(99, $score));
                     if ($reason !== '') {
                         $item['match_reason'] = $reason;
                     }
@@ -1638,11 +1678,9 @@ class SupplierPriceCompareService
      */
     protected function computeSummary(string $sourceSupplier, array &$sourceItem, array &$suppliers): array
     {
-        $contenders = [];
-        $qualityContenders = [];
-
+        $sourceEntry = null;
         if ($sourceItem['total_cost'] !== null && $sourceItem['total_cost'] > 0) {
-            $contenders[] = [
+            $sourceEntry = [
                 'supplier' => $sourceSupplier,
                 'product_id' => $sourceItem['product_id'],
                 'total_cost' => (float) $sourceItem['total_cost'],
@@ -1650,13 +1688,25 @@ class SupplierPriceCompareService
             ];
         }
 
+        $verifiedContenders = [];
+        $strongContenders = [];
+        $qualityContenders = [];
+        $fallbackContenders = [];
+
+        if ($sourceEntry !== null) {
+            $verifiedContenders[] = $sourceEntry;
+            $strongContenders[] = $sourceEntry;
+            $fallbackContenders[] = $sourceEntry;
+        }
+
         foreach ($suppliers as $supplierKey => $bucket) {
             if ($supplierKey === $sourceSupplier && ($bucket['status'] ?? '') === 'source') {
                 continue;
             }
+
             $best = $bucket['best_match'] ?? null;
-            if ($best && ($best['total_cost'] ?? null) !== null && (float) $best['total_cost'] > 0 && ($best['match_score'] ?? 0) >= 35) {
-                $contenders[] = [
+            if ($best && ($best['total_cost'] ?? null) !== null && (float) $best['total_cost'] > 0) {
+                $fallbackContenders[] = [
                     'supplier' => $supplierKey,
                     'product_id' => $best['product_id'],
                     'total_cost' => (float) $best['total_cost'],
@@ -1665,48 +1715,39 @@ class SupplierPriceCompareService
             }
 
             foreach (($bucket['items'] ?? []) as $item) {
-                if (($item['total_cost'] ?? null) !== null
-                    && (float) $item['total_cost'] > 0
-                    && ($item['match_score'] ?? 0) >= 50
-                    && ($item['available'] ?? true) !== false
+                if (($item['total_cost'] ?? null) === null || (float) $item['total_cost'] <= 0) {
+                    continue;
+                }
+                if (($item['available'] ?? true) === false) {
+                    continue;
+                }
+
+                $entry = [
+                    'supplier' => $supplierKey,
+                    'product_id' => $item['product_id'],
+                    'total_cost' => (float) $item['total_cost'],
+                    'match_score' => (int) ($item['match_score'] ?? 0),
+                ];
+
+                if (!empty($item['ai_verified']) && empty($item['size_warning'])) {
+                    $verifiedContenders[] = $entry;
+                }
+                if (($item['match_score'] ?? 0) >= 60 && empty($item['size_warning'])) {
+                    $strongContenders[] = $entry;
+                }
+                if (($item['match_score'] ?? 0) >= 50
                     && ($item['rating'] === null || $item['rating'] >= 4.0)
                     && empty($item['size_warning'])
                 ) {
-                    $qualityContenders[] = [
-                        'supplier' => $supplierKey,
-                        'product_id' => $item['product_id'],
-                        'total_cost' => (float) $item['total_cost'],
-                        'match_score' => (int) ($item['match_score'] ?? 0),
-                    ];
+                    $qualityContenders[] = $entry;
                 }
             }
         }
 
-        if (count($contenders) <= 1) {
-            foreach ($suppliers as $supplierKey => $bucket) {
-                if ($supplierKey === $sourceSupplier && ($bucket['status'] ?? '') === 'source') {
-                    continue;
-                }
-                $best = $bucket['best_match'] ?? null;
-                if ($best && ($best['total_cost'] ?? null) !== null && (float) $best['total_cost'] > 0) {
-                    $alreadyAdded = false;
-                    foreach ($contenders as $c) {
-                        if ($c['supplier'] === $supplierKey && $c['product_id'] === $best['product_id']) {
-                            $alreadyAdded = true;
-                            break;
-                        }
-                    }
-                    if (!$alreadyAdded) {
-                        $contenders[] = [
-                            'supplier' => $supplierKey,
-                            'product_id' => $best['product_id'],
-                            'total_cost' => (float) $best['total_cost'],
-                            'match_score' => (int) ($best['match_score'] ?? 0),
-                        ];
-                    }
-                }
-            }
-        }
+        // Prefer AI-verified contenders -> strong matches (>=60%) -> fallback best_match per supplier
+        $contenders = count($verifiedContenders) > ($sourceEntry ? 1 : 0)
+            ? $verifiedContenders
+            : (count($strongContenders) > ($sourceEntry ? 1 : 0) ? $strongContenders : $fallbackContenders);
 
         $bestSupplier = null;
         $lowestPrice = null;
@@ -1737,11 +1778,15 @@ class SupplierPriceCompareService
             }
         }
 
+        $bestValuePool = count($verifiedContenders) > ($sourceEntry ? 1 : 0)
+            ? array_values(array_filter($verifiedContenders, fn (array $c) => $c['supplier'] !== $sourceSupplier || ($suppliers[$sourceSupplier]['status'] ?? '') !== 'source'))
+            : $qualityContenders;
+
         $bestValueSupplier = null;
         $bestValuePrice = null;
-        if (!empty($qualityContenders)) {
-            usort($qualityContenders, fn (array $a, array $b) => $a['total_cost'] <=> $b['total_cost']);
-            $bv = $qualityContenders[0];
+        if (!empty($bestValuePool)) {
+            usort($bestValuePool, fn (array $a, array $b) => $a['total_cost'] <=> $b['total_cost']);
+            $bv = $bestValuePool[0];
             $bestValueSupplier = $bv['supplier'];
             $bestValuePrice = round($bv['total_cost'], 2);
 
