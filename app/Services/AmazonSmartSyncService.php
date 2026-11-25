@@ -763,7 +763,9 @@ class AmazonSmartSyncService
         }
 
         try {
-            $result = $this->syncSingleProductWithProvider($product, $config);
+            $result = $this->syncSingleProductWithProvider($product, $config, [
+                'trigger' => $trigger === 'view' ? 'detail_view' : "jit_{$trigger}",
+            ]);
             $product->refresh();
 
             return [
@@ -883,6 +885,7 @@ class AmazonSmartSyncService
                         'new_price' => (float) ($product->price ?? 0),
                         'details' => [
                             'engine' => 'amazon_detail_view_repair',
+                            'trigger' => 'detail_view',
                             'repaired' => true,
                         ],
                     ]);
@@ -898,7 +901,10 @@ class AmazonSmartSyncService
                         'error' => null,
                     ];
                 } catch (Exception $e) {
-                    $this->logSyncError($product, $e->getMessage(), 'detail_view_repair');
+                    $this->logSyncError($product, $e->getMessage(), 'detail_view_repair', [
+                        'trigger' => 'detail_view',
+                        'repaired' => true,
+                    ]);
                     return [
                         'synced' => false,
                         'repaired' => false,
@@ -911,7 +917,10 @@ class AmazonSmartSyncService
             }
 
             $product->loadMissing('variants');
-            $result = $this->syncSingleProductWithProvider($product, $config);
+            $result = $this->syncSingleProductWithProvider($product, $config, [
+                'trigger' => 'detail_view',
+                'repaired' => false,
+            ]);
             $product->refresh();
 
             if (($result['status'] ?? '') === 'success') {
@@ -934,9 +943,100 @@ class AmazonSmartSyncService
     }
 
     /**
+     * Manually synchronize a single Amazon product (with auto-repair fallback if structurally broken).
+     */
+    public function syncSingleManualProduct(Product $product): array
+    {
+        $config = $this->getConfig();
+        $tenant = $this->tenantCachePrefix();
+        $product->loadMissing(['variants', 'images']);
+
+        $isBroken = app(InventorySyncService::class)->isProductStructurallyBroken($product);
+        if ($isBroken) {
+            $oldStock = (int) ($product->stock_quantity ?? 0);
+            $oldPrice = (float) ($product->price ?? 0);
+            $inferred = $this->inferExistingMarkup($product, (float) $config['default_markup_percent']);
+            $markupType = $inferred['type'] === 'fixed' ? 'fixed' : 'percentage';
+            $pct = $markupType === 'percentage' ? (float) $inferred['value'] : 0.0;
+            $fixed = $markupType === 'fixed' ? (float) $inferred['value'] : 0.0;
+
+            try {
+                app(\Amazon\Services\AmazonImportService::class)->importAmazonProduct(
+                    (string) $product->amazon_asin,
+                    $pct,
+                    $product->category_id ? (int) $product->category_id : null,
+                    (int) $config['default_stock'],
+                    (string) ($product->status ?: 'published'),
+                    $markupType,
+                    $fixed
+                );
+                $this->recordApiRequests(1);
+                $product->refresh();
+
+                InventorySyncLog::create([
+                    'product_id' => $product->id,
+                    'product_name' => $product->name,
+                    'supplier' => 'amazon',
+                    'supplier_id' => (string) $product->amazon_asin,
+                    'status' => 'success',
+                    'changes_detected' => true,
+                    'old_stock' => $oldStock,
+                    'new_stock' => (int) ($product->stock_quantity ?? 0),
+                    'old_price' => $oldPrice,
+                    'new_price' => (float) ($product->price ?? 0),
+                    'details' => [
+                        'engine' => 'amazon_manual_repair',
+                        'trigger' => 'manual',
+                        'repaired' => true,
+                    ],
+                ]);
+
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+
+                return [
+                    'status' => 'success',
+                    'product_id' => $product->id,
+                    'asin' => $product->amazon_asin,
+                    'name' => $product->name,
+                    'repaired' => true,
+                    'changes_detected' => true,
+                    'old_stock' => $oldStock,
+                    'new_stock' => (int) ($product->stock_quantity ?? 0),
+                    'old_price' => $oldPrice,
+                    'new_price' => (float) ($product->price ?? 0),
+                ];
+            } catch (Exception $e) {
+                $this->logSyncError($product, $e->getMessage(), 'manual_repair', [
+                    'trigger' => 'manual',
+                    'repaired' => true,
+                ]);
+                return [
+                    'status' => 'failed',
+                    'product_id' => $product->id,
+                    'asin' => $product->amazon_asin,
+                    'name' => $product->name,
+                    'repaired' => false,
+                    'error' => $e->getMessage(),
+                ];
+            }
+        }
+
+        $res = $this->syncSingleProductWithProvider($product, $config, [
+            'trigger' => 'manual',
+            'repaired' => false,
+        ]);
+
+        if (($res['status'] ?? '') === 'success') {
+            Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+        }
+
+        return $res;
+    }
+
+    /**
      * Sync a single Amazon product using the active provider.
      */
-    protected function syncSingleProductWithProvider(Product $product, array $config): array
+    protected function syncSingleProductWithProvider(Product $product, array $config, array $logMeta = []): array
     {
         $asin = strtoupper(trim((string) $product->amazon_asin));
         $provider = $config['sync_provider'];
@@ -1004,7 +1104,7 @@ class AmazonSmartSyncService
                 throw new Exception("Unable to fetch price/stock for ASIN {$asin} via {$provider}.");
             }
 
-            $res = $this->applyProductUpdate($product, $data, $config, $provider);
+            $res = $this->applyProductUpdate($product, $data, $config, $provider, $logMeta);
             $res['api_requests_made'] = $apiCalls;
             $this->clearAsinFailure($asin);
             return $res;
@@ -1012,7 +1112,7 @@ class AmazonSmartSyncService
             if ($apiCalls > 0) {
                 $this->recordApiRequests($apiCalls);
             }
-            $this->logSyncError($product, $e->getMessage(), $provider);
+            $this->logSyncError($product, $e->getMessage(), $provider, $logMeta);
             $this->recordAsinFailure($asin, $e->getMessage(), $config);
 
             return [
@@ -2128,9 +2228,9 @@ class AmazonSmartSyncService
     /**
      * Apply price & stock updates to the Product and its variants cleanly in a transaction.
      */
-    protected function applyProductUpdate(Product $product, array $data, array $config, string $provider): array
+    protected function applyProductUpdate(Product $product, array $data, array $config, string $provider, array $logMeta = []): array
     {
-        return DB::transaction(function () use ($product, $data, $config, $provider) {
+        return DB::transaction(function () use ($product, $data, $config, $provider, $logMeta) {
             $oldStock = (int) ($product->stock_quantity ?? 0);
             $oldPrice = (float) ($product->price ?? 0);
             $oldStatus = (string) $product->status;
@@ -2243,14 +2343,16 @@ class AmazonSmartSyncService
                 'new_stock' => $newStock,
                 'old_price' => $oldPrice,
                 'new_price' => $newPrice,
-                'details' => [
+                'details' => array_merge([
                     'engine' => 'amazon_smart_sync',
                     'provider' => $provider,
+                    'trigger' => $logMeta['trigger'] ?? 'cron',
+                    'repaired' => (bool) ($logMeta['repaired'] ?? false),
                     'old_status' => $oldStatus,
                     'new_status' => $newStatus,
                     'supplier_cost' => $suppCost,
                     'variants' => $variantLogs,
-                ],
+                ], $logMeta),
             ]);
 
             return [
@@ -2261,6 +2363,7 @@ class AmazonSmartSyncService
                 'changes_detected' => $changesDetected,
                 'stock_changed' => $stockChanged,
                 'price_changed' => $priceChanged,
+                'repaired' => (bool) ($logMeta['repaired'] ?? false),
                 'is_out_of_stock' => $isOutOfStock,
                 'old_stock' => $oldStock,
                 'new_stock' => $newStock,
@@ -2270,7 +2373,7 @@ class AmazonSmartSyncService
         });
     }
 
-    protected function logSyncError(Product $product, string $error, string $provider): void
+    protected function logSyncError(Product $product, string $error, string $provider, array $logMeta = []): void
     {
         InventorySyncLog::create([
             'product_id' => $product->id,
@@ -2279,6 +2382,12 @@ class AmazonSmartSyncService
             'supplier_id' => (string) $product->amazon_asin,
             'status' => 'error',
             'changes_detected' => false,
+            'details' => array_merge([
+                'engine' => 'amazon_smart_sync',
+                'provider' => $provider,
+                'trigger' => 'cron',
+                'repaired' => false,
+            ], $logMeta),
             'error_message' => "[SmartSync:{$provider}] " . $error,
         ]);
     }

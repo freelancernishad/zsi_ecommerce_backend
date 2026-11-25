@@ -33,6 +33,7 @@ Route::prefix('admin/settings')->group(function () {
         Route::post('/settings', [\App\Http\Controllers\Admin\InventorySyncController::class, 'updateSettings']);
         Route::post('/trigger', [\App\Http\Controllers\Admin\InventorySyncController::class, 'triggerSync']);
         Route::get('/logs', [\App\Http\Controllers\Admin\InventorySyncController::class, 'logs']);
+        Route::get('/detail-view-logs', [\App\Http\Controllers\Admin\InventorySyncController::class, 'detailViewLogs']);
         Route::get('/out-of-stock', [\App\Http\Controllers\Admin\InventorySyncController::class, 'outOfStock']);
         Route::post('/retry-product', [\App\Http\Controllers\Admin\InventorySyncController::class, 'retryProduct']);
         Route::post('/retry-failed', [\App\Http\Controllers\Admin\InventorySyncController::class, 'retryFailed']);

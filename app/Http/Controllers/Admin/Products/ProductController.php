@@ -7,7 +7,9 @@ use App\Models\Product;
 use App\Models\ProductImage;
 use App\Models\ProductVariant;
 use App\Services\FileSystem\FileUploadService;
+use App\Services\InventorySyncService;
 use App\Services\ProductVariantSyncService;
+use Carbon\Carbon;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\DB;
@@ -161,10 +163,42 @@ class ProductController extends Controller
 
         $products = $query->paginate($perPage);
 
-        $products->getCollection()->transform(function ($product) {
+        $cooldownHours = InventorySyncService::DETAIL_VIEW_COOLDOWN_HOURS;
+        $now = now();
+
+        $products->getCollection()->transform(function ($product) use ($cooldownHours, $now) {
             $product->total_sale = (int) ($product->order_items_sum_quantity ?? 0);
             $product->revenue    = (float) ($product->revenue ?? 0);
             unset($product->order_items_sum_quantity);
+
+            $syncSupplier = null;
+            $rawSyncedAt = null;
+            if ($product->is_amazon_product && !empty($product->amazon_asin)) {
+                $syncSupplier = 'amazon';
+                $rawSyncedAt = $product->amazon_synced_at;
+            } elseif ($product->is_cj_product && !empty($product->cj_product_id)) {
+                $syncSupplier = 'cjdropshipping';
+                $rawSyncedAt = $product->cj_synced_at;
+            } elseif ($product->is_aliexpress_product && !empty($product->aliexpress_product_id)) {
+                $syncSupplier = 'aliexpress';
+                $rawSyncedAt = $product->aliexpress_synced_at;
+            }
+
+            $syncedCarbon = !empty($rawSyncedAt) ? Carbon::parse($rawSyncedAt) : null;
+            $nextSyncCarbon = $syncedCarbon ? $syncedCarbon->copy()->addHours($cooldownHours) : null;
+
+            $product->sync_supplier = $syncSupplier;
+            $product->sync_cooldown_hours = $cooldownHours;
+            $product->last_synced_at = $syncedCarbon ? $syncedCarbon->toIso8601String() : null;
+            $product->last_synced_ago = $syncedCarbon ? $syncedCarbon->diffForHumans($now) : null;
+            $product->next_sync_at = $nextSyncCarbon ? $nextSyncCarbon->toIso8601String() : null;
+            $product->next_sync_in_seconds = $syncSupplier !== null
+                ? ($nextSyncCarbon ? max(0, $now->diffInSeconds($nextSyncCarbon, false)) : 0)
+                : null;
+            $product->can_auto_sync_now = $syncSupplier !== null
+                ? ($nextSyncCarbon === null || $nextSyncCarbon->lte($now))
+                : false;
+
             return $product;
         });
 

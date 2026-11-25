@@ -205,6 +205,10 @@ class InventorySyncService
                 'supplier_id' => $supplierId,
                 'status' => 'error',
                 'changes_detected' => false,
+                'details' => [
+                    'trigger' => $config['_trigger'] ?? 'cron',
+                    'repaired' => (bool) ($config['_repaired'] ?? false),
+                ],
                 'error_message' => "Timeout/Error (Preserved existing stock): " . $errMsg,
             ]);
 
@@ -314,6 +318,8 @@ class InventorySyncService
                 $viewConfig = array_merge($config, [
                     'retry_attempts' => 1,
                     'request_timeout_seconds' => min(12, max(5, (int) ($config['request_timeout_seconds'] ?? 12))),
+                    '_trigger' => 'detail_view',
+                    '_repaired' => $isBroken,
                 ]);
                 $product->loadMissing('variants');
                 $res = $this->syncSingleCjProduct($product, $viewConfig);
@@ -365,6 +371,8 @@ class InventorySyncService
                 $config = $this->getConfig();
                 $viewConfig = array_merge($config, [
                     'retry_attempts' => 1,
+                    '_trigger' => 'detail_view',
+                    '_repaired' => $isBroken,
                 ]);
                 $product->loadMissing('variants');
                 $res = $this->syncSingleAliExpressProduct($product, $viewConfig);
@@ -423,6 +431,10 @@ class InventorySyncService
                 'supplier_id' => $supplierId,
                 'status' => 'error',
                 'changes_detected' => false,
+                'details' => [
+                    'trigger' => $config['_trigger'] ?? 'cron',
+                    'repaired' => (bool) ($config['_repaired'] ?? false),
+                ],
                 'error_message' => "Timeout/Error: " . $errMsg,
             ]);
 
@@ -881,6 +893,8 @@ class InventorySyncService
                 'old_price' => $oldProductPrice,
                 'new_price' => $product->price,
                 'details' => [
+                    'trigger' => $config['_trigger'] ?? 'cron',
+                    'repaired' => (bool) ($config['_repaired'] ?? false),
                     'old_status' => $oldProductStatus,
                     'new_status' => $newProductStatus,
                     'variants' => $variantLogs,
@@ -894,10 +908,13 @@ class InventorySyncService
                 'changes_detected' => $changesDetected,
                 'stock_changed' => $stockChanged,
                 'price_changed' => $priceChanged,
+                'repaired' => (bool) ($config['_repaired'] ?? false),
                 'is_out_of_stock' => $isOutOfStock,
                 'restocked' => ($oldProductStatus === 'out_of_stock' && $newProductStatus === 'published'),
                 'old_stock' => $oldProductStock,
                 'new_stock' => $totalNewStock,
+                'old_price' => $oldProductPrice,
+                'new_price' => (float) $product->price,
             ];
         });
     }
@@ -969,13 +986,25 @@ class InventorySyncService
     {
         $product = Product::with('variants')->findOrFail($productId);
         $config = $this->getConfig();
+        $isBroken = $this->isProductStructurallyBroken($product);
+        $config['_trigger'] = 'manual';
+        $config['_repaired'] = $isBroken;
+        $tenant = $this->tenantCachePrefix();
 
         if ($product->is_aliexpress_product && $product->aliexpress_product_id) {
-            return $this->syncSingleAliExpressProduct($product, $config);
+            $res = $this->syncSingleAliExpressProduct($product, $config);
+            if (($res['status'] ?? '') === 'success') {
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+            }
+            return $res;
         } elseif ($product->is_cj_product && $product->cj_product_id) {
-            return $this->syncSingleCjProduct($product, $config);
+            $res = $this->syncSingleCjProduct($product, $config);
+            if (($res['status'] ?? '') === 'success') {
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+            }
+            return $res;
         } elseif ($product->is_amazon_product && $product->amazon_asin) {
-            return $this->syncSingleAmazonProduct($product, $config);
+            return app(AmazonSmartSyncService::class)->syncSingleManualProduct($product);
         }
 
         throw new Exception("Product #{$productId} is not associated with AliExpress, CJ Dropshipping, or Amazon.");
