@@ -17,6 +17,17 @@ class ProductImageSearchService
 {
     protected string $signatureCacheKey = 'product_image_signatures_cache_v2';
 
+    protected function getTenantDbKey(): string
+    {
+        $db = (string) config('database.connections.mysql.database', 'default');
+        return preg_replace('/[^a-zA-Z0-9_-]/', '_', $db) ?: 'default';
+    }
+
+    protected function getSignatureCacheKey(): string
+    {
+        return $this->signatureCacheKey . ':' . $this->getTenantDbKey();
+    }
+
     /** @var string[] Verified Gemini Vision models */
     protected array $geminiVisionModels = [
         'gemini-3.5-flash-lite',
@@ -353,7 +364,7 @@ class ProductImageSearchService
             }
         }
 
-        Cache::forget($this->signatureCacheKey);
+        Cache::forget($this->getSignatureCacheKey());
 
         return [
             'total' => $total,
@@ -384,7 +395,7 @@ class ProductImageSearchService
 
     protected function loadCachedSignatures(): array
     {
-        return Cache::remember($this->signatureCacheKey, now()->addMinutes(10), function () {
+        return Cache::remember($this->getSignatureCacheKey(), now()->addMinutes(10), function () {
             $hasRegions = Schema::hasColumn('product_image_signatures', 'region_hashes');
             $cols = [
                 'product_image_signatures.product_id',
@@ -957,7 +968,7 @@ class ProductImageSearchService
      */
     protected function getStoreCategoryNames(): array
     {
-        return Cache::remember('store_image_search_categories_v1', now()->addMinutes(30), function () {
+        return Cache::remember('store_image_search_categories_v1:' . $this->getTenantDbKey(), now()->addMinutes(30), function () {
             try {
                 return Category::query()
                     ->pluck('name')
@@ -977,7 +988,7 @@ class ProductImageSearchService
      */
     protected function analyzeQueryImageWithAi(string $imageBytes, string $mimeType): ?array
     {
-        $cacheKey = 'store_image_search_ai_v2:' . md5($imageBytes);
+        $cacheKey = 'store_image_search_ai_v2:' . $this->getTenantDbKey() . ':' . md5($imageBytes);
         $cached = Cache::get($cacheKey);
         if (is_array($cached) && !empty($cached['detected'])) {
             return $cached;
@@ -1093,7 +1104,7 @@ class ProductImageSearchService
         }
 
         $topIds = array_map(fn ($c) => (int) $c['id'], $topCandidates);
-        $cacheKey = 'store_image_search_rerank_v1:' . md5($queryBytes) . ':' . implode(',', $topIds);
+        $cacheKey = 'store_image_search_rerank_v1:' . $this->getTenantDbKey() . ':' . md5($queryBytes) . ':' . implode(',', $topIds);
         $cachedScores = Cache::get($cacheKey);
 
         if (!is_array($cachedScores)) {

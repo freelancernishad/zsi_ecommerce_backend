@@ -120,5 +120,12 @@ Schedule::command('amazon:smart-sync')
     ->appendOutputTo(storage_path('logs/amazon_smart_sync.log'))
     ->name('auto-amazon-smart-sync');
 
+// Automatically index visual image signatures for newly imported/published products across all tenant DBs
+Schedule::command('products:index-image-signatures --all-tenants')
+    ->everyThirtyMinutes()
+    ->withoutOverlapping()
+    ->appendOutputTo(storage_path('logs/image_signature_index.log'))
+    ->name('auto-index-product-image-signatures');
+
 
 
