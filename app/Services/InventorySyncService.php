@@ -657,6 +657,16 @@ class InventorySyncService
         $baseCost = (float) ($product->cost_per_item ?? 0);
         $basePrice = (float) ($product->price ?? 0);
         if ($baseCost > 0 && $basePrice > $baseCost) {
+            $diff = round($basePrice - $baseCost, 2);
+            $pct = round(($diff / $baseCost) * 100, 2);
+
+            $isCleanFixed = abs($diff * 2 - round($diff * 2)) < 0.001; // e.g. $5.00, $10.00, $12.50
+            $isCleanPct = abs($pct * 2 - round($pct * 2)) < 0.01;      // e.g. 15%, 20%, 25.5%
+
+            if ($isCleanFixed && !$isCleanPct) {
+                return round($suppCost + $diff, 2);
+            }
+
             $marginRatio = ($basePrice - $baseCost) / $baseCost;
             return round($suppCost * (1 + $marginRatio), 2);
         }
