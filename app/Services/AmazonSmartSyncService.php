@@ -1296,28 +1296,47 @@ class AmazonSmartSyncService
         }
 
         $targetUrl = $this->buildUsAmazonUrl($asin, $url, $config);
+        $html = '';
 
-        $response = Http::withHeaders([
-            'Authorization' => 'Bearer ' . $apiKey,
-            'Content-Type' => 'application/json',
-        ])->timeout(35)->post('https://api.brightdata.com/request', [
-            'zone' => $zone,
-            'url' => $targetUrl,
-            'country' => 'us',
-            'format' => 'raw',
-        ]);
+        for ($attempt = 1; $attempt <= 2; $attempt++) {
+            $response = Http::withHeaders([
+                'Authorization' => 'Bearer ' . $apiKey,
+                'Content-Type' => 'application/json',
+            ])->timeout(35)->post('https://api.brightdata.com/request', [
+                'zone' => $zone,
+                'url' => $targetUrl,
+                'country' => 'us',
+                'format' => 'raw',
+            ]);
 
-        if ($response->status() === 404) {
-            return ['price' => 0.0, 'available' => false, 'stock' => 0];
-        }
+            if ($response->status() === 404) {
+                return ['price' => 0.0, 'available' => false, 'stock' => 0];
+            }
 
-        $html = $response->body();
-        if (!$response->successful() || empty($html)) {
-            throw new Exception("BrightData returned HTTP {$response->status()} for {$asin}");
-        }
+            $html = $response->body();
+            if (!$response->successful() || empty($html)) {
+                throw new Exception("BrightData returned HTTP {$response->status()} for {$asin}");
+            }
 
-        if (str_contains($html, 'Page Not Found') || str_contains($html, 'Looking for something?')) {
-            return ['price' => 0.0, 'available' => false, 'stock' => 0];
+            if (str_contains($html, 'Page Not Found') || str_contains($html, 'Looking for something?')) {
+                return ['price' => 0.0, 'available' => false, 'stock' => 0];
+            }
+
+            // If BrightData landed on an AmazonFresh/local-grocery metro IP without an Add-to-Cart button
+            // and without an OLP offer, retry once to reach a standard nationwide US offer.
+            $hasBuyBtn = str_contains($html, 'id="add-to-cart-button"') || str_contains($html, 'id="buy-now-button"');
+            $hasOlpPrice = (bool) preg_match('/"olpMessage"\s*:\s*"[^"]*\$\d/', $html);
+            $htmlLower = strtolower($html);
+            $looksLocalGrocery = !$hasBuyBtn
+                && !$hasOlpPrice
+                && (str_contains($htmlLower, 'amazonfresh')
+                    || str_contains($htmlLower, 'amazon fresh')
+                    || str_contains($htmlLower, 'whole foods')
+                    || str_contains($html, '"buyingOptionType":"ALM"'));
+
+            if (!$looksLocalGrocery) {
+                break;
+            }
         }
 
         return $this->parseLightweightHtml($html, $config['default_stock']);
@@ -1732,10 +1751,14 @@ class AmazonSmartSyncService
 
         $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
         $buyboxOnlyText = strtolower($extractVisible('//div[@id="buybox"]'));
+        $hasOlpMsg = (bool) preg_match('/"olpMessage"\s*:\s*"[^"]*\$\d/', $html);
         $isLocalPickupOnly = !$hasBuyButton
+            && !$hasOlpMsg
             && (str_contains($buyboxOnlyText, 'amazonfresh')
                 || str_contains($buyboxOnlyText, 'amazon fresh')
-                || str_contains($buyboxOnlyText, 'whole foods'));
+                || str_contains($buyboxOnlyText, 'whole foods')
+                || str_contains($buyboxOnlyText, 'free grocery delivery')
+                || str_contains($html, '"buyingOptionType":"ALM"'));
 
         // 1. Strictly extract price ONLY from the main product's corePrice / buybox containers
         $price = 0.0;

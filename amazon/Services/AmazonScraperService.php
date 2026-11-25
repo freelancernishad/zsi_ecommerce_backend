@@ -348,11 +348,26 @@ class AmazonScraperService
         $html = '';
 
         // 1. Try Bright Data Web Unlocker if configured and active
+        // If BrightData lands on an AmazonFresh/local-grocery metro IP without a nationwide shipping offer,
+        // retry up to 3 times to reach a standard US IP before falling back to local-grocery pricing.
         if ($this->brightdataApiKey && $this->brightdataZone) {
-            try {
-                $html = $this->scrapeWithBrightData($url);
-            } catch (Exception $e) {
-                // Silently fallback to direct HTTP
+            for ($attempt = 1; $attempt <= 3; $attempt++) {
+                try {
+                    $candidateHtml = $this->scrapeWithBrightData($url);
+                } catch (Exception $e) {
+                    $candidateHtml = '';
+                }
+
+                if (empty($candidateHtml)) {
+                    break;
+                }
+
+                $html = $candidateHtml;
+                if (!$this->isLocalGroceryOnlyHtml($candidateHtml)) {
+                    break;
+                }
+
+                usleep(300000);
             }
         }
 
@@ -371,7 +386,8 @@ class AmazonScraperService
         }
 
         // 4. Parse HTML content into structured Product Array
-        $parsed = $this->parseAmazonHtml($html, $url, $asin);
+        $allowLocalGrocery = $this->isLocalGroceryOnlyHtml($html);
+        $parsed = $this->parseAmazonHtml($html, $url, $asin, $allowLocalGrocery);
 
         if (empty($parsed['title'])) {
             throw new Exception("Could not extract product specifications for ASIN: {$asin}. Amazon may have presented a CAPTCHA checkpoint.", 422);
@@ -518,7 +534,7 @@ class AmazonScraperService
     /**
      * Parse raw Amazon HTML string into structured Product Data Array
      */
-    protected function parseAmazonHtml(string $html, string $url, string $asin): array
+    protected function parseAmazonHtml(string $html, string $url, string $asin, bool $allowLocalGrocery = false): array
     {
         libxml_use_internal_errors(true);
         $dom = new DOMDocument();
@@ -534,7 +550,7 @@ class AmazonScraperService
         }
 
         // 2. Price Extraction (strictly scoped to main buybox / corePrice / OLP, never Sponsored banners)
-        $price = $this->extractMainProductPrice($xpath, $html, $asin);
+        $price = $this->extractMainProductPrice($xpath, $html, $asin, $allowLocalGrocery);
 
         // 3. Images Extraction
         $images = [];
@@ -635,7 +651,7 @@ class AmazonScraperService
         $availability = $this->parseAvailability($xpath, $price);
 
         // 7. Comprehensive Variants Extraction
-        $variants = $this->parseVariants($html, $asin, $price, $images, $xpath, $availability);
+        $variants = $this->parseVariants($html, $asin, $price, $images, $xpath, $availability, $allowLocalGrocery);
 
         // 7b. Enrich per-variant prices when Amazon omits them from initial HTML (e.g. slotsFetched: false)
         $host = parse_url($url, PHP_URL_HOST) ?: 'www.amazon.com';
@@ -733,17 +749,48 @@ class AmazonScraperService
     }
 
     /**
+     * Detect whether an Amazon HTML page is showing only a local-grocery (AmazonFresh / Whole Foods / ALM)
+     * offer without a standard Add-to-Cart button or nationwide OLP price.
+     */
+    protected function isLocalGroceryOnlyHtml(string $html, ?DOMXPath $xpath = null): bool
+    {
+        if (empty($html)) {
+            return false;
+        }
+
+        if ($xpath === null) {
+            libxml_use_internal_errors(true);
+            $dom = new DOMDocument();
+            @$dom->loadHTML(mb_convert_encoding($html, 'HTML-ENTITIES', 'UTF-8'));
+            $xpath = new DOMXPath($dom);
+            libxml_clear_errors();
+        }
+
+        $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
+        if ($hasBuyButton) {
+            return false;
+        }
+
+        if (preg_match('/"olpMessage"\s*:\s*"[^"]*\$\d/', $html)) {
+            return false;
+        }
+
+        $buyboxText = strtolower($this->extractVisibleTextFromNodes($xpath, '//div[@id="buybox"] | //div[@id="rightCol"]'));
+
+        return str_contains($buyboxText, 'amazonfresh')
+            || str_contains($buyboxText, 'amazon fresh')
+            || str_contains($buyboxText, 'whole foods')
+            || str_contains($buyboxText, 'free grocery delivery')
+            || str_contains($html, '"buyingOptionType":"ALM"');
+    }
+
+    /**
      * Extract main product price strictly from Buy Box / CorePrice / OLP / selected Twister,
      * never from Sponsored ads or Similar Items carousels, and skip local Amazon Fresh pickup-only prices.
      */
-    protected function extractMainProductPrice(DOMXPath $xpath, string $html, string $asin = ''): float
+    protected function extractMainProductPrice(DOMXPath $xpath, string $html, string $asin = '', bool $allowLocalGrocery = false): float
     {
-        $hasBuyButton = $xpath->query('//input[@id="add-to-cart-button"] | //input[@id="buy-now-button"]')->length > 0;
-        $buyboxVisibleText = strtolower($this->extractVisibleTextFromNodes($xpath, '//div[@id="buybox"]'));
-        $isLocalPickupOnly = !$hasBuyButton
-            && (str_contains($buyboxVisibleText, 'amazonfresh')
-                || str_contains($buyboxVisibleText, 'amazon fresh')
-                || str_contains($buyboxVisibleText, 'whole foods'));
+        $isLocalPickupOnly = !$allowLocalGrocery && $this->isLocalGroceryOnlyHtml($html, $xpath);
 
         $price = 0.0;
 
@@ -846,8 +893,8 @@ class AmazonScraperService
             }
         }
 
-        // Fallback: selected DOM swatch <li> for $asin
-        if ($price <= 0) {
+        // Fallback: selected DOM swatch <li> for $asin (only when not local-grocery-only)
+        if ($price <= 0 && !$isLocalPickupOnly) {
             $swatchQuery = $asin !== ''
                 ? "//li[@data-asin=\"{$asin}\" or @data-defaultasin=\"{$asin}\" or @data-csa-c-item-id=\"{$asin}\"]"
                 : '//li[contains(@class, "swatchSelect") or contains(@class, "selected")]';
@@ -931,8 +978,9 @@ class AmazonScraperService
      * 4. Dropdown variation options
      * 5. Single default variant fallback
      */
-    protected function parseVariants(string $html, string $asin, float $price, array $images, DOMXPath $xpath, array $availability = []): array
+    protected function parseVariants(string $html, string $asin, float $price, array $images, DOMXPath $xpath, array $availability = [], bool $allowLocalGrocery = false): array
     {
+        $isLocalGroceryOnly = !$allowLocalGrocery && $this->isLocalGroceryOnlyHtml($html, $xpath);
         $pageAvailable = $availability['available'] ?? ($price > 0);
         $pageStock = $availability['stock'] ?? ($pageAvailable ? $this->defaultStock : 0);
         $variants = [];
@@ -1131,15 +1179,17 @@ class AmazonScraperService
                     // Price
                     $itemPrice = 0.0;
                     $hasOlpMatch = false;
-                    $priceNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
-                    if ($priceNodes->length > 0) {
-                        $rawP = $priceNodes->item(0)->textContent;
-                        if (preg_match('/[\d,]+\.\d{2}/', $rawP, $pm)) {
-                            $itemPrice = (float) str_replace(',', '', $pm[0]);
-                        }
-                    } elseif (preg_match('/from\s+\$([\d,]+\.\d{2})/i', (string) $node->textContent, $om)) {
+                    if (preg_match('/from\s+\$([\d,]+\.\d{2})/i', (string) $node->textContent, $om)) {
                         $itemPrice = (float) str_replace(',', '', $om[1]);
                         $hasOlpMatch = true;
+                    } elseif (!$isLocalGroceryOnly) {
+                        $priceNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
+                        if ($priceNodes->length > 0) {
+                            $rawP = $priceNodes->item(0)->textContent;
+                            if (preg_match('/[\d,]+\.\d{2}/', $rawP, $pm)) {
+                                $itemPrice = (float) str_replace(',', '', $pm[0]);
+                            }
+                        }
                     }
                     if ($itemPrice <= 0 && $itemAsin === $asin && $price > 0) {
                         $itemPrice = $price;
@@ -1609,7 +1659,16 @@ class AmazonScraperService
                         continue;
                     }
 
-                    $parsedPrice = $this->extractPriceFromHtml($body, $vAsin);
+                    $parsedPrice = $this->extractPriceFromHtml($body, $vAsin, false);
+                    if ($parsedPrice <= 0 && $useBrightData && $this->isLocalGroceryOnlyHtml($body)) {
+                        $vUrl = "https://{$host}/dp/{$vAsin}?th=1&psc=1" . ($host === 'www.amazon.com' ? '&language=en_US&currency=USD' : '');
+                        $retryBody = $this->scrapeWithBrightData($vUrl);
+                        if (!empty($retryBody) && !str_contains($retryBody, 'validateCaptcha') && !str_contains($retryBody, 'Robot Check')) {
+                            $body = $retryBody;
+                            $parsedPrice = $this->extractPriceFromHtml($body, $vAsin, false);
+                        }
+                    }
+
                     if ($parsedPrice > 0) {
                         $fetchedPrices[$vAsin] = $parsedPrice;
                         $fetchedAvail[$vAsin] = true;
@@ -1675,7 +1734,7 @@ class AmazonScraperService
     /**
      * Fast price extraction from an Amazon product page HTML string (strictly scoped to main buybox/OLP).
      */
-    protected function extractPriceFromHtml(string $html, string $asin = ''): float
+    protected function extractPriceFromHtml(string $html, string $asin = '', bool $allowLocalGrocery = false): float
     {
         libxml_use_internal_errors(true);
         $dom = new DOMDocument();
@@ -1683,6 +1742,6 @@ class AmazonScraperService
         $xpath = new DOMXPath($dom);
         libxml_clear_errors();
 
-        return $this->extractMainProductPrice($xpath, $html, $asin);
+        return $this->extractMainProductPrice($xpath, $html, $asin, $allowLocalGrocery);
     }
 }
