@@ -45,15 +45,17 @@ class SupplierPriceCompareService
 
     /** @var string[] OpenRouter Free (:free) Vision & Text models */
     protected array $openRouterVisionModels = [
-        'google/gemma-3-27b-it:free',
-        'qwen/qwen2.5-vl-32b-instruct:free',
         'openrouter/free',
+        'google/gemma-4-31b-it:free',
+        'google/gemma-4-26b-a4b-it:free',
+        'particle-ai/particle-1:free',
     ];
 
     protected array $openRouterTextModels = [
-        'meta-llama/llama-3.3-70b-instruct:free',
-        'google/gemma-3-27b-it:free',
         'openrouter/free',
+        'google/gemma-4-31b-it:free',
+        'google/gemma-4-26b-a4b-it:free',
+        'particle-ai/particle-1:free',
     ];
 
     public function __construct(
@@ -891,6 +893,8 @@ class SupplierPriceCompareService
                     'Content-Type' => 'application/json',
                 ], $extraHeaders);
 
+                $effectiveMaxTokens = $providerName === 'openrouter' ? max(512, $maxTokens) : $maxTokens;
+
                 $resp = Http::withHeaders($headers)
                     ->withOptions([
                         'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
@@ -900,7 +904,7 @@ class SupplierPriceCompareService
                         'model' => $model,
                         'messages' => $messages,
                         'temperature' => 0.15,
-                        'max_tokens' => $maxTokens,
+                        'max_tokens' => $effectiveMaxTokens,
                     ]);
 
                 if ($resp->successful()) {
