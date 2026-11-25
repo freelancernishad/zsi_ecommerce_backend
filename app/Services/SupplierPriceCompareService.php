@@ -14,7 +14,23 @@ use Illuminate\Support\Facades\Log;
 
 class SupplierPriceCompareService
 {
-    protected string $geminiBaseUrl = 'https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash-lite:generateContent';
+    /** @var string[] High-quota multimodal Vision models ordered by daily quota & speed */
+    protected array $visionModels = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemini-3.8-flash',
+        'gemini-3.6-flash',
+        'gemini-2.5-flash-lite',
+    ];
+
+    /** @var string[] High-quota fast text models first, with Gemma 4 & 2.5 backup */
+    protected array $textModels = [
+        'gemini-3.5-flash-lite',
+        'gemini-3.1-flash-lite',
+        'gemma-4-31b-it',
+        'gemma-4-26b-a4b-it',
+        'gemini-2.5-flash-lite',
+    ];
 
     public function __construct(
         protected AliExpressService $aliExpressService,
@@ -44,6 +60,7 @@ class SupplierPriceCompareService
 
         $activeFeatures = ['size_detection', 'quality_warnings'];
         $skippedFeatures = [];
+        $aiModelUsed = null;
 
         $geminiKey = $this->getGeminiApiKey();
         if ($geminiKey === null) {
@@ -56,7 +73,7 @@ class SupplierPriceCompareService
         // Pre-download source image once so both Gemini Vision OCR and GD Visual Matching reuse it
         $sourceImageData = $this->fetchImageBytes($image);
 
-        // Build Smart Search Query (Vision OCR -> Text Gemini -> Rule-Based Fallback)
+        // Build Smart Search Query (Gemma 4 / Vision OCR -> Fallback)
         $queryInfo = $this->buildSmartSearchQuery(
             $title,
             $brand,
@@ -64,7 +81,8 @@ class SupplierPriceCompareService
             $geminiKey,
             $sourceImageData,
             $activeFeatures,
-            $skippedFeatures
+            $skippedFeatures,
+            $aiModelUsed
         );
         $query = $queryInfo['query'];
         $querySource = $queryInfo['source'];
@@ -108,7 +126,7 @@ class SupplierPriceCompareService
             'details_checked' => false,
         ];
 
-        $cacheKey = 'price_compare_result_v4:' . md5(json_encode([
+        $cacheKey = 'price_compare_result_v5:' . md5(json_encode([
             $sourceSupplier,
             $productId,
             strtolower($query),
@@ -261,17 +279,20 @@ class SupplierPriceCompareService
                     $suppliers,
                     $downloadedImages,
                     $activeFeatures,
-                    $skippedFeatures
+                    $skippedFeatures,
+                    $aiModelUsed
                 );
             }
 
             if (!$visionVerified) {
                 $this->refineMatchScoresWithGeminiText(
+                    $geminiKey,
                     $title,
                     $brand,
                     $suppliers,
                     $activeFeatures,
-                    $skippedFeatures
+                    $skippedFeatures,
+                    $aiModelUsed
                 );
             }
         }
@@ -319,6 +340,7 @@ class SupplierPriceCompareService
             'page' => $page,
             'cached' => false,
             'checked_at' => now()->toIso8601String(),
+            'ai_model_used' => $aiModelUsed,
             'active_features' => array_values(array_unique($activeFeatures)),
             'skipped_features' => $skippedFeatures,
             'source' => $sourceItem,
@@ -705,7 +727,69 @@ class SupplierPriceCompareService
     }
 
     /**
-     * Build a clean search query via Gemini Vision OCR -> Gemini Text -> Rule-Based Fallback.
+     * Execute a Gemini/Gemma generateContent call across a prioritized model list,
+     * automatically skipping cooldown models and rotating on 429 rate/quota limits.
+     */
+    protected function callGeminiModelsWithFallback(string $apiKey, array $models, array $payload, int $timeout = 12): ?array
+    {
+        foreach ($models as $model) {
+            $cooldownKey = "gemini_model_cooldown:{$model}";
+            if (Cache::has($cooldownKey)) {
+                continue;
+            }
+
+            try {
+                $url = "https://generativelanguage.googleapis.com/v1beta/models/{$model}:generateContent?key=" . $apiKey;
+                $resp = Http::withHeaders(['Content-Type' => 'application/json'])
+                    ->withOptions([
+                        'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+                    ])
+                    ->timeout($timeout)
+                    ->post($url, $payload);
+
+                if ($resp->successful()) {
+                    $text = $resp->json()['candidates'][0]['content']['parts'][0]['text'] ?? null;
+                    if (!empty($text)) {
+                        return [
+                            'text' => (string) $text,
+                            'model' => $model,
+                        ];
+                    }
+                    continue;
+                }
+
+                $status = $resp->status();
+                $body = $resp->body();
+                if ($status === 429) {
+                    $isDaily = str_contains($body, 'PerDay')
+                        || str_contains(strtolower($body), 'daily')
+                        || str_contains($body, 'RESOURCE_EXHAUSTED');
+                    Cache::put($cooldownKey, true, now()->addMinutes($isDaily ? 45 : 1));
+                    Log::warning("Gemini model {$model} hit 429 quota/rate limit; switching to next model.");
+                    continue;
+                }
+
+                if ($status === 404) {
+                    Cache::put($cooldownKey, true, now()->addHours(12));
+                } elseif ($status === 503 || $status >= 500) {
+                    Cache::put($cooldownKey, true, now()->addMinutes(3));
+                }
+
+                Log::warning("Gemini model {$model} returned HTTP {$status}; trying next model.", [
+                    'body' => mb_substr($body, 0, 220),
+                ]);
+            } catch (\Throwable $e) {
+                Cache::put($cooldownKey, true, now()->addMinutes(3));
+                $safeMsg = preg_replace('/key=[^&\s)]+/i', 'key=***', $e->getMessage());
+                Log::warning("Gemini model {$model} call failed ({$safeMsg}); trying next model.");
+            }
+        }
+
+        return null;
+    }
+
+    /**
+     * Build a clean search query via Gemma 4 / Gemini Vision OCR -> Rule-Based Fallback.
      */
     protected function buildSmartSearchQuery(
         string $title,
@@ -714,7 +798,8 @@ class SupplierPriceCompareService
         ?string $geminiKey,
         ?array $sourceImageData,
         array &$activeFeatures,
-        array &$skippedFeatures
+        array &$skippedFeatures,
+        ?string &$aiModelUsed = null
     ): array {
         if ($customQuery !== '') {
             return [
@@ -725,40 +810,68 @@ class SupplierPriceCompareService
             ];
         }
 
-        $cacheKey = 'price_compare_query_v4:' . md5($title . '|' . ($brand ?? '') . '|' . ($geminiKey !== null ? '1' : '0') . '|' . ($sourceImageData !== null ? 'img' : 'noimg'));
+        $cacheKey = 'price_compare_query_v5:' . md5($title . '|' . ($brand ?? '') . '|' . ($geminiKey !== null ? '1' : '0') . '|' . ($sourceImageData !== null ? 'img' : 'noimg'));
         $cached = Cache::get($cacheKey);
         if (is_array($cached) && !empty($cached['query'])) {
             if ($cached['source'] === 'ai') {
                 $activeFeatures[] = 'gemini_query';
+                if (!empty($cached['model'])) {
+                    $aiModelUsed = $cached['model'];
+                }
             }
             return $cached;
         }
 
         if ($geminiKey !== null) {
+            $hasTitleSize = !empty(($this->extractMeasurements($title))['label']);
+
+            // Save Vision quota when title already specifies size — use Gemma 4 (14.4K RPD) first
+            if ($hasTitleSize) {
+                $textRes = $this->generateQueryWithGemini($geminiKey, $title, $brand);
+                if ($textRes !== null) {
+                    $activeFeatures[] = 'gemini_query';
+                    $aiModelUsed = $aiModelUsed ?: $textRes['model'];
+                    $res = [
+                        'query' => $textRes['query'],
+                        'source' => 'ai',
+                        'model' => $textRes['model'],
+                        'ocr_brand' => null,
+                        'ocr_size' => null,
+                    ];
+                    Cache::put($cacheKey, $res, now()->addDays(7));
+                    return $res;
+                }
+            }
+
             if ($sourceImageData !== null) {
                 $visionRes = $this->generateQueryWithGeminiVision($geminiKey, $title, $brand, $sourceImageData);
                 if ($visionRes !== null) {
                     $activeFeatures[] = 'gemini_vision_ocr';
-                    Cache::put($cacheKey, $visionRes, now()->addHours(24));
+                    $aiModelUsed = $aiModelUsed ?: ($visionRes['model'] ?? null);
+                    Cache::put($cacheKey, $visionRes, now()->addDays(7));
                     return $visionRes;
                 }
                 $skippedFeatures[] = [
                     'feature' => 'gemini_vision_ocr',
-                    'reason' => 'Vision OCR call failed; fell back',
+                    'reason' => 'Vision OCR skipped; fell back to text/rules',
                 ];
             }
 
-            $aiQuery = $this->generateQueryWithGemini($title, $brand);
-            if ($aiQuery !== null) {
-                $activeFeatures[] = 'gemini_query';
-                $res = [
-                    'query' => $aiQuery,
-                    'source' => 'ai',
-                    'ocr_brand' => null,
-                    'ocr_size' => null,
-                ];
-                Cache::put($cacheKey, $res, now()->addHours(24));
-                return $res;
+            if (!$hasTitleSize) {
+                $textRes = $this->generateQueryWithGemini($geminiKey, $title, $brand);
+                if ($textRes !== null) {
+                    $activeFeatures[] = 'gemini_query';
+                    $aiModelUsed = $aiModelUsed ?: $textRes['model'];
+                    $res = [
+                        'query' => $textRes['query'],
+                        'source' => 'ai',
+                        'model' => $textRes['model'],
+                        'ocr_brand' => null,
+                        'ocr_size' => null,
+                    ];
+                    Cache::put($cacheKey, $res, now()->addDays(7));
+                    return $res;
+                }
             }
         }
 
@@ -769,13 +882,13 @@ class SupplierPriceCompareService
             'ocr_brand' => null,
             'ocr_size' => null,
         ];
-        Cache::put($cacheKey, $res, now()->addHours(24));
+        Cache::put($cacheKey, $res, now()->addDays(7));
 
         return $res;
     }
 
     /**
-     * Use Gemini Multimodal to read brand/size from product image and produce a clean search query.
+     * Use Gemini Multimodal fallback chain to read brand/size from product image and produce a clean search query.
      */
     protected function generateQueryWithGeminiVision(string $apiKey, string $title, ?string $brand, array $imageData): ?array
     {
@@ -789,34 +902,31 @@ class SupplierPriceCompareService
                 . $brandLine
                 . "Product Title: {$title}";
 
-            $resp = Http::withHeaders(['Content-Type' => 'application/json'])
-                ->timeout(10)
-                ->post($this->geminiBaseUrl . '?key=' . $apiKey, [
-                    'contents' => [
-                        [
-                            'parts' => [
-                                ['text' => $prompt],
-                                [
-                                    'inlineData' => [
-                                        'mimeType' => $imageData['mime'],
-                                        'data' => base64_encode($imageData['bytes']),
-                                    ],
+            $res = $this->callGeminiModelsWithFallback($apiKey, $this->visionModels, [
+                'contents' => [
+                    [
+                        'parts' => [
+                            ['text' => $prompt],
+                            [
+                                'inlineData' => [
+                                    'mimeType' => $imageData['mime'],
+                                    'data' => base64_encode($imageData['bytes']),
                                 ],
                             ],
                         ],
                     ],
-                    'generationConfig' => [
-                        'temperature' => 0.2,
-                        'maxOutputTokens' => 256,
-                    ],
-                ]);
+                ],
+                'generationConfig' => [
+                    'temperature' => 0.2,
+                    'maxOutputTokens' => 256,
+                ],
+            ], 10);
 
-            if (!$resp->successful()) {
+            if ($res === null) {
                 return null;
             }
 
-            $text = $resp->json()['candidates'][0]['content']['parts'][0]['text'] ?? '';
-            if (!preg_match('/\{[\s\S]*\}/', (string) $text, $m)) {
+            if (!preg_match('/\{[\s\S]*\}/', $res['text'], $m)) {
                 return null;
             }
 
@@ -833,6 +943,7 @@ class SupplierPriceCompareService
             return [
                 'query' => $query,
                 'source' => 'ai',
+                'model' => $res['model'],
                 'ocr_brand' => !empty($decoded['ocr_brand']) ? trim((string) $decoded['ocr_brand']) : null,
                 'ocr_size' => !empty($decoded['ocr_size']) ? trim((string) $decoded['ocr_size']) : null,
             ];
@@ -843,9 +954,9 @@ class SupplierPriceCompareService
     }
 
     /**
-     * Ask Gemini (text-only) to extract a concise 4-8 word product search query.
+     * Ask Gemma 4 / Flash-Lite text chain to extract a concise 4-8 word product search query.
      */
-    protected function generateQueryWithGemini(string $title, ?string $brand): ?string
+    protected function generateQueryWithGemini(string $apiKey, string $title, ?string $brand): ?array
     {
         try {
             $brandLine = ($brand && strtolower($brand) !== 'generic') ? "Brand: {$brand}\n" : '';
@@ -857,12 +968,19 @@ class SupplierPriceCompareService
                 . $brandLine
                 . "Product Title: {$title}";
 
-            $raw = $this->geminiService->generateContent($prompt);
-            if (empty($raw)) {
+            $res = $this->callGeminiModelsWithFallback($apiKey, $this->textModels, [
+                'contents' => [['parts' => [['text' => $prompt]]]],
+                'generationConfig' => [
+                    'temperature' => 0.2,
+                    'maxOutputTokens' => 80,
+                ],
+            ], 8);
+
+            if ($res === null) {
                 return null;
             }
 
-            $cleaned = strip_tags($raw);
+            $cleaned = strip_tags($res['text']);
             $cleaned = preg_replace('/[\r\n]+/', ' ', $cleaned);
             $cleaned = trim((string) $cleaned, " \t\n\r\0\x0B\"'`*.-");
             $cleaned = preg_replace('/\s+/', ' ', (string) $cleaned);
@@ -871,7 +989,10 @@ class SupplierPriceCompareService
                 return null;
             }
 
-            return $cleaned;
+            return [
+                'query' => $cleaned,
+                'model' => $res['model'],
+            ];
         } catch (\Throwable $e) {
             Log::warning('Gemini smart query generation skipped: ' . $e->getMessage());
             return null;
@@ -1277,7 +1398,8 @@ class SupplierPriceCompareService
     }
 
     /**
-     * Multimodal Gemini Vision check comparing source image against top candidate images.
+     * Multimodal Gemini Vision check comparing source image against top candidate images,
+     * with 24h per-pair caching and multi-model auto-fallback.
      */
     protected function verifyTopMatchesWithGeminiVision(
         string $apiKey,
@@ -1287,7 +1409,8 @@ class SupplierPriceCompareService
         array &$suppliers,
         array $downloadedImages,
         array &$activeFeatures,
-        array &$skippedFeatures
+        array &$skippedFeatures,
+        ?string &$aiModelUsed = null
     ): bool {
         try {
             $candidates = [];
@@ -1335,67 +1458,88 @@ class SupplierPriceCompareService
                 }
             }
 
-            $sourceMeas = $this->extractMeasurements($sourceTitle);
-            $sourceSize = $sourceMeas['label'] ?? 'unknown';
-            $brandText = ($brand && strtolower($brand) !== 'generic') ? " (Brand: {$brand})" : '';
+            $srcHash = md5($sourceImageData['bytes']);
+            $decoded = [];
+            $uncachedTop = [];
 
-            $parts = [];
-            $parts[] = [
-                'text' => "You are a visual product matching expert for e-commerce dropshipping.\n"
-                    . "Below is ONE Source Product image followed by labelled Candidate Product images.\n"
-                    . "Compare the ACTUAL bottle/box shape, color scheme, label layout, cap/pump, and graphics in the images.\n"
-                    . "IMPORTANT: Private-label/OEM products often omit the brand name in AliExpress titles. Do NOT mark them as 'different brand' merely because a brand word is missing from the text title — judge primarily by the visual packaging and product appearance in the images!\n"
-                    . "If the packaging/bottle/label design in a candidate image matches the Source Image, set same_product=true and score between 88 and 99.",
-            ];
-
-            $parts[] = ['text' => "SOURCE PRODUCT IMAGE — Title: {$sourceTitle}{$brandText} | Size: {$sourceSize}"];
-            $parts[] = [
-                'inlineData' => [
-                    'mimeType' => $sourceImageData['mime'],
-                    'data' => base64_encode($sourceImageData['bytes']),
-                ],
-            ];
-
-            foreach ($top as $i => $c) {
-                $num = $i + 1;
-                $priceStr = $c['item']['price'] !== null ? ('$' . number_format((float) $c['item']['price'], 2)) : 'N/A';
-                $candSize = $c['item']['detected_size'] ?? 'unknown';
-                $parts[] = ['text' => "CANDIDATE {$num} (key: {$c['key']}) — Title: {$c['item']['title']} | Price: {$priceStr} | Size: {$candSize}"];
-                $parts[] = [
-                    'inlineData' => [
-                        'mimeType' => $c['img']['mime'],
-                        'data' => base64_encode($c['img']['bytes']),
-                    ],
-                ];
+            foreach ($top as $c) {
+                $pairKey = 'price_compare_vision_pair_v1:' . md5($srcHash . '|' . md5($c['img']['bytes']) . '|' . $c['item']['title']);
+                $cachedPair = Cache::get($pairKey);
+                if (is_array($cachedPair) && isset($cachedPair['score'])) {
+                    $decoded[$c['key']] = $cachedPair;
+                } else {
+                    $c['pair_cache_key'] = $pairKey;
+                    $uncachedTop[] = $c;
+                }
             }
 
-            $parts[] = [
-                'text' => "Return ONLY valid JSON (no markdown) mapping every candidate key to:\n"
-                    . "{\"same_product\": true/false, \"score\": 0-100, \"reason\": \"<= 50 chars\"}.",
-            ];
+            if (!empty($uncachedTop)) {
+                $sourceMeas = $this->extractMeasurements($sourceTitle);
+                $sourceSize = $sourceMeas['label'] ?? 'unknown';
+                $brandText = ($brand && strtolower($brand) !== 'generic') ? " (Brand: {$brand})" : '';
 
-            $resp = Http::withHeaders(['Content-Type' => 'application/json'])
-                ->timeout(15)
-                ->post($this->geminiBaseUrl . '?key=' . $apiKey, [
+                $parts = [];
+                $parts[] = [
+                    'text' => "You are a visual product matching expert for e-commerce dropshipping.\n"
+                        . "Below is ONE Source Product image followed by labelled Candidate Product images.\n"
+                        . "Compare the ACTUAL bottle/box shape, color scheme, label layout, cap/pump, and graphics in the images.\n"
+                        . "IMPORTANT: Private-label/OEM products often omit the brand name in AliExpress titles. Do NOT mark them as 'different brand' merely because a brand word is missing from the text title — judge primarily by the visual packaging and product appearance in the images!\n"
+                        . "If the packaging/bottle/label design in a candidate image matches the Source Image, set same_product=true and score between 88 and 99.",
+                ];
+
+                $parts[] = ['text' => "SOURCE PRODUCT IMAGE — Title: {$sourceTitle}{$brandText} | Size: {$sourceSize}"];
+                $parts[] = [
+                    'inlineData' => [
+                        'mimeType' => $sourceImageData['mime'],
+                        'data' => base64_encode($sourceImageData['bytes']),
+                    ],
+                ];
+
+                foreach ($uncachedTop as $i => $c) {
+                    $num = $i + 1;
+                    $priceStr = $c['item']['price'] !== null ? ('$' . number_format((float) $c['item']['price'], 2)) : 'N/A';
+                    $candSize = $c['item']['detected_size'] ?? 'unknown';
+                    $parts[] = ['text' => "CANDIDATE {$num} (key: {$c['key']}) — Title: {$c['item']['title']} | Price: {$priceStr} | Size: {$candSize}"];
+                    $parts[] = [
+                        'inlineData' => [
+                            'mimeType' => $c['img']['mime'],
+                            'data' => base64_encode($c['img']['bytes']),
+                        ],
+                    ];
+                }
+
+                $parts[] = [
+                    'text' => "Return ONLY valid JSON (no markdown) mapping every candidate key to:\n"
+                        . "{\"same_product\": true/false, \"score\": 0-100, \"reason\": \"<= 50 chars\"}.",
+                ];
+
+                $res = $this->callGeminiModelsWithFallback($apiKey, $this->visionModels, [
                     'contents' => [['parts' => $parts]],
                     'generationConfig' => [
                         'temperature' => 0.1,
                         'maxOutputTokens' => 768,
                     ],
-                ]);
+                ], 15);
 
-            if (!$resp->successful()) {
-                $skippedFeatures[] = ['feature' => 'gemini_vision_verify', 'reason' => 'HTTP ' . $resp->status()];
-                return false;
+                if ($res !== null && preg_match('/\{[\s\S]*\}/', $res['text'], $m)) {
+                    $freshDecoded = json_decode($m[0], true);
+                    if (is_array($freshDecoded)) {
+                        $aiModelUsed = $res['model'];
+                        foreach ($uncachedTop as $c) {
+                            $k = $c['key'];
+                            if (isset($freshDecoded[$k]) && is_array($freshDecoded[$k]) && isset($freshDecoded[$k]['score'])) {
+                                $decoded[$k] = $freshDecoded[$k];
+                                Cache::put($c['pair_cache_key'], $freshDecoded[$k], now()->addHours(24));
+                            }
+                        }
+                    }
+                } elseif ($res === null && empty($decoded)) {
+                    $skippedFeatures[] = ['feature' => 'gemini_vision_verify', 'reason' => 'All vision models busy/quota reached; using GD Visual'];
+                    return false;
+                }
             }
 
-            $text = $resp->json()['candidates'][0]['content']['parts'][0]['text'] ?? '';
-            if (!preg_match('/\{[\s\S]*\}/', (string) $text, $m)) {
-                return false;
-            }
-
-            $decoded = json_decode($m[0], true);
-            if (!is_array($decoded)) {
+            if (empty($decoded)) {
                 return false;
             }
 
@@ -1452,14 +1596,16 @@ class SupplierPriceCompareService
     }
 
     /**
-     * Text-only Gemini match refinement when vision verification did not run.
+     * Text-only match refinement using Gemma 4 / Flash-Lite chain when vision verification did not run.
      */
     protected function refineMatchScoresWithGeminiText(
+        string $apiKey,
         string $sourceTitle,
         ?string $brand,
         array &$suppliers,
         array &$activeFeatures,
-        array &$skippedFeatures
+        array &$skippedFeatures,
+        ?string &$aiModelUsed = null
     ): void {
         try {
             $candidatePool = [];
@@ -1490,8 +1636,15 @@ class SupplierPriceCompareService
                 . "Candidates:\n" . implode("\n", $lines) . "\n\n"
                 . "Return ONLY valid JSON mapping each candidate key to {\"score\": 0-100, \"reason\": \"<= 50 chars\"}.";
 
-            $raw = $this->geminiService->generateContent($prompt);
-            if (empty($raw) || !preg_match('/\{[\s\S]*\}/', $raw, $m)) {
+            $res = $this->callGeminiModelsWithFallback($apiKey, $this->textModels, [
+                'contents' => [['parts' => [['text' => $prompt]]]],
+                'generationConfig' => [
+                    'temperature' => 0.1,
+                    'maxOutputTokens' => 512,
+                ],
+            ], 10);
+
+            if ($res === null || !preg_match('/\{[\s\S]*\}/', $res['text'], $m)) {
                 return;
             }
 
@@ -1500,6 +1653,7 @@ class SupplierPriceCompareService
                 return;
             }
 
+            $aiModelUsed = $aiModelUsed ?: $res['model'];
             $applied = false;
             foreach ($suppliers as $supplierKey => &$bucket) {
                 if ($bucket['status'] === 'source' || empty($bucket['items'])) {
