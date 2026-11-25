@@ -158,6 +158,11 @@ if (file_exists($EcommerceCommonRoutes = __DIR__.'/Common/EcommerceCommonRoutes.
     require $EcommerceCommonRoutes;
 }
 
+// Load Storefront Image Search Routes
+if (file_exists($ImageSearchRoutes = __DIR__.'/Common/ImageSearchRoutes.php')) {
+    require $ImageSearchRoutes;
+}
+
 // Load HomepageRoutes
 if (file_exists($HomepageRoutes = __DIR__.'/Common/HomepageRoutes.php')) {
     require $HomepageRoutes;
