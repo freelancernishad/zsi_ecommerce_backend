@@ -101,31 +101,55 @@ class OrderController extends Controller
             'transaction_id' => 'nullable|string',
         ]);
 
-        // Just-in-Time (JIT) Amazon Sync on Checkout BEFORE opening DB transaction / taking order
-        // (Only calls API if last sync > jit_stale_hours; prevents overselling out-of-stock Amazon items)
+        // Just-in-Time (JIT) Supplier Sync on Checkout BEFORE opening DB transaction / taking order
+        // (Amazon, CJ Dropshipping, AliExpress: only calls API if sync is stale; prevents overselling)
         $itemProductIds = collect($request->items)->pluck('product_id')->filter()->unique()->values()->toArray();
         if (!empty($itemProductIds)) {
-            $amazonItems = Product::whereIn('id', $itemProductIds)
-                ->where('is_amazon_product', true)
-                ->whereNotNull('amazon_asin')
+            $dropshipItems = Product::whereIn('id', $itemProductIds)
+                ->where(function ($q) {
+                    $q->where(function ($sub) {
+                        $sub->where('is_amazon_product', true)->whereNotNull('amazon_asin');
+                    })->orWhere(function ($sub) {
+                        $sub->where('is_cj_product', true)->whereNotNull('cj_product_id');
+                    })->orWhere(function ($sub) {
+                        $sub->where('is_aliexpress_product', true)->whereNotNull('aliexpress_product_id');
+                    });
+                })
                 ->get();
 
-            if ($amazonItems->isNotEmpty()) {
-                $smartSync = app(\App\Services\AmazonSmartSyncService::class);
-                foreach ($amazonItems as $amzProd) {
+            if ($dropshipItems->isNotEmpty()) {
+                $syncService = app(\App\Services\InventorySyncService::class);
+                $itemsByProduct = collect($request->items)->groupBy('product_id');
+
+                foreach ($dropshipItems as $dropshipProd) {
                     try {
-                        $jitRes = $smartSync->jitSyncProduct($amzProd->id, 'checkout');
+                        $jitRes = $syncService->jitSyncProduct($dropshipProd->id, 'checkout');
                         if (!empty($jitRes['synced'])) {
-                            $amzProd->refresh();
-                            if ((int) $amzProd->stock_quantity <= 0 && !$amzProd->continue_selling) {
+                            $dropshipProd->refresh();
+                            if ((int) $dropshipProd->stock_quantity <= 0 && !$dropshipProd->continue_selling) {
                                 return response()->json([
                                     'status' => 'error',
-                                    'message' => "Sorry, '{$amzProd->name}' is currently out of stock.",
+                                    'message' => "Sorry, '{$dropshipProd->name}' is currently out of stock.",
                                 ], 422);
+                            }
+
+                            if (!$dropshipProd->continue_selling) {
+                                foreach ($itemsByProduct->get($dropshipProd->id, []) as $reqItem) {
+                                    $vId = $reqItem['variant_id'] ?? null;
+                                    if ($vId) {
+                                        $v = \App\Models\ProductVariant::find($vId);
+                                        if ($v && (int) $v->available_quantity <= 0) {
+                                            return response()->json([
+                                                'status' => 'error',
+                                                'message' => "Sorry, selected variant of '{$dropshipProd->name}' is currently out of stock.",
+                                            ], 422);
+                                        }
+                                    }
+                                }
                             }
                         }
                     } catch (\Throwable $e) {
-                        \Illuminate\Support\Facades\Log::warning("Amazon JIT sync on checkout skipped for #{$amzProd->id}: " . $e->getMessage());
+                        \Illuminate\Support\Facades\Log::warning("Supplier JIT sync on checkout skipped for #{$dropshipProd->id}: " . $e->getMessage());
                     }
                 }
             }

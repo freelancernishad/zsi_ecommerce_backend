@@ -708,19 +708,33 @@ class AmazonSmartSyncService
     {
         $config = $this->getConfig();
 
-        if (!$config['jit_sync_enabled']) {
-            return ['synced' => false, 'reason' => 'jit_disabled'];
-        }
-
-        $triggerAllowed = match ($trigger) {
-            'view' => $config['jit_on_product_view'],
-            'cart' => $config['jit_on_add_to_cart'],
-            'checkout' => $config['jit_on_checkout'],
-            default => false,
+        $explicitKey = match ($trigger) {
+            'view' => 'amazon_sync_on_product_view',
+            'cart' => 'amazon_sync_on_add_to_cart',
+            'checkout' => 'amazon_sync_on_checkout',
+            default => null,
         };
+        $explicitSetting = $explicitKey ? SiteSetting::where('key', $explicitKey)->first() : null;
 
-        if (!$triggerAllowed) {
-            return ['synced' => false, 'reason' => "jit_trigger_{$trigger}_disabled"];
+        if ($explicitSetting !== null) {
+            if (!in_array((string) $explicitSetting->value, ['1', 'true'], true)) {
+                return ['synced' => false, 'reason' => "amazon_{$trigger}_sync_disabled"];
+            }
+        } else {
+            if (!$config['jit_sync_enabled']) {
+                return ['synced' => false, 'reason' => 'jit_disabled'];
+            }
+
+            $triggerAllowed = match ($trigger) {
+                'view' => $config['jit_on_product_view'],
+                'cart' => $config['jit_on_add_to_cart'],
+                'checkout' => $config['jit_on_checkout'],
+                default => false,
+            };
+
+            if (!$triggerAllowed) {
+                return ['synced' => false, 'reason' => "jit_trigger_{$trigger}_disabled"];
+            }
         }
 
         $product = Product::with('variants')->find($productId);

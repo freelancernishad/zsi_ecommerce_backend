@@ -47,11 +47,17 @@ class CartController extends Controller
             'selected_options' => 'nullable|array',
         ]);
 
-        // Just-in-Time (JIT) Amazon Sync on Add to Cart (only calls API if last sync > jit_stale_hours)
+        // Just-in-Time (JIT) Supplier Sync on Add to Cart (Amazon, CJ Dropshipping, AliExpress)
+        // Only calls API if product sync is stale; also protects variant-level out-of-stock adds.
         try {
             $targetProduct = \App\Models\Product::find($request->product_id);
-            if ($targetProduct && $targetProduct->is_amazon_product && !empty($targetProduct->amazon_asin)) {
-                $jitRes = app(\App\Services\AmazonSmartSyncService::class)->jitSyncProduct($targetProduct->id, 'cart');
+            $isDropship = $targetProduct && (
+                ($targetProduct->is_amazon_product && !empty($targetProduct->amazon_asin)) ||
+                ($targetProduct->is_cj_product && !empty($targetProduct->cj_product_id)) ||
+                ($targetProduct->is_aliexpress_product && !empty($targetProduct->aliexpress_product_id))
+            );
+            if ($isDropship) {
+                $jitRes = app(\App\Services\InventorySyncService::class)->jitSyncProduct($targetProduct->id, 'cart');
                 if (!empty($jitRes['synced'])) {
                     $targetProduct->refresh();
                     if ((int) $targetProduct->stock_quantity <= 0 && !$targetProduct->continue_selling) {
@@ -60,10 +66,19 @@ class CartController extends Controller
                             'message' => 'Sorry, this product is currently out of stock.',
                         ], 422);
                     }
+                    if ($request->variant_id) {
+                        $refreshedVariant = \App\Models\ProductVariant::find($request->variant_id);
+                        if ($refreshedVariant && (int) $refreshedVariant->available_quantity <= 0 && !$targetProduct->continue_selling) {
+                            return response()->json([
+                                'status' => 'error',
+                                'message' => 'Sorry, the selected option is currently out of stock.',
+                            ], 422);
+                        }
+                    }
                 }
             }
         } catch (\Throwable $e) {
-            \Illuminate\Support\Facades\Log::warning("Amazon JIT sync on addToCart skipped for #{$request->product_id}: " . $e->getMessage());
+            \Illuminate\Support\Facades\Log::warning("Supplier JIT sync on addToCart skipped for #{$request->product_id}: " . $e->getMessage());
         }
 
         $variantId = $request->variant_id;

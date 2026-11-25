@@ -402,6 +402,130 @@ class InventorySyncService
     }
 
     /**
+     * Unified Just-in-Time (JIT) sync for Cart & Checkout across Amazon, CJ Dropshipping, and AliExpress.
+     */
+    public function jitSyncProduct(int $productId, string $trigger = 'checkout'): array
+    {
+        $product = Product::with('variants')->find($productId);
+        if (!$product) {
+            return ['synced' => false, 'reason' => 'product_not_found'];
+        }
+
+        if ($product->is_amazon_product && !empty($product->amazon_asin)) {
+            $res = app(AmazonSmartSyncService::class)->jitSyncProduct($product->id, $trigger);
+            $res['supplier'] = 'amazon';
+            return $res;
+        }
+
+        $supplierSpec = null;
+        if ($product->is_cj_product && !empty($product->cj_product_id)) {
+            $supplierSpec = [
+                'supplier' => 'cjdropshipping',
+                'syncedCol' => 'cj_synced_at',
+                'enabledKey' => 'sync_cjdropshipping',
+                'cartKey' => 'cj_sync_on_add_to_cart',
+                'checkoutKey' => 'cj_sync_on_checkout',
+                'disabledReason' => 'cj_sync_disabled',
+                'lockPrefix' => 'cj_jit_sync_product_',
+                'method' => 'syncSingleCjProduct',
+            ];
+        } elseif ($product->is_aliexpress_product && !empty($product->aliexpress_product_id)) {
+            $supplierSpec = [
+                'supplier' => 'aliexpress',
+                'syncedCol' => 'aliexpress_synced_at',
+                'enabledKey' => 'sync_aliexpress',
+                'cartKey' => 'aliexpress_sync_on_add_to_cart',
+                'checkoutKey' => 'aliexpress_sync_on_checkout',
+                'disabledReason' => 'aliexpress_sync_disabled',
+                'lockPrefix' => 'aliexpress_jit_sync_product_',
+                'method' => 'syncSingleAliExpressProduct',
+            ];
+        }
+
+        if ($supplierSpec === null) {
+            return ['synced' => false, 'reason' => 'not_dropship_product'];
+        }
+
+        $triggerKey = $trigger === 'cart'
+            ? $supplierSpec['cartKey']
+            : ($trigger === 'checkout' ? $supplierSpec['checkoutKey'] : null);
+        if ($triggerKey !== null) {
+            $explicitSetting = SiteSetting::where('key', $triggerKey)->first();
+            if ($explicitSetting !== null && !in_array((string) $explicitSetting->value, ['1', 'true'], true)) {
+                return [
+                    'synced' => false,
+                    'reason' => "{$supplierSpec['supplier']}_{$trigger}_sync_disabled",
+                    'supplier' => $supplierSpec['supplier'],
+                ];
+            }
+        }
+
+        $config = $this->getConfig();
+        if (empty($config[$supplierSpec['enabledKey']])) {
+            return ['synced' => false, 'reason' => $supplierSpec['disabledReason'], 'supplier' => $supplierSpec['supplier']];
+        }
+
+        $staleHours = max(1, min(self::DETAIL_VIEW_COOLDOWN_HOURS, (int) ($config['sync_frequency_hours'] ?: self::DETAIL_VIEW_COOLDOWN_HOURS)));
+        $rawSyncedAt = $product->{$supplierSpec['syncedCol']};
+        if (!empty($rawSyncedAt) && Carbon::parse($rawSyncedAt)->gt(now()->subHours($staleHours))) {
+            return [
+                'synced' => false,
+                'fresh' => true,
+                'reason' => 'still_fresh',
+                'supplier' => $supplierSpec['supplier'],
+                'product_id' => $product->id,
+                'price' => (float) $product->price,
+                'stock_quantity' => (int) $product->stock_quantity,
+            ];
+        }
+
+        $tenant = $this->tenantCachePrefix();
+        $lock = Cache::lock("{$tenant}_{$supplierSpec['lockPrefix']}{$product->id}", 30);
+        if (!$lock->get()) {
+            return [
+                'synced' => false,
+                'reason' => 'sync_in_progress',
+                'supplier' => $supplierSpec['supplier'],
+                'product_id' => $product->id,
+                'price' => (float) $product->price,
+                'stock_quantity' => (int) $product->stock_quantity,
+            ];
+        }
+
+        try {
+            $jitConfig = array_merge($config, [
+                'retry_attempts' => 1,
+                'request_timeout_seconds' => min(10, max(5, (int) ($config['request_timeout_seconds'] ?? 10))),
+                '_trigger' => "jit_{$trigger}",
+                '_repaired' => false,
+            ]);
+
+            $method = $supplierSpec['method'];
+            $result = $this->{$method}($product, $jitConfig);
+            $product->refresh();
+
+            $isSuccess = ($result['status'] ?? '') === 'success';
+            if ($isSuccess) {
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+            }
+
+            return [
+                'synced' => $isSuccess,
+                'trigger' => $trigger,
+                'supplier' => $supplierSpec['supplier'],
+                'product_id' => $product->id,
+                'price' => (float) $product->price,
+                'stock_quantity' => (int) $product->stock_quantity,
+                'status' => $product->status,
+                'changes_detected' => $result['changes_detected'] ?? false,
+                'error' => $result['error'] ?? null,
+            ];
+        } finally {
+            optional($lock)->release();
+        }
+    }
+
+    /**
      * Synchronize a single CJ Dropshipping product stock and pricing.
      */
     public function syncSingleCjProduct(Product $product, array $config): array
