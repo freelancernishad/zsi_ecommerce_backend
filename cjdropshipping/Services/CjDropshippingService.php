@@ -17,11 +17,13 @@ class CjDropshippingService
     }
 
     /**
-     * Get or fetch CJ Access Token (cached for 50 minutes).
+     * Get or fetch CJ Access Token (cached for 50 minutes per tenant database).
      */
     public function getAccessToken(): string
     {
-        return Cache::remember('cj_access_token', 3000, function () {
+        $dbName = config('database.connections.mysql.database') ?: 'default';
+
+        return Cache::remember("cj_access_token_{$dbName}", 3000, function () {
             $apiKey = \App\Models\SiteSetting::where('key', 'cj_api_key')->value('value')
                 ?: config('cj.api_key')
                 ?: env('CJ_API_KEY');
