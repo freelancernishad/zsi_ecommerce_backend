@@ -13,9 +13,15 @@ Route::prefix('auth/admin')->group(function () {
     Route::middleware(AuthenticateAdmin::class)->group(function () { // Applying admin middleware
         Route::post('logout', [AdminAuthController::class, 'logout']);
         Route::get('me', [AdminAuthController::class, 'me']);
+        Route::post('/profile/update', [AdminAuthController::class, 'updateProfile']);
         Route::post('/change-password', [AdminAuthController::class, 'changePassword']);
         Route::get('check-token', [AdminAuthController::class, 'checkToken']);
     });
+});
+
+Route::prefix('admin/profile')->middleware(AuthenticateAdmin::class)->group(function () {
+    Route::post('/update', [AdminAuthController::class, 'updateProfile']);
+    Route::post('/change-password', [AdminAuthController::class, 'changePassword']);
 });
 
 // Password reset routes

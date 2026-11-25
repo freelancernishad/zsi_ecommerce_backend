@@ -141,6 +141,30 @@ public function register(AdminRegisterRequest $request)
     }
 
     /**
+     * Update the authenticated admin's profile information.
+     */
+    public function updateProfile(Request $request)
+    {
+        $request->validate([
+            'name' => 'required|string|max:255',
+        ]);
+
+        $admin = Auth::guard('admin')->user();
+        if (!$admin instanceof \App\Models\Admin) {
+            $admin = \App\Models\Admin::find($admin->id);
+        }
+
+        $admin->name = trim((string) $request->name);
+        $admin->save();
+
+        return response()->json([
+            'success' => true,
+            'message' => 'Profile updated successfully.',
+            'data' => $admin,
+        ], 200);
+    }
+
+    /**
      * Log out the authenticated admin.
      *
      * @return \Illuminate\Http\JsonResponse
