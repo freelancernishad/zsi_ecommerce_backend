@@ -274,21 +274,53 @@ class ProductController extends Controller
             $product = $query->where('slug', $idOrSlug)->firstOrFail();
         }
 
-        // Single-call supplier price & stock sync on product detail view (controlled per-supplier in Admin Settings)
+        return response()->json([
+            'status' => 'success',
+            'data' => $product
+        ]);
+    }
+
+    /**
+     * Trigger supplier sync / auto-repair ONLY when an actual customer opens the single Product Details page.
+     * Kept separate from GET show() so Next.js <Link> prefetching, SEO bots, and QuickView do not trigger syncs.
+     */
+    public function syncOnDetailView($idOrSlug)
+    {
+        $query = Product::with(['variants', 'images']);
+
+        if (is_numeric($idOrSlug)) {
+            $product = $query->findOrFail($idOrSlug);
+        } else {
+            $product = $query->where('slug', $idOrSlug)->firstOrFail();
+        }
+
         try {
             $syncResult = app(\App\Services\InventorySyncService::class)->syncProductOnDetailView($product);
             if (!empty($syncResult['synced'])) {
                 $product->refresh();
                 $product->load(['images', 'category', 'brand', 'variants', 'reviews.user']);
+
+                return response()->json([
+                    'status' => 'success',
+                    'synced' => true,
+                    'repaired' => !empty($syncResult['repaired']),
+                    'data' => $product,
+                ]);
             }
+
+            return response()->json([
+                'status' => 'success',
+                'synced' => false,
+                'reason' => $syncResult['reason'] ?? null,
+            ]);
         } catch (\Throwable $e) {
             \Illuminate\Support\Facades\Log::warning("On-view supplier sync skipped for product #{$product->id}: " . $e->getMessage());
+            return response()->json([
+                'status' => 'success',
+                'synced' => false,
+                'reason' => 'sync_error',
+            ]);
         }
-
-        return response()->json([
-            'status' => 'success',
-            'data' => $product
-        ]);
     }
 
     public function getFilters()

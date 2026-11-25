@@ -14,6 +14,7 @@ Route::prefix('ecommerce')->group(function () {
     Route::get('brands', [BrandController::class, 'index']);
     Route::get('products/filters', [ProductController::class, 'getFilters']);
     Route::get('products/{slug}', [ProductController::class, 'show']);
+    Route::post('products/{slug}/view-sync', [ProductController::class, 'syncOnDetailView']);
     Route::post('reviews', [\App\Http\Controllers\Common\ReviewController::class, 'store'])->middleware('auth:api');
     Route::get('my-reviews', [\App\Http\Controllers\Common\ReviewController::class, 'index'])->middleware('auth:api');
     Route::get('pending-reviews', [\App\Http\Controllers\Common\ReviewController::class, 'pendingReviews'])->middleware('auth:api');
