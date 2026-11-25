@@ -748,8 +748,10 @@ class AmazonSmartSyncService
             return ['synced' => false, 'reason' => 'daily_cap_reached'];
         }
 
+        $tenant = $this->tenantCachePrefix();
+
         // Prevent duplicate simultaneous API calls if multiple customers open the same stale product at once
-        $lock = Cache::lock("amazon_jit_sync_product_{$product->id}", 30);
+        $lock = Cache::lock("{$tenant}_amazon_jit_sync_product_{$product->id}", 30);
         if (!$lock->get()) {
             return [
                 'synced' => false,
@@ -779,6 +781,11 @@ class AmazonSmartSyncService
         }
     }
 
+    protected function tenantCachePrefix(): string
+    {
+        return (string) (config('database.connections.mysql.database') ?: 'default');
+    }
+
     /**
      * Single-call sync on storefront product detail view controlled by the Amazon settings toggle.
      */
@@ -802,11 +809,13 @@ class AmazonSmartSyncService
             return ['synced' => false, 'reason' => 'daily_cap_reached'];
         }
 
-        $isRecentlySynced = function (Product $prod, bool $broken = false): bool {
+        $tenant = $this->tenantCachePrefix();
+
+        $isRecentlySynced = function (Product $prod, bool $broken = false) use ($tenant): bool {
             if ($broken) {
-                return Cache::has("detail_view_repair_cooldown_{$prod->id}");
+                return Cache::has("{$tenant}_detail_view_repair_cooldown_{$prod->id}");
             }
-            if (Cache::has("detail_view_sync_recent_{$prod->id}")) {
+            if (Cache::has("{$tenant}_detail_view_sync_recent_{$prod->id}")) {
                 return true;
             }
             if (!empty($prod->amazon_synced_at) && Carbon::parse($prod->amazon_synced_at)->gt(now()->subHours(self::DETAIL_VIEW_COOLDOWN_HOURS))) {
@@ -822,7 +831,7 @@ class AmazonSmartSyncService
             return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
         }
 
-        $lock = Cache::lock("amazon_jit_sync_product_{$product->id}", 30);
+        $lock = Cache::lock("{$tenant}_amazon_jit_sync_product_{$product->id}", 30);
         if (!$lock->get()) {
             return [
                 'synced' => false,
@@ -839,7 +848,7 @@ class AmazonSmartSyncService
             }
 
             if ($isBroken) {
-                Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
+                Cache::put("{$tenant}_detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
 
                 $oldStock = (int) ($product->stock_quantity ?? 0);
                 $oldPrice = (float) ($product->price ?? 0);
@@ -878,7 +887,7 @@ class AmazonSmartSyncService
                         ],
                     ]);
 
-                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                    Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
 
                     return [
                         'synced' => true,
@@ -906,9 +915,9 @@ class AmazonSmartSyncService
             $product->refresh();
 
             if (($result['status'] ?? '') === 'success') {
-                Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
             } else {
-                Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+                Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, 60);
             }
 
             return [

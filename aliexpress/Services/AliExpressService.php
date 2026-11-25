@@ -220,7 +220,13 @@ class AliExpressService
         $params['sign'] = $this->calculateSignature($params, $this->appSecret, 'sha256', '/auth/token/create');
 
         $endpoint = $this->restUrl . '/auth/token/create';
-        $response = Http::asForm()->timeout(15)->post($endpoint, $params);
+        $response = Http::withOptions([
+                'verify' => false,
+                'curl' => [CURLOPT_IPRESOLVE => CURL_IPRESOLVE_V4],
+            ])
+            ->asForm()
+            ->timeout(15)
+            ->post($endpoint, $params);
 
         if ($response->failed()) {
             throw new Exception("Failed to exchange token: HTTP " . $response->status());

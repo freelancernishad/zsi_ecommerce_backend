@@ -231,6 +231,7 @@ class CjDropshippingController extends Controller
      */
     public function getBulkImportBatches()
     {
+        $currentDb = (string) config('database.connections.mysql.database');
         $files = Storage::disk('local')->files('cj_imports');
         $batches = [];
 
@@ -239,6 +240,9 @@ class CjDropshippingController extends Controller
                 $content = Storage::disk('local')->get($file);
                 $data = json_decode($content, true);
                 if ($data && isset($data['batch_id'])) {
+                    if (!empty($data['database']) && $data['database'] !== $currentDb) {
+                        continue;
+                    }
                     $batches[] = $data;
                 }
             }

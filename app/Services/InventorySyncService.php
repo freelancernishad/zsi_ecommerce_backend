@@ -246,16 +246,22 @@ class InventorySyncService
         return false;
     }
 
+    protected function tenantCachePrefix(): string
+    {
+        return (string) (config('database.connections.mysql.database') ?: 'default');
+    }
+
     /**
      * Check whether a product's detail-view sync is still within the cooldown window.
      * Structurally broken products bypass the 6-hour cooldown (guarded by a 10-minute anti-spam lock).
      */
     protected function isDetailViewSyncFresh(?string $syncedAt, int $productId, bool $isBroken = false): bool
     {
+        $tenant = $this->tenantCachePrefix();
         if ($isBroken) {
-            return Cache::has("detail_view_repair_cooldown_{$productId}");
+            return Cache::has("{$tenant}_detail_view_repair_cooldown_{$productId}");
         }
-        if (Cache::has("detail_view_sync_recent_{$productId}")) {
+        if (Cache::has("{$tenant}_detail_view_sync_recent_{$productId}")) {
             return true;
         }
         if (!empty($syncedAt) && Carbon::parse($syncedAt)->gt(now()->subHours(self::DETAIL_VIEW_COOLDOWN_HOURS))) {
@@ -275,6 +281,8 @@ class InventorySyncService
             return app(AmazonSmartSyncService::class)->syncSingleOnDetailView($product);
         }
 
+        $tenant = $this->tenantCachePrefix();
+
         if ($product->is_cj_product && !empty($product->cj_product_id)) {
             $enabled = in_array((string) SiteSetting::getValue('cj_sync_on_product_view', '0'), ['1', 'true'], true);
             if (!$enabled) {
@@ -286,7 +294,7 @@ class InventorySyncService
                 return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
             }
 
-            $lock = Cache::lock("cj_view_sync_product_{$product->id}", 30);
+            $lock = Cache::lock("{$tenant}_cj_view_sync_product_{$product->id}", 30);
             if (!$lock->get()) {
                 return ['synced' => false, 'reason' => 'sync_in_progress'];
             }
@@ -299,7 +307,7 @@ class InventorySyncService
                 }
 
                 if ($isBroken) {
-                    Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
+                    Cache::put("{$tenant}_detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
                 }
 
                 $config = $this->getConfig();
@@ -311,9 +319,9 @@ class InventorySyncService
                 $res = $this->syncSingleCjProduct($product, $viewConfig);
 
                 if (($res['status'] ?? '') === 'success') {
-                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                    Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
                 } else {
-                    Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+                    Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, 60);
                 }
 
                 return [
@@ -338,7 +346,7 @@ class InventorySyncService
                 return ['synced' => false, 'fresh' => true, 'reason' => 'recently_synced'];
             }
 
-            $lock = Cache::lock("aliexpress_view_sync_product_{$product->id}", 30);
+            $lock = Cache::lock("{$tenant}_aliexpress_view_sync_product_{$product->id}", 30);
             if (!$lock->get()) {
                 return ['synced' => false, 'reason' => 'sync_in_progress'];
             }
@@ -351,7 +359,7 @@ class InventorySyncService
                 }
 
                 if ($isBroken) {
-                    Cache::put("detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
+                    Cache::put("{$tenant}_detail_view_repair_cooldown_{$product->id}", true, now()->addMinutes(10));
                 }
 
                 $config = $this->getConfig();
@@ -362,9 +370,9 @@ class InventorySyncService
                 $res = $this->syncSingleAliExpressProduct($product, $viewConfig);
 
                 if (($res['status'] ?? '') === 'success') {
-                    Cache::put("detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
+                    Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, now()->addHours(self::DETAIL_VIEW_COOLDOWN_HOURS));
                 } else {
-                    Cache::put("detail_view_sync_recent_{$product->id}", true, 60);
+                    Cache::put("{$tenant}_detail_view_sync_recent_{$product->id}", true, 60);
                 }
 
                 return [

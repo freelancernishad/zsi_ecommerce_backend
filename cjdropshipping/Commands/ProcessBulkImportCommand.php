@@ -76,38 +76,66 @@ class ProcessBulkImportCommand extends Command
         $batchData['failed_count'] = $batchData['failed_count'] ?? 0;
         Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
 
-        Log::info("Starting background CLI CJ bulk import batch {$batchId} with " . count($pids) . " items.");
+        $completedPids = [];
+        foreach ($batchData['items'] as $existingItem) {
+            if (($existingItem['status'] ?? '') === 'completed' && !empty($existingItem['pid'])) {
+                $completedPids[(string) $existingItem['pid']] = true;
+            }
+        }
+        $remainingPids = array_values(array_filter($pids, fn($p) => !isset($completedPids[(string) $p])));
+        $totalPids = count($pids);
+
+        Log::info("Starting background CLI CJ bulk import batch {$batchId} with " . count($remainingPids) . " remaining of {$totalPids} items.");
 
         try {
-            $result = $cjImportService->bulkImportCjProducts(
-                $pids,
-                $profitMargin,
-                $categoryId,
-                function ($current, $total, $itemResult) use ($filePath, &$batchData) {
-                    $pid = $itemResult['pid'];
+            if (!empty($remainingPids)) {
+                $cjImportService->bulkImportCjProducts(
+                    $remainingPids,
+                    $profitMargin,
+                    $categoryId,
+                    function ($current, $total, $itemResult) use ($filePath, $totalPids, &$batchData) {
+                        $pid = $itemResult['pid'];
 
-                    if (isset($batchData['items']) && is_array($batchData['items'])) {
-                        foreach ($batchData['items'] as $i => $item) {
-                            if (($item['pid'] ?? '') === $pid) {
-                                $batchData['items'][$i] = $itemResult;
-                                break;
+                        if (isset($batchData['items']) && is_array($batchData['items'])) {
+                            foreach ($batchData['items'] as $i => $item) {
+                                if (($item['pid'] ?? '') === $pid) {
+                                    $batchData['items'][$i] = $itemResult;
+                                    break;
+                                }
                             }
                         }
+
+                        $successfulCount = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'completed'));
+                        $failedCount = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'failed'));
+                        $processedCount = $successfulCount + $failedCount;
+
+                        $batchData['processed_count'] = $processedCount;
+                        $batchData['successful_count'] = $successfulCount;
+                        $batchData['failed_count'] = $failedCount;
+
+                        if ($processedCount >= $totalPids) {
+                            $batchData['status'] = 'completed';
+                            $batchData['completed_at'] = $batchData['completed_at'] ?? now()->toDateTimeString();
+                        }
+
+                        Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
                     }
+                );
+            }
 
-                    $batchData['processed_count'] = $current;
-                    $batchData['successful_count'] = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'completed'));
-                    $batchData['failed_count'] = count(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'failed'));
+            $importedProducts = array_values(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'completed'));
+            $errors = array_values(array_filter($batchData['items'], fn($i) => ($i['status'] ?? '') === 'failed'));
+            $result = [
+                'total' => $totalPids,
+                'successful' => count($importedProducts),
+                'failed' => count($errors),
+                'imported_products' => $importedProducts,
+                'errors' => $errors,
+            ];
 
-                    if ($current >= $total) {
-                        $batchData['status'] = 'completed';
-                        $batchData['completed_at'] = $batchData['completed_at'] ?? now()->toDateTimeString();
-                    }
-
-                    Storage::disk('local')->put($filePath, json_encode($batchData, JSON_PRETTY_PRINT));
-                }
-            );
-
+            $batchData['processed_count'] = count($importedProducts) + count($errors);
+            $batchData['successful_count'] = count($importedProducts);
+            $batchData['failed_count'] = count($errors);
             $batchData['status'] = 'completed';
             $batchData['completed_at'] = now()->toDateTimeString();
             $batchData['result'] = $result;

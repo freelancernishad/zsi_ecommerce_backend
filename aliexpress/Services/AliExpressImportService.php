@@ -93,7 +93,7 @@ class AliExpressImportService
      */
     public function importAliExpressProduct(
         string $productIdOrUrl,
-        float $profitMarginPercent = 0.0,
+        ?float $profitMarginPercent = null,
         ?int $categoryId = null,
         int $defaultStock = 50,
         string $status = 'published'
@@ -105,10 +105,22 @@ class AliExpressImportService
         }
 
         return DB::transaction(function () use ($aliData, $profitMarginPercent, $categoryId, $defaultStock, $status) {
-            $costPrice = (float)($aliData['costPrice'] ?? 0);
-            $retailPrice = round($costPrice * (1 + ($profitMarginPercent / 100)), 2);
-
             $productId = (string)$aliData['productId'];
+            $existingProduct = Product::where('aliexpress_product_id', $productId)->first();
+
+            if ($profitMarginPercent !== null) {
+                $resolvedMargin = (float) $profitMarginPercent;
+            } elseif ($existingProduct && $existingProduct->sync_markup_type === 'percentage' && $existingProduct->sync_markup_value !== null) {
+                $resolvedMargin = (float) $existingProduct->sync_markup_value;
+            } elseif ($existingProduct && (float) ($existingProduct->cost_per_item ?? 0) > 0 && (float) $existingProduct->price > (float) $existingProduct->cost_per_item) {
+                $resolvedMargin = round((((float) $existingProduct->price - (float) $existingProduct->cost_per_item) / (float) $existingProduct->cost_per_item) * 100, 2);
+            } else {
+                $resolvedMargin = 0.0;
+            }
+
+            $costPrice = (float)($aliData['costPrice'] ?? 0);
+            $retailPrice = round($costPrice * (1 + ($resolvedMargin / 100)), 2);
+
             $productName = $aliData['title'] ?? ('AliExpress Product ' . $productId);
 
             // Safe unique slug
@@ -118,7 +130,6 @@ class AliExpressImportService
             }
             $slug = $baseSlug;
 
-            $existingProduct = Product::where('aliexpress_product_id', $productId)->first();
             if ($existingProduct) {
                 $slug = $existingProduct->slug;
             } else {
@@ -128,12 +139,8 @@ class AliExpressImportService
                 }
             }
 
-            // Category assignment
-            $finalCategoryId = $categoryId;
-            if (!$finalCategoryId) {
-                $defaultCategory = Category::first();
-                $finalCategoryId = $defaultCategory ? $defaultCategory->id : 1;
-            }
+            // Preserve existing category on re-import, or use requested/fallback category
+            $finalCategoryId = $categoryId ?: ($existingProduct?->category_id ?: (Category::first()?->id ?? 1));
 
             // Build variant_options JSON from variant attributes
             $optionsCollector = [];
@@ -230,7 +237,7 @@ class AliExpressImportService
                 foreach ($rawVariants as $index => $v) {
                     $rawVCost = $v['cost_price'] ?? null;
                     $vCostPrice = (is_numeric($rawVCost) && (float)$rawVCost > 0) ? (float)$rawVCost : $costPrice;
-                    $vRetailPrice = round($vCostPrice * (1 + ($profitMarginPercent / 100)), 2);
+                    $vRetailPrice = round($vCostPrice * (1 + ($resolvedMargin / 100)), 2);
                     $attrs = is_array($v['attributes'] ?? null) ? $v['attributes'] : [];
 
                     $vStock = isset($v['stock']) ? max(0, (int)$v['stock']) : $defaultStock;
@@ -256,7 +263,8 @@ class AliExpressImportService
                         'combination_label' => 'Default',
                         'sku' => $product->sku,
                         'price' => $retailPrice,
-                        'stock' => $product->stock,
+                        'stock' => $product->stock_quantity,
+                        'available_quantity' => $product->stock_quantity,
                     ]);
                 }
             }

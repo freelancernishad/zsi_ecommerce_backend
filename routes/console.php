@@ -107,14 +107,14 @@ Schedule::call(function () {
 })->everyMinute()->name('process-pending-bulk-imports')->withoutOverlapping();
 
 // Automatic Supplier Inventory, Stock & Variant Sync (Checks hourly, runs according to configured frequency)
-Schedule::command('inventory:sync')
+Schedule::command('inventory:sync --all-tenants')
     ->hourly()
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/inventory_sync.log'))
     ->name('auto-sync-supplier-inventory');
 
 // Dedicated Cost-Optimized Amazon Smart Sync (Checks hourly, respects its own frequency, tiers & daily cap)
-Schedule::command('amazon:smart-sync')
+Schedule::command('amazon:smart-sync --all-tenants')
     ->hourly()
     ->withoutOverlapping()
     ->appendOutputTo(storage_path('logs/amazon_smart_sync.log'))

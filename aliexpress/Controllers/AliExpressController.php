@@ -344,6 +344,7 @@ class AliExpressController extends Controller
      */
     public function getBulkImportBatches()
     {
+        $currentDb = (string) config('database.connections.mysql.database');
         $files = Storage::disk('local')->files('aliexpress_imports');
         $batches = [];
 
@@ -351,6 +352,9 @@ class AliExpressController extends Controller
             if (str_ends_with($file, '.json')) {
                 $content = json_decode(Storage::disk('local')->get($file), true);
                 if ($content) {
+                    if (!empty($content['database']) && $content['database'] !== $currentDb) {
+                        continue;
+                    }
                     $batches[] = $content;
                 }
             }

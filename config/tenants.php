@@ -31,9 +31,9 @@ return [
 
 
         // cheaperbro.com
-        'cheaperbro.com'    => env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-        'www.cheaperbro.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
-        'admin.cheaperbro.com'=> env('DB_DATABASE_EBSDEALS', 'mustgyyu_cheaperbro'),
+        'cheaperbro.com'    => env('DB_DATABASE_CHEAPERBRO', 'mustgyyu_cheaperbro'),
+        'www.cheaperbro.com'=> env('DB_DATABASE_CHEAPERBRO', 'mustgyyu_cheaperbro'),
+        'admin.cheaperbro.com'=> env('DB_DATABASE_CHEAPERBRO', 'mustgyyu_cheaperbro'),
 
 
 
