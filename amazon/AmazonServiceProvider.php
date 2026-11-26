@@ -25,6 +25,10 @@ class AmazonServiceProvider extends ServiceProvider
         $this->app->singleton(Services\AmazonImportService::class, function ($app) {
             return new Services\AmazonImportService($app->make(Services\AmazonScraperService::class));
         });
+
+        $this->app->singleton(Services\AmazonDatasetImportService::class, function () {
+            return new Services\AmazonDatasetImportService();
+        });
     }
 
     /**
@@ -34,6 +38,7 @@ class AmazonServiceProvider extends ServiceProvider
     {
         // Load Module Routes
         $this->loadRoutesFrom(__DIR__ . '/Routes/api.php');
+        $this->loadRoutesFrom(__DIR__ . '/Routes/dataset.php');
 
         // Load Module Database Migrations
         $this->loadMigrationsFrom(__DIR__ . '/Migrations');
