@@ -1037,6 +1037,11 @@ class AmazonScraperService
         if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $m)) {
             $json = json_decode(html_entity_decode($m[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
             if (!empty($json['sortedDimValuesForAllDims']) && is_array($json['sortedDimValuesForAllDims'])) {
+                $isMultiDimTwister = count(array_filter(
+                    $json['sortedDimValuesForAllDims'],
+                    fn($arr) => is_array($arr) && count($arr) > 0
+                )) > 1;
+
                 foreach ($json['sortedDimValuesForAllDims'] as $dimKey => $items) {
                     $cleanDim = trim(preg_replace('/(_name|_string)$/i', '', $dimKey));
                     $dimLabel = ucwords(str_replace('_', ' ', $cleanDim ?: 'Option'));
@@ -1092,6 +1097,9 @@ class AmazonScraperService
                         }
 
                         $isAvailable = ($item['dimensionValueState'] ?? '') !== 'UNAVAILABLE';
+                        if ($isMultiDimTwister && $itemAsin !== $asin) {
+                            $isAvailable = true;
+                        }
                         if ($hasOlpOffer) {
                             $isAvailable = true;
                         } elseif ($itemAsin === $asin && !$pageAvailable) {

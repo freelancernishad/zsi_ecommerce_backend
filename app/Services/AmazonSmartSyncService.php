@@ -2028,11 +2028,18 @@ class AmazonSmartSyncService
         // Extract per-variant availability & price from the SAME single HTML page (0 extra API calls!)
         $variants = [];
         $selectedAsin = null;
+        $isMultiDimension = false;
 
         // Strategy A: twister-sort-filter-data JSON (including "options from $XX.XX" olpMessage!)
         if (preg_match('/<script[^>]*data-a-state=["\'][^>]*twister-sort-filter-data[^>]*["\'][^>]*>(.*?)<\/script>/s', $html, $tm)) {
             $tJson = json_decode(html_entity_decode($tm[1], ENT_QUOTES | ENT_HTML5, 'UTF-8'), true);
             if (!empty($tJson['sortedDimValuesForAllDims']) && is_array($tJson['sortedDimValuesForAllDims'])) {
+                $dimCount = count(array_filter(
+                    $tJson['sortedDimValuesForAllDims'],
+                    fn($dimItems) => is_array($dimItems) && count($dimItems) > 0
+                ));
+                $isMultiDimension = $dimCount > 1;
+
                 foreach ($tJson['sortedDimValuesForAllDims'] as $items) {
                     if (!is_array($items)) {
                         continue;
@@ -2067,6 +2074,26 @@ class AmazonSmartSyncService
                                 }
                             }
                         }
+
+                        // On multi-dimension pages (e.g. Size x Unit Count), Amazon marks cross-dimension
+                        // options as UNAVAILABLE relative to the active selection, NOT globally out of stock.
+                        if ($isMultiDimension && !$isSelected && !$vAvail) {
+                            if ($vPrice !== null && !isset($variants[$vAsin])) {
+                                $variants[$vAsin] = [
+                                    'preserve_stock' => true,
+                                    'available' => true,
+                                    'stock' => $defaultStock,
+                                    'price' => $vPrice,
+                                ];
+                            }
+                            continue;
+                        }
+
+                        // Never let an UNAVAILABLE entry overwrite an already-available entry
+                        if (isset($variants[$vAsin]) && !empty($variants[$vAsin]['available']) && empty($variants[$vAsin]['preserve_stock']) && !$vAvail) {
+                            continue;
+                        }
+
                         $variants[$vAsin] = [
                             'available' => $vAvail,
                             'stock' => $vAvail ? ($isSelected && $stock > 0 ? $stock : $defaultStock) : 0,
@@ -2108,6 +2135,13 @@ class AmazonSmartSyncService
         }
 
         // Strategy B: DOM swatch <li> nodes with data-asin / data-defaultasin
+        if (!$isMultiDimension) {
+            $dimContainers = $xpath->query('//div[contains(@id, "inline-twister-row")] | //div[starts-with(@id, "variation_")]');
+            if ($dimContainers->length > 1) {
+                $isMultiDimension = true;
+            }
+        }
+
         $swatchNodes = $xpath->query(
             '//div[contains(@id, "inline-twister-row")]//li[@data-asin or @data-csa-c-item-id]'
             . ' | //div[contains(@id, "variation_")]//li[@data-asin or @data-defaultasin]'
@@ -2124,6 +2158,9 @@ class AmazonSmartSyncService
             }
             $liClass = strtolower((string) $node->getAttribute('class'));
             $vAvail = !str_contains($liClass, 'unavailable');
+            if ($isMultiDimension && !$vAvail) {
+                continue;
+            }
             $vPrice = null;
             $pNodes = $xpath->query('.//span[contains(@class, "a-price")]/span[contains(@class, "a-offscreen")] | .//span[contains(@class, "a-color-price")]', $node);
             if ($pNodes->length > 0 && preg_match('/[\d,]+\.\d{2}/', $pNodes->item(0)->textContent, $pm)) {
@@ -2152,6 +2189,8 @@ class AmazonSmartSyncService
             'available' => $available,
             'stock' => $stock,
             'explicitly_out_of_stock' => $explicitlyOutOfStock,
+            'is_multi_dimension' => $isMultiDimension,
+            'selected_asin' => $selectedAsin,
             'variants' => $variants,
         ];
     }
@@ -2271,6 +2310,15 @@ class AmazonSmartSyncService
             $variantTotalStock = 0;
             $hasVariants = $product->variants->isNotEmpty();
 
+            $parentAsin = strtoupper(trim((string) $product->amazon_asin));
+            $selectedAsin = strtoupper(trim((string) ($data['selected_asin'] ?? '')));
+            $variantOptions = is_array($product->variant_options)
+                ? $product->variant_options
+                : json_decode((string) $product->variant_options, true);
+            $isMultiDimProduct = !empty($data['is_multi_dimension'])
+                || (is_array($variantOptions) && count($variantOptions) > 1);
+            $isSinglePageTwisterProvider = in_array($provider, ['brightdata_lightweight', 'direct_http'], true);
+
             if ($hasVariants) {
                 foreach ($product->variants as $variant) {
                     $vAsin = strtoupper(trim((string) ($variant->amazon_asin ?: $product->amazon_asin)));
@@ -2281,7 +2329,24 @@ class AmazonSmartSyncService
 
                     if ($config['sync_variant_stock'] && isset($variantDataMap[$vAsin])) {
                         $vInfo = $variantDataMap[$vAsin];
-                        $newVarStock = max(0, (int) ($vInfo['stock'] ?? (!empty($vInfo['available']) ? $config['default_stock'] : 0)));
+                        if (!empty($vInfo['preserve_stock'])) {
+                            $newVarStock = $oldVarStock;
+                        } else {
+                            $candidateStock = max(0, (int) ($vInfo['stock'] ?? (!empty($vInfo['available']) ? $config['default_stock'] : 0)));
+                            // Defense-in-depth: never let single-page twister scraping wipe sibling cross-dimension variants to 0
+                            if (
+                                $isMultiDimProduct
+                                && $isSinglePageTwisterProvider
+                                && $vAsin !== $parentAsin
+                                && $vAsin !== $selectedAsin
+                                && $candidateStock === 0
+                                && $oldVarStock > 0
+                            ) {
+                                $newVarStock = $oldVarStock;
+                            } else {
+                                $newVarStock = $candidateStock;
+                            }
+                        }
                         $vCost = (float) ($vInfo['price'] ?? 0);
                         if ($vCost > 0 && ($config['markup_mode'] ?? 'product_field_or_preserve') !== 'cost_only_keep_price') {
                             $vCalc = $this->calculateTargetRetailPrice($product, $vCost, $oldVarPrice, $config);
@@ -2293,7 +2358,7 @@ class AmazonSmartSyncService
                                 $priceChanged = true;
                             }
                         }
-                    } elseif ($vAsin === strtoupper((string) $product->amazon_asin) || $product->variants->count() === 1) {
+                    } elseif ($vAsin === $parentAsin || $product->variants->count() === 1) {
                         $newVarStock = $newStock;
                         if ($priceChanged) {
                             $newVarPrice = $newPrice;

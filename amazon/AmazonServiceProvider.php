@@ -46,6 +46,7 @@ class AmazonServiceProvider extends ServiceProvider
         // Register Console Commands
         $this->commands([
             Commands\ProcessAmazonBulkImportCommand::class,
+            Commands\RestoreMultiDimAmazonStockCommand::class,
         ]);
     }
 }
