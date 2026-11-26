@@ -86,7 +86,7 @@ class AmazonSyncSettingsController extends Controller
 
             // Phase 4 Guardrails & Pricing
             'daily_request_cap_enabled' => 'nullable|in:0,1,true,false',
-            'daily_request_cap' => 'nullable|integer|min:1|max:100000',
+            'daily_request_cap' => 'nullable|integer|min:0|max:1000000',
             'monthly_budget_usd' => 'nullable|numeric|min:0|max:10000',
             'estimated_cost_per_1k_requests' => 'nullable|numeric|min:0|max:100',
 

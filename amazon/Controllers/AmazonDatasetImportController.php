@@ -32,7 +32,7 @@ class AmazonDatasetImportController extends Controller
      */
     public function preview(Request $request)
     {
-        @set_time_limit(240);
+        @set_time_limit(600);
 
         $request->validate([
             'asins_or_urls' => 'required',
@@ -75,7 +75,7 @@ class AmazonDatasetImportController extends Controller
      */
     public function import(Request $request)
     {
-        @set_time_limit(240);
+        @set_time_limit(600);
 
         $request->validate([
             'asins_or_urls' => 'nullable',

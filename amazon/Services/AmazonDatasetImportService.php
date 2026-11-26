@@ -145,6 +145,7 @@ class AmazonDatasetImportService
         bool $enrichVariants = true,
         ?string $datasetId = null
     ): array {
+        @set_time_limit(600);
         $creds = $this->resolveCredentials($datasetId);
         if ($creds['api_key'] === '') {
             throw new Exception('Bright Data API Key is not configured in Amazon Scraper Settings.', 422);
@@ -324,14 +325,14 @@ class AmazonDatasetImportService
     }
 
     /**
-     * Poll Bright Data async snapshot until ready (up to ~120s) and fetch JSON records.
+     * Poll Bright Data async snapshot until ready (up to ~180s) and fetch JSON records.
      */
     protected function pollSnapshot(string $snapshotId, string $apiKey): array
     {
         $progressUrl = "https://api.brightdata.com/datasets/v3/progress/" . urlencode($snapshotId);
         $snapshotUrl = "https://api.brightdata.com/datasets/v3/snapshot/" . urlencode($snapshotId) . "?format=json";
 
-        $maxAttempts = 40; // 40 * 3s = 120s
+        $maxAttempts = 60; // 60 * 3s = 180s
         for ($attempt = 1; $attempt <= $maxAttempts; $attempt++) {
             sleep(3);
 
@@ -681,6 +682,18 @@ class AmazonDatasetImportService
                 if (!empty($v['style'])) {
                     $vAttrs['Style'] = trim((string) $v['style']);
                 }
+                if (!empty($v['unit_count'])) {
+                    $vAttrs['Unit Count'] = trim((string) $v['unit_count']);
+                }
+                if (!empty($v['flavor'])) {
+                    $vAttrs['Flavor'] = trim((string) $v['flavor']);
+                }
+                if (!empty($v['scent'])) {
+                    $vAttrs['Scent'] = trim((string) $v['scent']);
+                }
+                if (!empty($v['pattern'])) {
+                    $vAttrs['Pattern'] = trim((string) $v['pattern']);
+                }
                 if (empty($vAttrs) && $vTitle !== '') {
                     $vAttrs['Option'] = $vTitle;
                 }
@@ -724,7 +737,7 @@ class AmazonDatasetImportService
                     'local_grocery_price' => $isCurrent ? $localGroceryPrice : null,
                     'delivery_reason' => $isCurrent
                         ? $deliveryReason
-                        : 'Enable "Enrich Child Variants" to verify ZIP deliverability.',
+                        : 'Pending ZIP deliverability verification.',
                 ];
             }
         }
@@ -796,7 +809,7 @@ class AmazonDatasetImportService
     }
 
     /**
-     * Enrich up to 15 unique child variant ASINs in one Dataset API batch call for the same ZIP.
+     * Enrich all unique child variant ASINs in chunks of 25 via Bright Data Dataset API for the same ZIP.
      */
     protected function enrichChildVariants(
         array $items,
@@ -817,9 +830,6 @@ class AmazonDatasetImportService
                 $vAsin = strtoupper(trim((string) ($v['asin'] ?? '')));
                 if (strlen($vAsin) === 10 && !isset($parentAsinSet[$vAsin]) && !isset($childAsins[$vAsin])) {
                     $childAsins[$vAsin] = true;
-                    if (count($childAsins) >= 15) {
-                        break 2;
-                    }
                 }
             }
         }
@@ -832,13 +842,15 @@ class AmazonDatasetImportService
         }
 
         if (!empty($childAsins)) {
-            try {
-                $childRecords = $this->fetchRecordsFromDataset(array_keys($childAsins), $zipcode, $datasetId, $apiKey);
-                foreach ($childRecords as $cAsin => $cRec) {
-                    $normalizedChildren[$cAsin] = $this->normalizeRecord($cRec, $cAsin, $zipcode, $defaultStock);
+            foreach (array_chunk(array_keys($childAsins), 25) as $chunk) {
+                try {
+                    $childRecords = $this->fetchRecordsFromDataset($chunk, $zipcode, $datasetId, $apiKey);
+                    foreach ($childRecords as $cAsin => $cRec) {
+                        $normalizedChildren[$cAsin] = $this->normalizeRecord($cRec, $cAsin, $zipcode, $defaultStock);
+                    }
+                } catch (Exception $e) {
+                    Log::warning("AmazonDatasetImportService child variant chunk enrichment failed: " . $e->getMessage());
                 }
-            } catch (Exception $e) {
-                Log::warning("AmazonDatasetImportService child variant enrichment failed: " . $e->getMessage());
             }
         }
 
@@ -879,6 +891,7 @@ class AmazonDatasetImportService
         array $options = [],
         ?array $prefetchedItems = null
     ): array {
+        @set_time_limit(600);
         $creds = $this->resolveCredentials($options['dataset_id'] ?? null);
         $zip = $this->sanitizeZipcode($options['zipcode'] ?? self::DEFAULT_ZIPCODE);
         $blockUndeliverable = true;

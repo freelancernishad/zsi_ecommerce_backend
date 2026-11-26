@@ -89,8 +89,8 @@ class AmazonSmartSyncService
             'brightdata_dataset_id' => (string) $val('brightdata_dataset_id', 'gd_l7q7dkf244hwjntr0'),
 
             // Phase 4: Cost Guardrails & Pricing Rules
-            'daily_request_cap_enabled' => $bool('daily_request_cap_enabled', true),
-            'daily_request_cap' => max(1, (int) $val('daily_request_cap', 200)),
+            'daily_request_cap_enabled' => $bool('daily_request_cap_enabled', false),
+            'daily_request_cap' => max(0, (int) $val('daily_request_cap', 0)),
             'monthly_budget_usd' => max(0.0, (float) $val('monthly_budget_usd', 15.0)),
             'estimated_cost_per_1k_requests' => max(0.0, (float) $val('estimated_cost_per_1k_requests', 1.50)),
 
@@ -154,7 +154,7 @@ class AmazonSmartSyncService
             'daily_requests' => $dailyCount,
             'daily_cap' => $config['daily_request_cap'],
             'daily_cap_enabled' => $config['daily_request_cap_enabled'],
-            'daily_remaining' => $config['daily_request_cap_enabled']
+            'daily_remaining' => ($config['daily_request_cap_enabled'] && $config['daily_request_cap'] > 0)
                 ? max(0, $config['daily_request_cap'] - $dailyCount)
                 : null,
             'monthly_requests' => $monthlyCount,
@@ -227,7 +227,7 @@ class AmazonSmartSyncService
     public function isDailyCapReached(?array $config = null): bool
     {
         $config = $config ?? $this->getConfig();
-        if (!$config['daily_request_cap_enabled']) {
+        if (!$config['daily_request_cap_enabled'] || $config['daily_request_cap'] <= 0) {
             return false;
         }
         $usage = $this->getUsageStats($config);
@@ -1061,6 +1061,7 @@ class AmazonSmartSyncService
             $data = null;
 
             if (in_array($provider, ['paapi', 'keepa', 'brightdata_dataset'], true)) {
+                @set_time_limit(600);
                 $maxBatch = match ($provider) {
                     'paapi' => 10,
                     'keepa' => 100,
@@ -1075,16 +1076,32 @@ class AmazonSmartSyncService
                         ->unique()
                         ->values()
                         ->toArray();
-                    $asinsToFetch = array_slice(array_values(array_unique(array_merge($asinsToFetch, $variantAsins))), 0, $maxBatch);
+                    $asinsToFetch = array_values(array_unique(array_merge($asinsToFetch, $variantAsins)));
                 }
 
-                $batch = match ($provider) {
-                    'paapi' => $this->fetchBatchViaPaApi($asinsToFetch, $config),
-                    'keepa' => $this->fetchBatchViaKeepa($asinsToFetch, $config),
-                    'brightdata_dataset' => $this->fetchBatchViaBrightDataDataset($asinsToFetch, $config),
-                };
-                $apiCalls = 1;
+                $batch = [];
+                $lastChunkError = null;
+                foreach (array_chunk($asinsToFetch, $maxBatch) as $chunk) {
+                    $apiCalls++;
+                    try {
+                        $chunkRes = match ($provider) {
+                            'paapi' => $this->fetchBatchViaPaApi($chunk, $config),
+                            'keepa' => $this->fetchBatchViaKeepa($chunk, $config),
+                            'brightdata_dataset' => $this->fetchBatchViaBrightDataDataset($chunk, $config),
+                        };
+                        if (is_array($chunkRes)) {
+                            $batch = array_merge($batch, $chunkRes);
+                        }
+                    } catch (Exception $chunkEx) {
+                        $lastChunkError = $chunkEx;
+                        Log::warning("Single-product batch sync chunk failed ({$provider}, ASIN {$asin}): " . $chunkEx->getMessage());
+                    }
+                }
+
                 $data = $batch[$asin] ?? null;
+                if (!$data && $lastChunkError) {
+                    throw $lastChunkError;
+                }
 
                 if ($data && $config['sync_variant_stock'] && $product->variants->isNotEmpty()) {
                     $variantMap = [];
@@ -1871,14 +1888,52 @@ class AmazonSmartSyncService
         $response = Http::withHeaders([
             'Authorization' => 'Bearer ' . $apiKey,
             'Content-Type' => 'application/json',
-        ])->timeout(60)->post("https://api.brightdata.com/datasets/v3/scrape?dataset_id={$datasetId}&format=json", $payload);
+        ])->timeout(90)->post("https://api.brightdata.com/datasets/v3/scrape?dataset_id={$datasetId}&format=json", $payload);
 
-        if (!$response->successful()) {
+        $records = [];
+        if ($response->status() === 202) {
+            $bodyJson = $response->json();
+            $snapshotId = trim((string) ($bodyJson['snapshot_id'] ?? ''));
+            if ($snapshotId === '') {
+                throw new Exception('BrightData Dataset API returned HTTP 202 without snapshot_id.');
+            }
+
+            $progressUrl = 'https://api.brightdata.com/datasets/v3/progress/' . urlencode($snapshotId);
+            $snapshotUrl = 'https://api.brightdata.com/datasets/v3/snapshot/' . urlencode($snapshotId) . '?format=json';
+
+            for ($attempt = 1; $attempt <= 60; $attempt++) {
+                sleep(3);
+                $progRes = Http::withHeaders([
+                    'Authorization' => 'Bearer ' . $apiKey,
+                ])->timeout(20)->get($progressUrl);
+
+                if (!$progRes->successful()) {
+                    continue;
+                }
+
+                $state = strtolower((string) (($progRes->json())['status'] ?? ''));
+                if ($state === 'ready') {
+                    $snapRes = Http::withHeaders([
+                        'Authorization' => 'Bearer ' . $apiKey,
+                    ])->timeout(60)->get($snapshotUrl);
+
+                    if (!$snapRes->successful()) {
+                        throw new Exception("BrightData snapshot download HTTP {$snapRes->status()} for {$snapshotId}");
+                    }
+                    $records = $this->decodeBrightDataDatasetBody($snapRes->body());
+                    break;
+                }
+                if (in_array($state, ['failed', 'cancelled', 'error'], true)) {
+                    throw new Exception("BrightData snapshot {$snapshotId} failed with status: {$state}");
+                }
+            }
+        } elseif ($response->successful()) {
+            $records = $this->decodeBrightDataDatasetBody($response->body());
+        } else {
             throw new Exception("BrightData Dataset API HTTP {$response->status()}: " . substr($response->body(), 0, 250));
         }
 
-        $records = $response->json();
-        if (!is_array($records)) {
+        if (!is_array($records) || empty($records)) {
             return [];
         }
 
@@ -1907,6 +1962,39 @@ class AmazonSmartSyncService
         }
 
         return $results;
+    }
+
+    /**
+     * Decode JSON array or NDJSON body returned by BrightData Dataset API.
+     */
+    protected function decodeBrightDataDatasetBody(string $body): array
+    {
+        $trimmed = trim($body);
+        if ($trimmed === '') {
+            return [];
+        }
+        $decoded = json_decode($trimmed, true);
+        if (json_last_error() === JSON_ERROR_NONE && is_array($decoded)) {
+            if (array_is_list($decoded)) {
+                return $decoded;
+            }
+            if (isset($decoded['data']) && is_array($decoded['data'])) {
+                return $decoded['data'];
+            }
+            return [$decoded];
+        }
+        $records = [];
+        foreach (preg_split('/\r\n|\r|\n/', $trimmed) as $line) {
+            $line = trim($line);
+            if ($line === '') {
+                continue;
+            }
+            $row = json_decode($line, true);
+            if (json_last_error() === JSON_ERROR_NONE && is_array($row)) {
+                $records[] = $row;
+            }
+        }
+        return $records;
     }
 
     // =========================================================================
