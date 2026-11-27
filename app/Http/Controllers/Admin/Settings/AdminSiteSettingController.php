@@ -71,9 +71,23 @@ class AdminSiteSettingController extends Controller
             );
         }
 
+        $applePayDomainSync = null;
+        if ($group === 'payments') {
+            $stripeEnabled = in_array((string) ($settingsData['stripe_enabled'] ?? '0'), ['1', 'true'], true);
+            $applePayEnabled = in_array((string) ($settingsData['stripe_apple_pay_enabled'] ?? '0'), ['1', 'true'], true);
+            if ($stripeEnabled && $applePayEnabled) {
+                try {
+                    $applePayDomainSync = app(AdminStripePaymentDomainController::class)->syncDomainsForCurrentTenant($request);
+                } catch (\Throwable $e) {
+                    $applePayDomainSync = ['error' => $e->getMessage()];
+                }
+            }
+        }
+
         return response()->json([
             'success' => true,
             'message' => 'Settings updated successfully.',
+            ...($applePayDomainSync !== null ? ['apple_pay_domain_sync' => $applePayDomainSync] : []),
         ]);
     }
 

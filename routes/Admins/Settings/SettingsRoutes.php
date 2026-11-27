@@ -16,6 +16,11 @@ Route::prefix('admin/settings')->group(function () {
     Route::post('/stripe-tax-registrations', [\App\Http\Controllers\Admin\Settings\AdminStripeTaxRegistrationController::class, 'store']);
     Route::post('/stripe-tax-registrations/bulk', [\App\Http\Controllers\Admin\Settings\AdminStripeTaxRegistrationController::class, 'bulkAdd']);
 
+    // Stripe Payment Method Domains (Apple Pay / Wallet Multi-Tenant Verification)
+    Route::get('/stripe-payment-domains', [\App\Http\Controllers\Admin\Settings\AdminStripePaymentDomainController::class, 'index']);
+    Route::post('/stripe-payment-domains/register', [\App\Http\Controllers\Admin\Settings\AdminStripePaymentDomainController::class, 'register']);
+    Route::post('/stripe-payment-domains/{id}/validate', [\App\Http\Controllers\Admin\Settings\AdminStripePaymentDomainController::class, 'validateDomain']);
+
     // Shipping Method Routes
     Route::get('/shipping-methods', [ShippingMethodController::class, 'index']);
     Route::post('/shipping-methods', [ShippingMethodController::class, 'store']);
