@@ -140,6 +140,58 @@ class UserPasswordResetController extends Controller
     }
 
     /**
+     * Validate email and 6-digit OTP against the user record without consuming the OTP.
+     *
+     * @return array{user?: \App\Models\User, errorResponse?: \Illuminate\Http\JsonResponse}
+     */
+    private function validateOtpForUser(Request $request, array $extraRules = []): array
+    {
+        $validator = Validator::make($request->all(), array_merge([
+            'email' => 'required|email|exists:users,email',
+            'otp' => 'required|digits:6',
+        ], $extraRules));
+
+        if ($validator->fails()) {
+            return ['errorResponse' => response()->json(['error' => $validator->errors()->first()], 422)];
+        }
+
+        $user = User::where('email', $request->input('email'))->first();
+
+        if (!$user) {
+            return ['errorResponse' => response()->json(['error' => 'User not found.'], 404)];
+        }
+
+        if (!$user->otp || !$user->otp_expires_at || $user->otp_expires_at < now()) {
+            return ['errorResponse' => response()->json(['error' => 'OTP has expired. Please request a new one.'], 400)];
+        }
+
+        if (!Hash::check($request->otp, $user->otp)) {
+            return ['errorResponse' => response()->json(['error' => 'Invalid OTP code.'], 400)];
+        }
+
+        return ['user' => $user];
+    }
+
+    /**
+     * Verify a 6-digit OTP for password reset before showing the password form.
+     *
+     * @param  \Illuminate\Http\Request  $request
+     * @return \Illuminate\Http\JsonResponse
+     */
+    public function verifyOtp(Request $request)
+    {
+        $check = $this->validateOtpForUser($request);
+        if (isset($check['errorResponse'])) {
+            return $check['errorResponse'];
+        }
+
+        return response()->json([
+            'message' => 'OTP verified successfully.',
+            'verified' => true,
+        ], 200);
+    }
+
+    /**
      * Verify OTP and reset the user's password.
      *
      * @param  \Illuminate\Http\Request  $request
@@ -147,32 +199,14 @@ class UserPasswordResetController extends Controller
      */
     public function verifyOtpAndReset(Request $request)
     {
-        $validator = Validator::make($request->all(), [
-            'email' => 'required|email|exists:users,email',
-            'otp' => 'required|digits:6',
+        $check = $this->validateOtpForUser($request, [
             'password' => 'required|min:8|confirmed',
         ]);
-
-        if ($validator->fails()) {
-            return response()->json(['error' => $validator->errors()->first()], 422);
+        if (isset($check['errorResponse'])) {
+            return $check['errorResponse'];
         }
 
-        $email = $request->input('email');
-        $user = User::where('email', $email)->first();
-
-        if (!$user) {
-            return response()->json(['error' => 'User not found.'], 404);
-        }
-
-        // Check if OTP is expired
-        if (!$user->otp || !$user->otp_expires_at || $user->otp_expires_at < now()) {
-            return response()->json(['error' => 'OTP has expired. Please request a new one.'], 400);
-        }
-
-        // Verify OTP
-        if (!Hash::check($request->otp, $user->otp)) {
-            return response()->json(['error' => 'Invalid OTP code.'], 400);
-        }
+        $user = $check['user'];
 
         // Reset password
         $user->password = Hash::make($request->password);
