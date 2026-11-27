@@ -99,6 +99,9 @@ class OrderController extends Controller
             'shipping_cost' => 'nullable|numeric',
             'shipping_method' => 'nullable|string',
             'transaction_id' => 'nullable|string',
+            'payment_status' => 'nullable|string|in:pending,processing,paid',
+            'payment_gateway' => 'nullable|string|max:100',
+            'payment_method_name' => 'nullable|string|max:150',
         ]);
 
         // Just-in-Time (JIT) Supplier Sync on Checkout BEFORE opening DB transaction / taking order
@@ -246,6 +249,13 @@ class OrderController extends Controller
                     $taxAmount = round(($taxableSubtotal * $taxRate) / 100, 2);
                 }
 
+                $requestedPaymentStatus = $request->input('payment_status');
+                $paymentStatus = in_array($requestedPaymentStatus, ['pending', 'processing', 'paid'], true)
+                    ? $requestedPaymentStatus
+                    : ($request->transaction_id ? 'paid' : 'pending');
+
+                $paymentGateway = $request->input('payment_gateway') ?: (in_array($request->payment_method, ['card', 'stripe_checkout', 'google_pay', 'apple_pay', 'link', 'us_bank_account'], true) ? 'stripe' : null);
+
                 $order = Order::create([
                     'order_number' => 'ORD-' . strtoupper(Str::random(10)),
                     'user_id' => $user ? $user->id : null,
@@ -262,7 +272,9 @@ class OrderController extends Controller
                     'total' => $request->total,
                     'status' => 'pending',
                     'payment_method' => $request->payment_method,
-                    'payment_status' => $request->transaction_id ? 'paid' : 'pending',
+                    'payment_method_name' => $request->input('payment_method_name'),
+                    'payment_gateway' => $paymentGateway,
+                    'payment_status' => $paymentStatus,
                     'transaction_id' => $request->transaction_id,
                     'shipping_method' => $request->shipping_method,
                     'shipping_address_id' => $address ? $address->id : null,

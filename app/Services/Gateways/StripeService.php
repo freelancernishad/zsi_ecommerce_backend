@@ -311,7 +311,7 @@ class StripeService
             // Usually for saved cards we want to confirm it.
         }
 
-        if ($setupFutureUsage && $user) {
+        if ($setupFutureUsage && $user && !$paymentMethodId) {
             $params['setup_future_usage'] = 'off_session';
         }
 
@@ -464,6 +464,10 @@ class StripeService
     {
         if (is_string($paymentMethod)) {
             $paymentMethod = PaymentMethod::retrieve($paymentMethod);
+        }
+
+        if (($paymentMethod->type ?? null) !== 'card' || empty($paymentMethod->card)) {
+            return null;
         }
 
         $expiryDate = str_pad($paymentMethod->card->exp_month, 2, '0', STR_PAD_LEFT) . '/' . substr($paymentMethod->card->exp_year, -2);

@@ -73,6 +73,9 @@ class StripeWebhookService
             case 'payment_intent.succeeded':
                 $this->handlePaymentIntentSucceeded($event->data->object, $event->type);
                 break;
+            case 'payment_intent.processing':
+                $this->handlePaymentIntentProcessing($event->data->object, $event->type);
+                break;
             case 'payment_intent.payment_failed':
                 $this->handlePaymentIntentFailed($event->data->object, $event->type);
                 break;
@@ -343,16 +346,12 @@ class StripeWebhookService
     }
 
     /**
-     * Mark a matching e-commerce Order as paid/processing from Stripe webhook metadata.
+     * Find a matching e-commerce Order from Stripe metadata or transaction_id.
      */
-    protected function markOrderPaidFromStripe(array $metadata, ?string $transactionId, string $eventType, array $extraDetails = []): void
+    protected function findOrderFromStripe(array $metadata, ?string $transactionId): ?\App\Models\Order
     {
         $orderId = $metadata['order_id'] ?? null;
         $orderNumber = $metadata['order_number'] ?? null;
-
-        if (!$orderId && !$orderNumber) {
-            return;
-        }
 
         $order = null;
         if ($orderNumber) {
@@ -368,8 +367,29 @@ class StripeWebhookService
             $order = \App\Models\Order::where('id', $orderId)->first();
         }
 
+        if (!$order && $transactionId) {
+            $order = \App\Models\Order::where('transaction_id', $transactionId)->first();
+        }
+
+        return $order;
+    }
+
+    /**
+     * Mark a matching e-commerce Order as paid/processing from Stripe webhook metadata.
+     */
+    protected function markOrderPaidFromStripe(array $metadata, ?string $transactionId, string $eventType, array $extraDetails = []): void
+    {
+        $orderId = $metadata['order_id'] ?? null;
+        $orderNumber = $metadata['order_number'] ?? null;
+
+        if (!$orderId && !$orderNumber && !$transactionId) {
+            return;
+        }
+
+        $order = $this->findOrderFromStripe($metadata, $transactionId);
+
         if (!$order) {
-            Log::warning("Stripe Webhook: Order not found in DB '" . TenantDatabaseManager::currentDatabase() . "' for order_id: {$orderId}, order_number: {$orderNumber}");
+            Log::warning("Stripe Webhook: Order not found in DB '" . TenantDatabaseManager::currentDatabase() . "' for order_id: {$orderId}, order_number: {$orderNumber}, transaction_id: {$transactionId}");
             return;
         }
 
@@ -412,6 +432,30 @@ class StripeWebhookService
         Log::info("Order #{$order->id} ({$order->order_number}) marked as PAID via Stripe Webhook ({$eventType}) in DB '" . TenantDatabaseManager::currentDatabase() . "'.");
     }
 
+    protected function handlePaymentIntentProcessing($paymentIntent, $eventType)
+    {
+        $log = StripeLog::where('payment_intent_id', $paymentIntent->id)->first();
+
+        if ($log) {
+            $log->update([
+                'status' => 'processing',
+                'payload' => array_merge($log->payload ?? [], ['webhook_event' => $eventType, 'intent_details' => $paymentIntent->toArray()]),
+            ]);
+            Log::info("StripeLog updated for processing payment intent: {$paymentIntent->id}");
+            StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'processing', $log->user_id);
+        } else {
+            StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'processing');
+        }
+
+        $intentMetadata = isset($paymentIntent->metadata) ? (array) (is_object($paymentIntent->metadata) && method_exists($paymentIntent->metadata, 'toArray') ? $paymentIntent->metadata->toArray() : $paymentIntent->metadata) : [];
+        $order = $this->findOrderFromStripe($intentMetadata, $paymentIntent->id ?? null);
+        if ($order && $order->payment_status === 'pending') {
+            $order->update([
+                'payment_status' => 'processing',
+            ]);
+        }
+    }
+
     protected function handlePaymentIntentFailed($paymentIntent, $eventType)
     {
         $log = StripeLog::where('payment_intent_id', $paymentIntent->id)->first();
@@ -426,6 +470,14 @@ class StripeWebhookService
             StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'failed', $log->user_id);
         } else {
             StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'failed');
+        }
+
+        $intentMetadata = isset($paymentIntent->metadata) ? (array) (is_object($paymentIntent->metadata) && method_exists($paymentIntent->metadata, 'toArray') ? $paymentIntent->metadata->toArray() : $paymentIntent->metadata) : [];
+        $order = $this->findOrderFromStripe($intentMetadata, $paymentIntent->id ?? null);
+        if ($order && $order->payment_status !== 'paid') {
+            $order->update([
+                'payment_status' => 'failed',
+            ]);
         }
     }
 
