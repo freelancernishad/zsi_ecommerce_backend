@@ -8,6 +8,7 @@ use App\Models\Order;
 use App\Models\OrderItem;
 use App\Models\Product;
 use App\Models\ProductVariant;
+use App\Models\User;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\DB;
@@ -15,12 +16,52 @@ use Illuminate\Support\Str;
 
 class OrderController extends Controller
 {
+    /**
+     * Scope an order query to orders belonging to the authenticated user by user_id or email.
+     */
+    private function scopeOrdersToUser($query, $user, bool $includeGuestNull = false): void
+    {
+        $userEmail = strtolower(trim((string) ($user->email ?? '')));
+
+        $query->where(function ($q) use ($user, $userEmail, $includeGuestNull) {
+            $q->where('user_id', $user->id);
+
+            if ($userEmail !== '') {
+                $q->orWhereRaw('LOWER(TRIM(shipping_email)) = ?', [$userEmail]);
+            }
+
+            if ($includeGuestNull) {
+                $q->orWhereNull('user_id');
+            }
+        });
+    }
+
     public function index()
     {
-        $orders = Order::where('user_id', Auth::id())
+        $user = auth('api')->user() ?? Auth::user();
+        if (!$user) {
+            return response()->json(['status' => 'error', 'message' => 'Unauthorized'], 401);
+        }
+
+        $query = Order::query();
+        $this->scopeOrdersToUser($query, $user);
+
+        // Exclude abandoned unpaid online-gateway checkouts while preserving COD and paid/processed orders.
+        $query->where(function ($q) {
+            $q->whereRaw("LOWER(COALESCE(payment_method, '')) IN ('cod', 'cash_on_delivery', 'cash')")
+                ->orWhereRaw("LOWER(COALESCE(payment_status, '')) IN ('paid', 'processing', 'refunded', 'partially_refunded')")
+                ->orWhere(function ($txQuery) {
+                    $txQuery->whereNotNull('transaction_id')
+                        ->where('transaction_id', '!=', '');
+                })
+                ->orWhereRaw("LOWER(COALESCE(status, '')) IN ('processing', 'shipped', 'delivered', 'completed')");
+        });
+
+        $orders = $query
             ->with(['items.product.images', 'items.variant'])
             ->latest()
             ->get();
+
         return response()->json(['status' => 'success', 'data' => $orders]);
     }
 
@@ -31,9 +72,7 @@ class OrderController extends Controller
         $baseQuery = Order::with(['items.product.images', 'items.variant', 'shippingAddress', 'statusHistories']);
 
         if ($user) {
-            $baseQuery->where(function($q) use ($user) {
-                $q->where('user_id', $user->id)->orWhereNull('user_id');
-            });
+            $this->scopeOrdersToUser($baseQuery, $user, true);
         }
 
         $order = null;
@@ -256,9 +295,15 @@ class OrderController extends Controller
 
                 $paymentGateway = $request->input('payment_gateway') ?: (in_array($request->payment_method, ['card', 'stripe_checkout', 'google_pay', 'apple_pay', 'link', 'us_bank_account'], true) ? 'stripe' : null);
 
+                $orderUserId = $user ? $user->id : null;
+                if (!$orderUserId && trim((string) $shippingEmail) !== '') {
+                    $matchedUser = User::whereRaw('LOWER(TRIM(email)) = ?', [strtolower(trim($shippingEmail))])->first();
+                    $orderUserId = $matchedUser?->id;
+                }
+
                 $order = Order::create([
                     'order_number' => 'ORD-' . strtoupper(Str::random(10)),
-                    'user_id' => $user ? $user->id : null,
+                    'user_id' => $orderUserId,
                     'original_subtotal' => $request->original_subtotal,
                     'subtotal' => $request->subtotal,
                     'discount' => $request->discount ?? 0,
