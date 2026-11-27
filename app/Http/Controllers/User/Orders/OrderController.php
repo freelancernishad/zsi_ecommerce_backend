@@ -293,7 +293,7 @@ class OrderController extends Controller
                     ? $requestedPaymentStatus
                     : ($request->transaction_id ? 'paid' : 'pending');
 
-                $paymentGateway = $request->input('payment_gateway') ?: (in_array($request->payment_method, ['card', 'stripe_checkout', 'google_pay', 'apple_pay', 'link', 'us_bank_account'], true) ? 'stripe' : null);
+                $paymentGateway = $request->input('payment_gateway') ?: (in_array($request->payment_method, ['card', 'stripe_checkout', 'google_pay', 'apple_pay', 'link', 'us_bank_account', 'amazon_pay'], true) ? 'stripe' : null);
 
                 $orderUserId = $user ? $user->id : null;
                 if (!$orderUserId && trim((string) $shippingEmail) !== '') {
