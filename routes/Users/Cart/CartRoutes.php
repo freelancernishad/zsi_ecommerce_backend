@@ -9,5 +9,6 @@ Route::prefix('user/cart')->middleware('auth:api')->group(function () {
     Route::put('/{id}', [CartController::class, 'updateQuantity']);
     Route::delete('/{id}', [CartController::class, 'removeFromCart']);
     Route::delete('/', [CartController::class, 'clearCart']);
-    Route::post('/coupons/validate', [\App\Http\Controllers\User\Cart\UserCouponController::class, 'validateCoupon']);
 });
+
+Route::post('/user/cart/coupons/validate', [\App\Http\Controllers\User\Cart\UserCouponController::class, 'validateCoupon']);

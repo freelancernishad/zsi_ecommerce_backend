@@ -60,8 +60,20 @@ class UserCouponController extends Controller
         // Check User Associations (Specific Users)
         $userAssociations = $coupon->associations()->where('item_type', 'user')->get();
         if ($userAssociations->count() > 0) {
-            $userId = auth()->id();
-            if (!$userId || !$userAssociations->contains('item_id', $userId)) {
+            try {
+                $userId = auth('api')->id() ?? auth()->id();
+            } catch (\Throwable $e) {
+                $userId = null;
+            }
+
+            if (!$userId) {
+                return response()->json([
+                    'isError' => true,
+                    'Message' => 'Please log in to use this coupon.'
+                ], 403);
+            }
+
+            if (!$userAssociations->contains('item_id', $userId)) {
                 return response()->json([
                     'isError' => true,
                     'Message' => 'This coupon is not valid for your account.'
