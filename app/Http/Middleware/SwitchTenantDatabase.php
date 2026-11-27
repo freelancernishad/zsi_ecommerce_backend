@@ -3,6 +3,7 @@
 namespace App\Http\Middleware;
 
 use App\Services\TenantDatabaseManager;
+use App\Services\TenantSettingsLoader;
 use Closure;
 use Illuminate\Http\Request;
 use Symfony\Component\HttpFoundation\Response;
@@ -19,6 +20,7 @@ class SwitchTenantDatabase
     {
         $resolved = TenantDatabaseManager::resolveFromRequest($request);
         TenantDatabaseManager::switchToDatabase($resolved['database'], $resolved['domain']);
+        TenantSettingsLoader::applyForCurrentTenant();
 
         return $next($request);
     }

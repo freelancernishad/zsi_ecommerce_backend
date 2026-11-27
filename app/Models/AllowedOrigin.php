@@ -14,4 +14,15 @@ class AllowedOrigin extends Model
 
     // Define the fillable fields
     protected $fillable = ['origin_url'];
+
+    protected static function booted(): void
+    {
+        static::saved(function () {
+            \App\Services\TenantSettingsLoader::clearOriginsCache();
+        });
+
+        static::deleted(function () {
+            \App\Services\TenantSettingsLoader::clearOriginsCache();
+        });
+    }
 }

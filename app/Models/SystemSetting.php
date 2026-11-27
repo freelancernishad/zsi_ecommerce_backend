@@ -41,6 +41,6 @@ class SystemSetting extends Model
      */
     public static function clearCache()
     {
-        \Illuminate\Support\Facades\Cache::forget('system_settings');
+        \App\Services\TenantSettingsLoader::clearSettingsCache();
     }
 }

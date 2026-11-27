@@ -80,7 +80,11 @@ class PlanSubscriptionController extends Controller
 
                     // Create Stripe Coupon for this specific proration
                     try {
-                        \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+                        $stripeSecret = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+                            ?: config('services.stripe.secret');
+                        if ($stripeSecret) {
+                            \Stripe\Stripe::setApiKey($stripeSecret);
+                        }
                         $stripeCoupon = \Stripe\Coupon::create([
                             'amount_off' => (int)($prorationDiscount * 100),
                             'currency' => 'usd',
@@ -113,7 +117,11 @@ class PlanSubscriptionController extends Controller
                 if ($paymentType === 'subscription') {
                     // For Recurring: Charge Regular Price next time, apply discount ONCE now
                     try {
-                        \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+                        $stripeSecret = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+                            ?: config('services.stripe.secret');
+                        if ($stripeSecret) {
+                            \Stripe\Stripe::setApiKey($stripeSecret);
+                        }
                         $stripeCoupon = \Stripe\Coupon::create([
                             'amount_off' => (int)($discount * 100),
                             'currency' => 'usd',

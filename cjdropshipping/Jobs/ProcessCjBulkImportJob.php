@@ -2,6 +2,8 @@
 
 namespace CjDropshipping\Jobs;
 
+use App\Services\TenantDatabaseManager;
+use App\Services\TenantSettingsLoader;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Foundation\Bus\Dispatchable;
@@ -32,22 +34,30 @@ class ProcessCjBulkImportJob implements ShouldQueue
     public array $cjProductIds;
     public float $profitMarginPercent;
     public ?int $categoryId;
+    public ?string $tenantDatabase = null;
 
     /**
      * Create a new job instance.
      */
-    public function __construct(array $cjProductIds, float $profitMarginPercent = 20.0, ?int $categoryId = null)
+    public function __construct(array $cjProductIds, float $profitMarginPercent = 20.0, ?int $categoryId = null, ?string $tenantDatabase = null)
     {
         $this->cjProductIds = $cjProductIds;
         $this->profitMarginPercent = $profitMarginPercent;
         $this->categoryId = $categoryId;
+        $this->tenantDatabase = $tenantDatabase ?: TenantDatabaseManager::currentDatabase();
     }
 
     /**
      * Execute the job.
      */
-    public function handle(CjImportService $cjImportService): void
+    public function handle(): void
     {
+        if ($this->tenantDatabase) {
+            TenantDatabaseManager::switchByDomainOrDatabase(null, $this->tenantDatabase);
+            TenantSettingsLoader::applyForCurrentTenant();
+        }
+
+        $cjImportService = app(CjImportService::class);
         $count = count($this->cjProductIds);
         Log::info("Starting background CJ bulk import job for {$count} products.");
 
