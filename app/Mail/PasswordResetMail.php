@@ -2,11 +2,10 @@
 
 namespace App\Mail;
 
+use App\Providers\AppServiceProvider;
 use Illuminate\Bus\Queueable;
 use Illuminate\Mail\Mailable;
 use Illuminate\Queue\SerializesModels;
-
-use App\Models\SiteSetting;
 
 class PasswordResetMail extends Mailable
 {
@@ -31,22 +30,18 @@ class PasswordResetMail extends Mailable
      * @param $otp
      * @return void
      */
-    public function __construct($user, $resetUrl, $otp)
+    public function __construct($user, $resetUrl, $otp = null)
     {
         $this->user = $user;
         $this->resetUrl = $resetUrl;
         $this->otp = $otp;
 
-        // Fetch settings from SiteSetting
-        $this->storeName = SiteSetting::getValue('store_name', 'Online Store');
-        $this->storeAddress = SiteSetting::getValue('store_address', '');
-        $this->supportPhone = SiteSetting::getValue('support_phone', '');
-        $this->supportEmail = SiteSetting::getValue('support_email', '');
-
-        // Extract frontend base URL from resetUrl
-        $parsedUrl = parse_url($resetUrl);
-        $frontendBase = ($parsedUrl['scheme'] ?? 'http') . '://' . ($parsedUrl['host'] ?? 'localhost') . (isset($parsedUrl['port']) ? ':' . $parsedUrl['port'] : '');
-        $this->logoUrl = $frontendBase . '/logo.png';
+        $branding = AppServiceProvider::resolveEmailBranding();
+        $this->storeName = $branding['storeName'];
+        $this->storeAddress = $branding['storeAddress'];
+        $this->supportPhone = $branding['supportPhone'];
+        $this->supportEmail = $branding['supportEmail'];
+        $this->logoUrl = $branding['logoUrl'];
     }
 
     /**

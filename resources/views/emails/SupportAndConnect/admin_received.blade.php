@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Admin Notification: New Contact Message - ' . config('app.name'))
+@section('title', 'Admin Notification: New Contact Message - ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <div style="display: inline-block; background-color: #fee2e2; color: #dc2626; padding: 4px 12px; border-radius: 9999px; font-size: 12px; font-weight: 700; text-transform: uppercase; margin-bottom: 12px;">Admin Notification</div>
@@ -32,5 +32,5 @@
 
     <p>Please reply directly to <strong>{{ $email }}</strong> or manage this through the admin console.</p>
 
-    <p>Best regards,<br><strong>{{ config('app.name') }} System Bot</strong></p>
+    <p>Best regards,<br><strong>{{ $storeName ?? config('app.name') }} System Bot</strong></p>
 @endsection

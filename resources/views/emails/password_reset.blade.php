@@ -1,12 +1,13 @@
 @extends('emails.layout')
 
-@section('title', 'Reset Your Password - ' . config('app.name'))
+@section('title', 'Reset Your Password - ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <h1>Password Reset Request</h1>
     <p>Hello <strong>{{ $user->name ?? 'User' }}</strong>,</p>
-    <p>We received a request to reset your password for your <strong>{{ config('app.name') }}</strong> account. You can reset your password using either of the following two options:</p>
+    <p>We received a request to reset your password for your <strong>{{ $storeName ?? config('app.name') }}</strong> account. You can reset your password using either of the following two options:</p>
     
+    @if(!empty($otp))
     <div style="margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; background-color: #f9fafb;">
         <h3 style="margin-top: 0; color: #111827; font-size: 16px;">Option 1: Reset using OTP Code</h3>
         <p style="margin-bottom: 12px; font-size: 14px; color: #4b5563;">Enter this 6-digit OTP code directly on the reset page:</p>
@@ -14,6 +15,7 @@
             {{ $otp }}
         </div>
     </div>
+    @endif
 
     <div style="margin: 20px 0; border: 1px solid #e5e7eb; border-radius: 12px; padding: 20px; background-color: #f9fafb;">
         <h3 style="margin-top: 0; color: #111827; font-size: 16px;">Option 2: Reset using Direct Link</h3>
@@ -29,5 +31,5 @@
         </p>
     </div>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Team</p>
 @endsection

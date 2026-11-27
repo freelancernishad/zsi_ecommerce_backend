@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Order Confirmed - ' . config('app.name'))
+@section('title', 'Order Confirmed - ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <div style="text-align: center; margin-bottom: 24px;">
@@ -43,5 +43,5 @@
         <a href="{{ url('/user/dashboard') }}" class="btn-primary">Go to Dashboard</a>
     </div>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Team</p>
 @endsection

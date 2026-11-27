@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'New Reply on Ticket #' . $ticket_id . ' - ' . config('app.name'))
+@section('title', 'New Reply on Ticket #' . $ticket_id . ' - ' . ($storeName ?? config('app.name')))
 
 @section('extra_css')
 <style>
@@ -50,5 +50,5 @@
         <a href="{{ url('/user/support') }}" class="btn-primary">View & Reply to Ticket</a>
     </div>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Support Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Support Team</p>
 @endsection

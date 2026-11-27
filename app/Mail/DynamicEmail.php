@@ -2,6 +2,7 @@
 
 namespace App\Mail;
 
+use App\Models\SiteSetting;
 use Illuminate\Bus\Queueable;
 use Illuminate\Contracts\Queue\ShouldQueue;
 use Illuminate\Mail\Mailable;
@@ -34,10 +35,18 @@ class DynamicEmail extends Mailable
     {
         $content = $this->htmlContent;
 
+        $storeName = SiteSetting::getValue('store_name');
+        if (!is_string($storeName) || trim($storeName) === '') {
+            $storeName = SiteSetting::getValue('site_name');
+        }
+        $companyName = is_string($storeName) && trim($storeName) !== ''
+            ? trim($storeName)
+            : config('app.name', 'Online Store');
+
         // Default data for expansion
         $allData = array_merge([
             'date' => date('M d, Y'),
-            'company' => config('app.name', 'ZilMoney'),
+            'company' => $companyName,
         ], $this->data);
 
         foreach ($allData as $key => $value) {

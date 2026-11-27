@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Welcome to ' . config('app.name'))
+@section('title', 'Welcome to ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <div style="text-align: center; margin-bottom: 20px;">
@@ -8,7 +8,7 @@
         <h1>Welcome, {{ $name }}!</h1>
     </div>
 
-    <p>We're excited to have you on board! Your account registration on <strong>{{ config('app.name') }}</strong> was completed successfully.</p>
+    <p>We're excited to have you on board! Your account registration on <strong>{{ $storeName ?? config('app.name') }}</strong> was completed successfully.</p>
 
     <p>You can now log in to explore all the features, services, and products available on our platform.</p>
 
@@ -18,5 +18,5 @@
 
     <p>If you have any questions or need assistance, our support team is always here to help.</p>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Team</p>
 @endsection

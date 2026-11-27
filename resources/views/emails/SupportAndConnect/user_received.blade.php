@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Message Received - ' . config('app.name'))
+@section('title', 'Message Received - ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <div style="text-align: center; margin-bottom: 20px;">
@@ -9,7 +9,7 @@
     </div>
 
     <p>Hello <strong>{{ $name }}</strong>,</p>
-    <p>Thank you for reaching out to <strong>{{ config('app.name') }}</strong>! We have received your inquiry and our team will get back to you shortly.</p>
+    <p>Thank you for reaching out to <strong>{{ $storeName ?? config('app.name') }}</strong>! We have received your inquiry and our team will get back to you shortly.</p>
 
     <div class="info-box">
         <h3 style="font-size: 16px; margin-bottom: 14px; border-bottom: 1px solid #e2e8f0; padding-bottom: 8px;">Message Details</h3>
@@ -27,5 +27,5 @@
 
     <p>We appreciate your patience and look forward to assisting you.</p>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Support Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Support Team</p>
 @endsection

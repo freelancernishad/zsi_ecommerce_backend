@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Ticket Received - ' . config('app.name'))
+@section('title', 'Ticket Received - ' . ($storeName ?? config('app.name')))
 
 @section('content')
     <h1>We Received Your Support Ticket</h1>
@@ -35,5 +35,5 @@
         <a href="{{ url('/user/support') }}" class="btn-primary">View Support Ticket</a>
     </div>
 
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Support Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Support Team</p>
 @endsection

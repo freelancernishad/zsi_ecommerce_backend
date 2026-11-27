@@ -1,6 +1,6 @@
 @extends('emails.layout')
 
-@section('title', 'Your Verification Code - ' . config('app.name'))
+@section('title', 'Your Verification Code - ' . ($storeName ?? config('app.name')))
 
 @section('extra_css')
 <style>
@@ -30,7 +30,7 @@
 
 @section('content')
     <h1>Verify Your Account</h1>
-    <p>Thank you for registering with <strong>{{ config('app.name') }}</strong>! To complete your verification process, please use the following One-Time Password (OTP):</p>
+    <p>Thank you for registering with <strong>{{ $storeName ?? config('app.name') }}</strong>! To complete your verification process, please use the following One-Time Password (OTP):</p>
     
     <div class="otp-card">
         <div class="otp-code">{{ $otp }}</div>
@@ -38,5 +38,5 @@
     </div>
 
     <p>If you did not request this OTP, please ignore this message or contact support if you suspect unauthorized activity.</p>
-    <p>Best regards,<br>The <strong>{{ config('app.name') }}</strong> Team</p>
+    <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Team</p>
 @endsection
