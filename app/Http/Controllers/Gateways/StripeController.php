@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Gateways;
 
 use App\Http\Controllers\Controller;
 use App\Services\Gateways\StripeService;
+use App\Services\TenantDatabaseManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use App\Models\UserPaymentMethod;
@@ -77,8 +78,17 @@ class StripeController extends Controller
         $cancelUrl = $request->input('cancel_url', url('/payment/cancel'));
         $saveCard = $request->boolean('save_card', false);
 
+        $metadata = is_array($request->input('metadata')) ? $request->input('metadata') : [];
+        if ($request->filled('order_id')) {
+            $metadata['order_id'] = (string) $request->input('order_id');
+        }
+        if ($request->filled('order_number')) {
+            $metadata['order_number'] = (string) $request->input('order_number');
+        }
+        $metadata = array_merge($metadata, TenantDatabaseManager::metadataForCurrentTenant($request));
+
         try {
-            $session = $this->stripeService->createCheckoutSession($user, $items, $successUrl, $cancelUrl, $saveCard, [], $extraParams);
+            $session = $this->stripeService->createCheckoutSession($user, $items, $successUrl, $cancelUrl, $saveCard, $metadata, $extraParams);
             return response()->json(['id' => $session->id, 'url' => $session->url]);
         } catch (\Exception $e) {
             return response()->json(['error' => $e->getMessage()], 400);
@@ -95,9 +105,11 @@ class StripeController extends Controller
         $successUrl = $request->input('success_url', url('/success'));
         $cancelUrl = $request->input('cancel_url', url('/cancel'));
 
+        $metadata = TenantDatabaseManager::metadataForCurrentTenant($request);
+
         try {
             if ($priceId) {
-                $session = $this->stripeService->createSubscriptionSession($user, $priceId, $successUrl, $cancelUrl);
+                $session = $this->stripeService->createSubscriptionSession($user, $priceId, $successUrl, $cancelUrl, $metadata);
             } else {
                 // If no price_id, use custom dynamic price parameters
                 $priceData = [
@@ -108,7 +120,7 @@ class StripeController extends Controller
                     'product_name' => $request->input('product_name', 'Subscription Plan'),
                     'duration_in_months' => $request->input('duration_in_months'), // e.g. 8 for 8 months
                 ];
-                $session = $this->stripeService->createCustomSubscriptionSession($user, $priceData, $successUrl, $cancelUrl);
+                $session = $this->stripeService->createCustomSubscriptionSession($user, $priceData, $successUrl, $cancelUrl, $metadata);
             }
             return response()->json(['id' => $session->id, 'url' => $session->url]);
         } catch (\Exception $e) {
@@ -139,7 +151,14 @@ class StripeController extends Controller
         $user = auth('api')->user() ?? Auth::user();
         $amount = $request->input('amount');
         $currency = $request->input('currency', 'usd');
-        $metadata = $request->input('metadata', []);
+        $metadata = is_array($request->input('metadata')) ? $request->input('metadata') : [];
+        if ($request->filled('order_id')) {
+            $metadata['order_id'] = (string) $request->input('order_id');
+        }
+        if ($request->filled('order_number')) {
+            $metadata['order_number'] = (string) $request->input('order_number');
+        }
+        $metadata = array_merge($metadata, TenantDatabaseManager::metadataForCurrentTenant($request));
         $successUrl = $request->input('success_url', url('/payment/success'));
         $saveCard = $request->boolean('save_card', false);
         $paymentMethodId = $request->input('payment_method_id');

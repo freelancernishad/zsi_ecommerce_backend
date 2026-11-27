@@ -4,6 +4,7 @@ namespace App\Http\Controllers\Gateways;
 
 use App\Http\Controllers\Controller;
 use App\Models\SiteSetting;
+use App\Services\TenantDatabaseManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Http;
 use Illuminate\Support\Facades\Log;
@@ -129,6 +130,7 @@ class ZsiPayController extends Controller
             $successUrl = $request->input('success_url') ?: (rtrim($clientOrigin, '/') . '/checkout/success?merchant_transaction_id=' . urlencode((string)$orderNumber) . '&provider=zsipay');
             $cancelUrl = $request->input('cancel_url') ?: (rtrim($clientOrigin, '/') . '/checkout?cancelled=1');
 
+            $tenantMeta = TenantDatabaseManager::metadataForCurrentTenant($request);
             $metadata = array_merge([
                 'order_id' => (string) $orderId,
                 'order_number' => (string) $orderNumber,
@@ -141,7 +143,7 @@ class ZsiPayController extends Controller
                 'currency' => 'USD',
                 'success_url' => $successUrl,
                 'cancel_url' => $cancelUrl,
-            ], (array) $request->input('metadata', []));
+            ], (array) $request->input('metadata', []), $tenantMeta);
 
             $headers = [
                 'x-zsi-api-key' => $apiKey,
@@ -264,7 +266,21 @@ class ZsiPayController extends Controller
     public function webhook(Request $request)
     {
         $payload = $request->all();
-        Log::info("ZSI Pay Webhook Received: ", $payload);
+
+        // Switch to the originating tenant DB from webhook metadata before any DB queries
+        $tenantMeta = TenantDatabaseManager::extractTenantMetadataFromPayload($payload);
+        $switched = TenantDatabaseManager::switchByDomainOrDatabase(
+            $tenantMeta['tenant_domain'],
+            $tenantMeta['tenant_db']
+        );
+
+        Log::info("ZSI Pay Webhook Received: ", [
+            'tenant_domain' => $tenantMeta['tenant_domain'],
+            'tenant_db_requested' => $tenantMeta['tenant_db'],
+            'tenant_switched' => $switched,
+            'active_db' => TenantDatabaseManager::currentDatabase(),
+            'payload' => $payload,
+        ]);
 
         try {
             $eventType = $payload['type'] ?? $request->input('event_type') ?? null;
@@ -286,15 +302,21 @@ class ZsiPayController extends Controller
                 return response()->json(['success' => false, 'message' => 'Missing order identifiers'], 400);
             }
 
-            // Find matching Order by order_id or order_number
-            $order = \App\Models\Order::where(function ($query) use ($orderId, $orderNumber) {
+            // Find matching Order safely without cross-tenant ID collision:
+            // Prefer order_number (globally random/unique) over numeric auto-increment id.
+            $order = null;
+            if ($orderNumber) {
                 if ($orderId) {
-                    $query->where('id', $orderId);
+                    $order = \App\Models\Order::where('id', $orderId)
+                        ->where('order_number', $orderNumber)
+                        ->first();
                 }
-                if ($orderNumber) {
-                    $query->orWhere('order_number', $orderNumber);
+                if (!$order) {
+                    $order = \App\Models\Order::where('order_number', $orderNumber)->first();
                 }
-            })->first();
+            } elseif ($orderId) {
+                $order = \App\Models\Order::where('id', $orderId)->first();
+            }
 
             if (!$order) {
                 Log::warning("ZSI Pay Webhook: Order not found for order_id: {$orderId}, order_number: {$orderNumber}");
@@ -306,11 +328,18 @@ class ZsiPayController extends Controller
                               in_array($paymentStatus, ['succeeded', 'paid', 'completed']);
 
             if ($isSuccessEvent) {
+                if ($order->payment_status === 'paid') {
+                    return response()->json([
+                        'success' => true,
+                        'message' => 'Order already marked as paid',
+                    ]);
+                }
+
                 $order->update([
                     'payment_status' => 'paid',
                     'status' => 'processing',
                     'transaction_id' => $transactionId ?: ($order->transaction_id ?: $orderNumber),
-                    'payment_details' => array_merge($order->payment_details ?? [], [
+                    'payment_details' => array_merge(is_array($order->payment_details) ? $order->payment_details : [], [
                         'zsi_pay_webhook_event' => $eventType,
                         'zsi_pay_session_id' => $data['session_id'] ?? null,
                         'zsi_pay_tracking_id' => $data['tracking_id'] ?? null,
@@ -325,7 +354,7 @@ class ZsiPayController extends Controller
                         \App\Models\OrderStatusHistory::create([
                             'order_id' => $order->id,
                             'status' => 'processing',
-                            'comment' => 'Payment succeeded via ZSI Pay.'
+                            'description' => 'Payment succeeded via ZSI Pay.'
                         ]);
                     } catch (\Exception $historyErr) {
                         Log::warning("Failed to create OrderStatusHistory: " . $historyErr->getMessage());
@@ -500,7 +529,7 @@ class ZsiPayController extends Controller
                         'payment_status' => 'paid',
                         'status' => 'processing',
                         'transaction_id' => $sessionData['tracking_id'] ?? $trackId,
-                        'payment_details' => array_merge($order->payment_details ?? [], [
+                        'payment_details' => array_merge(is_array($order->payment_details) ? $order->payment_details : [], [
                             'zsi_pay_track_id' => $trackId,
                             'verified_at' => now()->toIso8601String(),
                             'zsi_pay_status' => $rawStatus,
@@ -514,7 +543,7 @@ class ZsiPayController extends Controller
                             \App\Models\OrderStatusHistory::create([
                                 'order_id' => $order->id,
                                 'status' => 'processing',
-                                'comment' => 'Payment verified via ZSI Pay /v1/payments API.'
+                                'description' => 'Payment verified via ZSI Pay /v1/payments API.'
                             ]);
                         } catch (\Exception $e) {}
                     }

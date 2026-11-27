@@ -3,6 +3,7 @@
 namespace App\Services\Gateways;
 
 use App\Events\StripePaymentEvent;
+use App\Services\TenantDatabaseManager;
 use Stripe\Webhook;
 use Stripe\Stripe;
 use Stripe\Exception\SignatureVerificationException;
@@ -13,39 +14,41 @@ class StripeWebhookService
 {
     public function handleWebhook($payload, $sigHeader)
     {
-        $endpointSecret = config('services.stripe.webhook');
-
-        // Fallback: If config is empty, try to fetch directly from SystemSetting database table
-        if (!$endpointSecret) {
-            try {
-                $setting = \App\Models\SystemSetting::where('key', 'STRIPE_WEBHOOK_SECRET')->first();
-                if ($setting) {
-                    $endpointSecret = $setting->value;
-                    // Also update the config for the rest of the request
-                    config(['services.stripe.webhook' => $endpointSecret]);
-                }
-            } catch (\Exception $e) {
-                Log::error('Webhook Fallback DB Error: ' . $e->getMessage());
-            }
+        $rawPayload = json_decode((string) $payload, true);
+        if (is_array($rawPayload)) {
+            $tenantMeta = TenantDatabaseManager::extractTenantMetadataFromPayload($rawPayload);
+            TenantDatabaseManager::switchByDomainOrDatabase(
+                $tenantMeta['tenant_domain'],
+                $tenantMeta['tenant_db']
+            );
         }
-
-        Log::info('Stripe Webhook Heartbeat', [
-            'url' => request()->fullUrl(),
-            'method' => request()->method(),
-            'ip' => request()->ip(),
-            'cf_ip' => request()->header('CF-Connecting-IP'),
-            'signature_present' => !!$sigHeader,
-            'payload_length' => strlen($payload),
-            'secret_configured' => $endpointSecret ? 'Yes (starts with ' . substr($endpointSecret, 0, 8) . '...)' : 'No'
-        ]);
 
         $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
             ?: config('services.stripe.secret');
         if ($secretKey) {
             Stripe::setApiKey($secretKey);
         }
-        $endpointSecret = \App\Models\SiteSetting::where('key', 'stripe_webhook_secret')->value('value')
-            ?: config('services.stripe.webhook');
+
+        $endpointSecret = \App\Models\SiteSetting::where('key', 'stripe_webhook_secret')->value('value');
+        if (!$endpointSecret) {
+            try {
+                $endpointSecret = \App\Models\SystemSetting::where('key', 'STRIPE_WEBHOOK_SECRET')->value('value');
+            } catch (\Exception $e) {
+                Log::error('Webhook Fallback DB Error: ' . $e->getMessage());
+            }
+        }
+        $endpointSecret = $endpointSecret ?: config('services.stripe.webhook');
+
+        Log::info('Stripe Webhook Heartbeat', [
+            'url' => request()->fullUrl(),
+            'method' => request()->method(),
+            'ip' => request()->ip(),
+            'cf_ip' => request()->header('CF-Connecting-IP'),
+            'tenant_db' => TenantDatabaseManager::currentDatabase(),
+            'signature_present' => !!$sigHeader,
+            'payload_length' => strlen($payload),
+            'secret_configured' => $endpointSecret ? 'Yes (starts with ' . substr($endpointSecret, 0, 8) . '...)' : 'No'
+        ]);
 
         try {
             $event = Webhook::constructEvent(
@@ -152,8 +155,8 @@ class StripeWebhookService
             // Dispatch generic event
             StripePaymentEvent::dispatch($eventType, $session->toArray(), 'success', $log->user_id);
 
-            // --- Send Global Notification & Email ---
-            if ($log->user_id) {
+            // --- Send Global Notification & Email (only for plan/subscription purchases) ---
+            if ($log->user_id && ($log->plan_id || $session->mode === 'subscription')) {
                 $user = \App\Models\User::find($log->user_id);
                 if ($user) {
                     $planName = $log->product_name ?? 'Subscription';
@@ -184,6 +187,21 @@ class StripeWebhookService
             // Still dispatch event, but without user_id
             StripePaymentEvent::dispatch($eventType, $session->toArray(), 'success');
         }
+
+        // Update matching e-commerce Order even if StripeLog is absent
+        $sessionMetadata = isset($session->metadata) ? (array) (is_object($session->metadata) && method_exists($session->metadata, 'toArray') ? $session->metadata->toArray() : $session->metadata) : [];
+        if (empty($sessionMetadata) && $log && is_array($log->meta_data)) {
+            $sessionMetadata = $log->meta_data;
+        }
+        $this->markOrderPaidFromStripe(
+            $sessionMetadata,
+            $session->payment_intent ?: $session->id,
+            $eventType,
+            [
+                'stripe_session_id' => $session->id ?? null,
+                'stripe_payment_intent_id' => $session->payment_intent ?? null,
+            ]
+        );
     }
 
     protected function handleInvoicePaymentSucceeded($invoice, $eventType)
@@ -312,6 +330,86 @@ class StripeWebhookService
         } else {
              StripePaymentEvent::dispatch($eventType, $paymentIntent->toArray(), 'success');
         }
+
+        $intentMetadata = isset($paymentIntent->metadata) ? (array) (is_object($paymentIntent->metadata) && method_exists($paymentIntent->metadata, 'toArray') ? $paymentIntent->metadata->toArray() : $paymentIntent->metadata) : [];
+        $this->markOrderPaidFromStripe(
+            $intentMetadata,
+            $paymentIntent->id ?? null,
+            $eventType,
+            [
+                'stripe_payment_intent_id' => $paymentIntent->id ?? null,
+            ]
+        );
+    }
+
+    /**
+     * Mark a matching e-commerce Order as paid/processing from Stripe webhook metadata.
+     */
+    protected function markOrderPaidFromStripe(array $metadata, ?string $transactionId, string $eventType, array $extraDetails = []): void
+    {
+        $orderId = $metadata['order_id'] ?? null;
+        $orderNumber = $metadata['order_number'] ?? null;
+
+        if (!$orderId && !$orderNumber) {
+            return;
+        }
+
+        $order = null;
+        if ($orderNumber) {
+            if ($orderId) {
+                $order = \App\Models\Order::where('id', $orderId)
+                    ->where('order_number', $orderNumber)
+                    ->first();
+            }
+            if (!$order) {
+                $order = \App\Models\Order::where('order_number', $orderNumber)->first();
+            }
+        } elseif ($orderId) {
+            $order = \App\Models\Order::where('id', $orderId)->first();
+        }
+
+        if (!$order) {
+            Log::warning("Stripe Webhook: Order not found in DB '" . TenantDatabaseManager::currentDatabase() . "' for order_id: {$orderId}, order_number: {$orderNumber}");
+            return;
+        }
+
+        if ($order->payment_status === 'paid') {
+            return;
+        }
+
+        $existingDetails = is_array($order->payment_details) ? $order->payment_details : [];
+
+        $order->update([
+            'payment_status' => 'paid',
+            'status' => 'processing',
+            'transaction_id' => $transactionId ?: $order->transaction_id,
+            'payment_details' => array_merge($existingDetails, $extraDetails, [
+                'stripe_webhook_event' => $eventType,
+                'paid_at' => now()->toIso8601String(),
+            ]),
+        ]);
+
+        if (class_exists(\App\Models\OrderStatusHistory::class)) {
+            try {
+                \App\Models\OrderStatusHistory::create([
+                    'order_id' => $order->id,
+                    'status' => 'processing',
+                    'description' => 'Payment succeeded via Stripe.',
+                ]);
+            } catch (\Exception $e) {
+                Log::warning("Failed to create OrderStatusHistory in Stripe webhook: " . $e->getMessage());
+            }
+        }
+
+        if ($order->user_id) {
+            try {
+                \App\Models\Cart::where('user_id', $order->user_id)->delete();
+            } catch (\Exception $e) {
+                Log::warning("Failed to clear cart in Stripe webhook: " . $e->getMessage());
+            }
+        }
+
+        Log::info("Order #{$order->id} ({$order->order_number}) marked as PAID via Stripe Webhook ({$eventType}) in DB '" . TenantDatabaseManager::currentDatabase() . "'.");
     }
 
     protected function handlePaymentIntentFailed($paymentIntent, $eventType)

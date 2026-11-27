@@ -25,6 +25,7 @@ class Order extends Model
 
     protected $casts = [
         'tax_details' => 'array',
+        'payment_details' => 'array',
         'tax_rate' => 'float',
         'tax' => 'float',
     ];

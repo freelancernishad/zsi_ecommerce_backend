@@ -90,7 +90,11 @@ class CheckStripePaymentStatus
         // 2. Source dates from Stripe API if still missing (for subscription modes)
         if (!$nextBillingDate && $subscriptionId) {
             try {
-                \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+                $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+                    ?: config('services.stripe.secret');
+                if ($secretKey) {
+                    \Stripe\Stripe::setApiKey($secretKey);
+                }
                 $stripeSubscription = \Stripe\Subscription::retrieve($subscriptionId);
                 
                 if (!empty($stripeSubscription->current_period_end)) {
@@ -189,7 +193,11 @@ class CheckStripePaymentStatus
             // Cancel in Stripe if applicable
             if ($oldSub->stripe_subscription_id) {
                 try {
-                    \Stripe\Stripe::setApiKey(config('services.stripe.secret'));
+                    $secretKey = \App\Models\SiteSetting::where('key', 'stripe_secret_key')->value('value')
+                        ?: config('services.stripe.secret');
+                    if ($secretKey) {
+                        \Stripe\Stripe::setApiKey($secretKey);
+                    }
                     $stripeSub = \Stripe\Subscription::retrieve($oldSub->stripe_subscription_id);
                     $stripeSub->cancel(); 
                     Log::info("Cancelled old Stripe subscription: {$oldSub->stripe_subscription_id}");

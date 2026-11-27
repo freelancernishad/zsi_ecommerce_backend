@@ -10,6 +10,7 @@ use Stripe\PaymentMethod;
 use Stripe\Checkout\Session as CheckoutSession;
 use App\Models\User;
 use App\Models\UserPaymentMethod;
+use App\Services\TenantDatabaseManager;
 use Exception;
 
 class StripeService
@@ -62,11 +63,28 @@ class StripeService
     }
 
     /**
+     * Normalize metadata into string key-value pairs required by Stripe API.
+     */
+    protected function prepareStripeMetadata(array $metadata = []): array
+    {
+        $merged = array_merge($metadata, TenantDatabaseManager::metadataForCurrentTenant());
+        $clean = [];
+        foreach ($merged as $key => $value) {
+            if ($value === null || $value === '' || is_array($value) || is_object($value)) {
+                continue;
+            }
+            $clean[(string) $key] = is_bool($value) ? ($value ? 'true' : 'false') : (string) $value;
+        }
+        return $clean;
+    }
+
+    /**
      * Create a Checkout Session for one-time payments.
      */
     public function createCheckoutSession(?User $user, array $items, string $successUrl, string $cancelUrl, bool $saveCard = false, array $metadata = [], array $extra_params = [])
     {
         $customer = $this->createOrGetCustomer($user, $metadata['email'] ?? null, $metadata['name'] ?? null);
+        $stripeMetadata = $this->prepareStripeMetadata($metadata);
 
         $params = [
             'customer' => $customer->id,
@@ -75,7 +93,7 @@ class StripeService
             'mode' => 'payment',
             'success_url' => $successUrl,
             'cancel_url' => $cancelUrl,
-            'metadata' => $metadata,
+            'metadata' => $stripeMetadata,
             'allow_promotion_codes' => true,
         ];
 
@@ -85,10 +103,16 @@ class StripeService
             unset($params['allow_promotion_codes']);
         }
 
+        if (!isset($params['payment_intent_data']) || !is_array($params['payment_intent_data'])) {
+            $params['payment_intent_data'] = [];
+        }
+        $params['payment_intent_data']['metadata'] = array_merge(
+            $params['payment_intent_data']['metadata'] ?? [],
+            $stripeMetadata
+        );
+
         if ($saveCard && $user) {
-            $params['payment_intent_data'] = [
-                'setup_future_usage' => 'off_session', 
-            ];
+            $params['payment_intent_data']['setup_future_usage'] = 'off_session';
         }
 
         $session = CheckoutSession::create($params);
@@ -104,7 +128,7 @@ class StripeService
             'currency' => $session->currency,
             'status' => $session->payment_status,
             'payload' => $session->toArray(),
-            'meta_data' => $metadata,
+            'meta_data' => $stripeMetadata,
         ]);
 
         return $session;
@@ -116,6 +140,7 @@ class StripeService
     public function createSubscriptionSession(User $user, string $priceId, string $successUrl, string $cancelUrl, array $metadata = [])
     {
         $customer = $this->createOrGetCustomer($user);
+        $stripeMetadata = $this->prepareStripeMetadata($metadata);
 
         $session = CheckoutSession::create([
             'customer' => $customer->id,
@@ -127,7 +152,10 @@ class StripeService
             'mode' => 'subscription',
             'success_url' => $successUrl,
             'cancel_url' => $cancelUrl,
-            'metadata' => $metadata,
+            'metadata' => $stripeMetadata,
+            'subscription_data' => [
+                'metadata' => $stripeMetadata,
+            ],
             'allow_promotion_codes' => true,
         ]);
 
@@ -150,7 +178,7 @@ class StripeService
             'interval' => 'month', // Default assumption for fixed price if not fetched
             'interval_count' => 1,
             'payload' => $session->toArray(),
-            'meta_data' => $metadata,
+            'meta_data' => $stripeMetadata,
         ]);
 
         return $session;
@@ -164,8 +192,11 @@ class StripeService
     public function createCustomSubscriptionSession(User $user, array $priceData, string $successUrl, string $cancelUrl, array $metadata = [], array $extra_params = [])
     {
         $customer = $this->createOrGetCustomer($user);
+        $stripeMetadata = $this->prepareStripeMetadata($metadata);
 
-        $subscriptionData = [];
+        $subscriptionData = [
+            'metadata' => $stripeMetadata,
+        ];
 
         // Calculate cancel_at if duration is provided (e.g., charge for 8 months)
         if (isset($priceData['duration_in_months']) && $priceData['duration_in_months'] > 0) {
@@ -209,7 +240,7 @@ class StripeService
             'subscription_data' => $subscriptionData,
             'success_url' => $successUrl,
             'cancel_url' => $cancelUrl,
-            'metadata' => $metadata,
+            'metadata' => $stripeMetadata,
             'allow_promotion_codes' => true,
         ], $extra_params);
 
@@ -234,7 +265,7 @@ class StripeService
             'interval_count' => $priceData['interval_count'] ?? 1,
             'next_payment_status' => 'scheduled', // Initial status
             'payload' => $session->toArray(),
-            'meta_data' => $metadata,
+            'meta_data' => $stripeMetadata,
         ]);
 
         return $session;
@@ -262,12 +293,13 @@ class StripeService
         }
 
         $customer = $this->createOrGetCustomer($user, $metadata['email'] ?? null, $metadata['name'] ?? null);
+        $stripeMetadata = $this->prepareStripeMetadata($metadata);
 
         $params = [
             'amount' => $amount,
             'currency' => $currency,
             'customer' => $customer->id,
-            'metadata' => $metadata,
+            'metadata' => $stripeMetadata,
             'automatic_payment_methods' => [
                 'enabled' => true,
             ],
@@ -324,6 +356,7 @@ class StripeService
         $intent = SetupIntent::create([
             'customer' => $customer->id,
             'payment_method_types' => ['card'],
+            'metadata' => $this->prepareStripeMetadata(),
         ]);
 
         \App\Models\StripeLog::create([

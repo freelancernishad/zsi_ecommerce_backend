@@ -12,6 +12,7 @@ use Illuminate\Support\Facades\DB;
 use Illuminate\Support\Facades\Log;
 use App\Helpers\StripeWebhookRouter;
 use App\Http\Controllers\Controller;
+use App\Services\TenantDatabaseManager;
 
 class StripeWebhookController extends Controller
 {
@@ -19,7 +20,18 @@ class StripeWebhookController extends Controller
 {
     $payload = $request->getContent();
     $sigHeader = $request->header('Stripe-Signature');
-    $secret = config('STRIPE_WEBHOOK_SECRET');
+
+    $rawPayload = json_decode((string) $payload, true);
+    if (is_array($rawPayload)) {
+        $tenantMeta = TenantDatabaseManager::extractTenantMetadataFromPayload($rawPayload);
+        TenantDatabaseManager::switchByDomainOrDatabase(
+            $tenantMeta['tenant_domain'],
+            $tenantMeta['tenant_db']
+        );
+    }
+
+    $secret = \App\Models\SiteSetting::where('key', 'stripe_webhook_secret')->value('value')
+        ?: config('services.stripe.webhook');
 
     try {
         $event = \Stripe\Webhook::constructEvent($payload, $sigHeader, $secret);

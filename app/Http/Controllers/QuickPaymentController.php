@@ -4,6 +4,7 @@ namespace App\Http\Controllers;
 
 use App\Models\QuickPayment;
 use App\Models\SiteSetting;
+use App\Services\TenantDatabaseManager;
 use Illuminate\Http\Request;
 use Illuminate\Support\Str;
 use Illuminate\Support\Facades\Response;
@@ -96,11 +97,11 @@ class QuickPaymentController extends Controller
                     'mode' => 'payment',
                     'success_url' => $frontendUrl . '/payment?success=true&session_id={CHECKOUT_SESSION_ID}&payment_id=' . $payment->id,
                     'cancel_url' => $frontendUrl . '/payment?canceled=true',
-                    'metadata' => [
+                    'metadata' => array_merge([
                         'payment_id' => (string) $payment->id,
                         'type' => 'quick_payment',
                         'customer_name' => $validated['name'],
-                    ],
+                    ], TenantDatabaseManager::metadataForCurrentTenant($request)),
                 ];
 
                 if (!empty($validated['email']) && filter_var($validated['email'], FILTER_VALIDATE_EMAIL)) {
@@ -201,6 +202,15 @@ class QuickPaymentController extends Controller
     public function webhook(Request $request)
     {
         $payload = $request->getContent();
+        $rawPayload = json_decode((string) $payload, true);
+        if (is_array($rawPayload)) {
+            $tenantMeta = TenantDatabaseManager::extractTenantMetadataFromPayload($rawPayload);
+            TenantDatabaseManager::switchByDomainOrDatabase(
+                $tenantMeta['tenant_domain'],
+                $tenantMeta['tenant_db']
+            );
+        }
+
         $sigHeader = $request->header('Stripe-Signature');
         $secretKey = $this->getStripeSecretKey();
         $webhookSecret = SiteSetting::where('key', 'stripe_webhook_secret')->value('value')
@@ -221,23 +231,23 @@ class QuickPaymentController extends Controller
                 return response()->json(['error' => 'Invalid signature'], 400);
             }
         } else {
-            $data = json_decode($payload, true);
-            $event = (object) $data;
+            $data = is_array($rawPayload) ? $rawPayload : json_decode($payload, true);
+            $event = is_array($data) ? json_decode(json_encode($data)) : null;
         }
 
         if ($event && isset($event->type)) {
             if ($event->type === 'checkout.session.completed') {
-                $session = is_array($event->data['object']) ? (object)$event->data['object'] : $event->data->object;
-                $metadata = isset($session->metadata) ? (array)$session->metadata : [];
+                $session = is_array($event->data) ? (object) ($event->data['object'] ?? []) : $event->data->object;
+                $metadata = isset($session->metadata) ? (array) $session->metadata : [];
                 $paymentId = $metadata['payment_id'] ?? null;
                 $sessionId = $session->id ?? null;
 
                 $payment = null;
-                if ($paymentId) {
-                    $payment = QuickPayment::find($paymentId);
-                }
-                if (!$payment && $sessionId) {
+                if ($sessionId) {
                     $payment = QuickPayment::where('transaction_id', $sessionId)->first();
+                }
+                if (!$payment && $paymentId) {
+                    $payment = QuickPayment::find($paymentId);
                 }
 
                 if ($payment) {
