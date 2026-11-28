@@ -21,6 +21,8 @@ class PasswordResetMail extends Mailable
     public $supportPhone;
     public $supportEmail;
     public $logoUrl;
+    public $storeUrl;
+    public $adminUrl;
 
     /**
      * Create a new message instance.
@@ -42,6 +44,8 @@ class PasswordResetMail extends Mailable
         $this->supportPhone = $branding['supportPhone'];
         $this->supportEmail = $branding['supportEmail'];
         $this->logoUrl = $branding['logoUrl'];
+        $this->storeUrl = $branding['storeUrl'];
+        $this->adminUrl = $branding['adminUrl'];
     }
 
     /**
@@ -62,6 +66,8 @@ class PasswordResetMail extends Mailable
                         'supportPhone' => $this->supportPhone,
                         'supportEmail' => $this->supportEmail,
                         'logoUrl' => $this->logoUrl,
+                        'storeUrl' => $this->storeUrl,
+                        'adminUrl' => $this->adminUrl,
                     ]);
     }
 }

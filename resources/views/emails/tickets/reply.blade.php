@@ -47,7 +47,7 @@
     <p>Click the button below to view the full response and continue the conversation.</p>
 
     <div class="btn-container">
-        <a href="{{ url('/user/support') }}" class="btn-primary">View & Reply to Ticket</a>
+        <a href="{{ rtrim($storeUrl ?? config('app.url'), '/') . '/help' }}" class="btn-primary">View & Reply to Ticket</a>
     </div>
 
     <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Support Team</p>

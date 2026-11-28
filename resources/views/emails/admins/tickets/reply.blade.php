@@ -50,7 +50,7 @@
     </div>
 
     <div class="btn-container">
-        <a href="{{ url('/admin/support/tickets/' . $ticket_id) }}" class="btn-primary" style="background-color: #0f172a; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.3);">View & Respond in Admin Panel</a>
+        <a href="{{ rtrim($adminUrl ?? $storeUrl ?? config('app.url'), '/') . '/support/tickets/' . $ticket_id }}" class="btn-primary" style="background-color: #0f172a; box-shadow: 0 4px 14px rgba(15, 23, 42, 0.3);">View & Respond in Admin Panel</a>
     </div>
 
     <p>Best regards,<br><strong>{{ $storeName ?? config('app.name') }} System</strong></p>

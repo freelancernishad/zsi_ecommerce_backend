@@ -32,6 +32,10 @@ class UserPasswordResetController extends Controller
 
         $email = $request->input('email');
         $resetUrlBase = $request->input('redirect_url');
+        if (!is_string($resetUrlBase) || trim($resetUrlBase) === '') {
+            $resetUrlBase = rtrim(\App\Providers\AppServiceProvider::resolveEmailBranding()['storeUrl'], '/') . '/reset-password';
+        }
+        $resetUrlBase = rtrim($resetUrlBase, '/');
 
         // Find the user by email
         $user = User::where('email', $email)->first();

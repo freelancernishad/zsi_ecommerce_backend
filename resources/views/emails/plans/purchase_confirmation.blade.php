@@ -40,7 +40,7 @@
     <p>You can manage your subscription details, view invoices, or adjust billing settings directly from your dashboard.</p>
 
     <div class="btn-container">
-        <a href="{{ url('/user/dashboard') }}" class="btn-primary">Go to Dashboard</a>
+        <a href="{{ rtrim($storeUrl ?? config('app.url'), '/') . '/my-account' }}" class="btn-primary">Go to Dashboard</a>
     </div>
 
     <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Team</p>

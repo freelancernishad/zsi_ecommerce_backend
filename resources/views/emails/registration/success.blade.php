@@ -13,7 +13,7 @@
     <p>You can now log in to explore all the features, services, and products available on our platform.</p>
 
     <div class="btn-container">
-        <a href="{{ config('app.url') }}" class="btn-primary">Explore Platform</a>
+        <a href="{{ $storeUrl ?? config('app.url') }}" class="btn-primary">Explore Platform</a>
     </div>
 
     <p>If you have any questions or need assistance, our support team is always here to help.</p>

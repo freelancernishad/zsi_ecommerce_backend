@@ -32,7 +32,7 @@
     <p>You can check the live status of your ticket, add comments, or view updates directly from your support center.</p>
 
     <div class="btn-container">
-        <a href="{{ url('/user/support') }}" class="btn-primary">View Support Ticket</a>
+        <a href="{{ rtrim($storeUrl ?? config('app.url'), '/') . '/help' }}" class="btn-primary">View Support Ticket</a>
     </div>
 
     <p>Best regards,<br>The <strong>{{ $storeName ?? config('app.name') }}</strong> Support Team</p>

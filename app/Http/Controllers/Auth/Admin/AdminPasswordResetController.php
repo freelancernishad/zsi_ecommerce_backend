@@ -28,6 +28,10 @@ class AdminPasswordResetController extends Controller
     {
         $email = $request->input('email');
         $resetUrlBase = $request->input('redirect_url');
+        if (!is_string($resetUrlBase) || trim($resetUrlBase) === '') {
+            $resetUrlBase = rtrim(\App\Providers\AppServiceProvider::resolveEmailBranding()['adminUrl'], '/') . '/reset-password';
+        }
+        $resetUrlBase = rtrim($resetUrlBase, '/');
 
         // Find the admin by email
         $admin = Admin::where('email', $email)->first();

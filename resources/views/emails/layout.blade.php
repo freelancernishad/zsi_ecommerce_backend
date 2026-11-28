@@ -145,11 +145,11 @@
             <!-- Header -->
             <div class="email-header">
                 @if(!empty($logoUrl))
-                    <a href="{{ $resetUrl ?? '#' }}" style="display: inline-block; text-decoration: none;">
+                    <a href="{{ $storeUrl ?? config('app.url') }}" style="display: inline-block; text-decoration: none;">
                         <img src="{{ $logoUrl }}" alt="{{ $storeName ?? config('app.name') }}" style="height: 45px; width: auto; display: block; margin: 0 auto;" />
                     </a>
                 @else
-                    <a href="{{ $resetUrl ?? '#' }}" style="font-size: 24px; font-weight: 800; color: #eab308; text-decoration: none; letter-spacing: -0.5px;">
+                    <a href="{{ $storeUrl ?? config('app.url') }}" style="font-size: 24px; font-weight: 800; color: #eab308; text-decoration: none; letter-spacing: -0.5px;">
                         {{ $storeName ?? config('app.name') }}
                     </a>
                 @endif
