@@ -305,6 +305,28 @@ class StripeService
             ],
         ];
 
+        if (!$paymentMethodId) {
+            $bankEnabled = in_array(
+                (string) \App\Models\SiteSetting::where('key', 'stripe_bank_enabled')->value('value'),
+                ['1', 'true'],
+                true
+            );
+            $amazonPayEnabled = in_array(
+                (string) \App\Models\SiteSetting::where('key', 'stripe_amazon_pay_enabled')->value('value'),
+                ['1', 'true'],
+                true
+            );
+
+            $excluded = ['klarna', 'cashapp', 'affirm', 'afterpay_clearpay', 'paypal'];
+            if (!$bankEnabled) {
+                $excluded[] = 'us_bank_account';
+            }
+            if (!$amazonPayEnabled) {
+                $excluded[] = 'amazon_pay';
+            }
+            $params['excluded_payment_method_types'] = $excluded;
+        }
+
         if ($paymentMethodId) {
             $params['payment_method'] = $paymentMethodId;
             // If we have a payment method, we can disable automatic methods or keep them
