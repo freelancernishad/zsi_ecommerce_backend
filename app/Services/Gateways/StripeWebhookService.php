@@ -430,6 +430,8 @@ class StripeWebhookService
         }
 
         Log::info("Order #{$order->id} ({$order->order_number}) marked as PAID via Stripe Webhook ({$eventType}) in DB '" . TenantDatabaseManager::currentDatabase() . "'.");
+
+        app(\App\Services\OrderEmailService::class)->sendOrderConfirmation($order);
     }
 
     protected function handlePaymentIntentProcessing($paymentIntent, $eventType)

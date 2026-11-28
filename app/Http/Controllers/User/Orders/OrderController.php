@@ -198,7 +198,7 @@ class OrderController extends Controller
         }
 
         try {
-            return DB::transaction(function () use ($request, $user) {
+            $order = DB::transaction(function () use ($request, $user) {
                 $address = null;
                 $shippingFirstName = '';
                 $shippingLastName = '';
@@ -373,13 +373,21 @@ class OrderController extends Controller
                     Cart::where('user_id', $user->id)->delete();
                 }
 
-                return response()->json([
-                    'status' => 'success', 
-                    'message' => 'Order placed successfully',
-                    'order_id' => $order->id,
-                    'order_number' => $order->order_number
-                ]);
+                return $order;
             });
+
+            $isConfirmed = in_array($order->payment_status, ['paid', 'processing'], true)
+                || $order->payment_method === 'cod';
+            if ($isConfirmed) {
+                app(\App\Services\OrderEmailService::class)->sendOrderConfirmation($order);
+            }
+
+            return response()->json([
+                'status' => 'success',
+                'message' => 'Order placed successfully',
+                'order_id' => $order->id,
+                'order_number' => $order->order_number,
+            ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => 'error',

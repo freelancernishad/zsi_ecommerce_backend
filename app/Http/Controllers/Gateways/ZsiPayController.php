@@ -371,6 +371,8 @@ class ZsiPayController extends Controller
                     }
                 }
 
+                app(\App\Services\OrderEmailService::class)->sendOrderConfirmation($order);
+
                 Log::info("Order #{$order->id} ({$order->order_number}) successfully marked as PAID via ZSI Pay Webhook!");
 
                 return response()->json([
@@ -553,6 +555,8 @@ class ZsiPayController extends Controller
                             \App\Models\Cart::where('user_id', $order->user_id)->delete();
                         } catch (\Exception $e) {}
                     }
+
+                    app(\App\Services\OrderEmailService::class)->sendOrderConfirmation($order);
                 }
 
                 return response()->json([
